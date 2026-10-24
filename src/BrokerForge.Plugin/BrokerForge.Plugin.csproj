@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The thin Dataverse plug-in (CLAUDE.md principle 5): translate messages to the canonical request and back.
+    No source logic, no descriptor logic, no credentials.
+    Ships as a plug-in package (NuGet) because it depends on BrokerForge.Contracts.
+    Avoid C# features that need runtime support missing on net462: records/init, ValueTuple, ranges.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net462</TargetFramework>
+    <RootNamespace>BrokerForge.Plugin</RootNamespace>
+    <AssemblyName>BrokerForge.Plugin</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Dataverse requires strong-named plug-ins. The key is not committed (.gitignore); CI builds unsigned. -->
+  <PropertyGroup Condition="Exists('BrokerForge.Plugin.snk')">
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>BrokerForge.Plugin.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CrmSdk.CoreAssemblies" Version="9.0.2.60" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Runtime.Serialization" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BrokerForge.Contracts\BrokerForge.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

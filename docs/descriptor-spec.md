@@ -50,7 +50,9 @@ Every value in path, query, headers or body is either a literal (YAML scalar) or
 | `sort` | `{ sort: { ext_name: name, createdon: created } }` | Source sort field for the requested column | RetrieveMultiple query |
 | `param` | `{ param: Reason }` | Custom API input parameter | Custom API |
 | `computed` | `{ computed: uuid }` | `uuid`, `utcnow` (ISO 8601) | all |
-| `paging` | `{ paging: pageSize, max: 100 }` | `pageSize`, `token`, `offset`, `pageNumber` | RetrieveMultiple query |
+| `step` | `{ step: resolveAccount.accountId }` | A value captured by an earlier step (section 9) | all, in descriptors with `steps` |
+
+Paging parameters are not bindings: they are declared once in the `paging` block (section 7).
 
 Binding modifiers (optional, on the same object):
 
@@ -202,7 +204,7 @@ errors:
 
 ## 9. `steps` (multi-call operations)
 
-For a lookup before the main call, or async 202 polling. Maximum 3 steps in v1.
+For a lookup before the main call, or async 202 polling. Maximum 3 steps in v1, and exactly one of them must be named `main` (the descriptor's own `request`).
 
 ```yaml
 steps:
@@ -260,10 +262,12 @@ The validator rejects a descriptor when any of these hold:
 6. RetrieveMultiple without `paging`, or Retrieve/RetrieveMultiple/Create without `response.key`.
 7. A table column neither mapped nor listed in `response.unmapped`.
 8. `errors.default` other than `Fail`.
-9. `retry` without `idempotent: true`, or Create retry without an idempotency key binding.
-10. A `hook` without `reason`.
-11. `steps` over 3, or a poll timeout leaving under 20 seconds of the 90-second host limit.
+9. `retry` without `idempotent: true`, attempts outside 1–5, `on` values other than 429, 502, 503, 504 or network, or Create retry without an `Idempotency-Key` header bound to `{ computed: uuid }`.
+10. A `hook` without `reason`, or with neither `pre` nor `post`.
+11. `steps` over 3, not exactly one step named `main`, or step timeouts totalling more than 70 seconds (leaving under 20 of the 90-second host limit).
 12. `secret` used in path or body.
+
+Rule 7 needs the generated table schema and runs when the validator is given one (the generator and SwaggerForge do; the CI gate over `descriptors/` does not yet). Implementation: `src/BrokerForge.Descriptors/Validation/DescriptorValidator.cs`; one test per rule in `tests/BrokerForge.Descriptors.Tests/ValidatorRuleTests.cs`.
 
 ## 13. Worked examples (Orders mock API)
 

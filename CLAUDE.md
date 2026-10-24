@@ -60,6 +60,7 @@ brokerforge/
     findings/                   # phase 0 results, spikes
   src/
     BrokerForge.Contracts/      # netstandard2.0: canonical request/response, exceptions, enums
+    BrokerForge.Abstractions/   # net8.0: IBroker, IAuthProvider, ServiceInstance, ObjectMap (HLD D-08)
     BrokerForge.Plugin/         # net462: generic data provider + Custom API handler
     BrokerForge.Host/           # net8.0: ingress, trust, router, endpoints
     BrokerForge.Descriptors/    # net8.0: model, parser, validator, renderer, response mapper
@@ -136,14 +137,32 @@ Work one phase at a time. A phase is done only when every criterion passes. Stop
 
 ## Commands
 
-Fill these in as the projects are created:
+```
+dotnet build BrokerForge.sln                 # warnings are errors (Directory.Build.props)
+dotnet test BrokerForge.sln                  # includes the descriptor validator gate over descriptors/
+cd tools/mock-api && npm start               # Orders mock on http://localhost:4010, X-Api-Key: dev-key
+cd tools/mock-api && npm run check           # mock smoke test
+ASPNETCORE_ENVIRONMENT=Development ORDERS_API_KEY=dev-key dotnet run --project src/BrokerForge.Host
+pac solution pack --folder solution/BrokerForgeCore --zipfile out/BrokerForgeCore.zip   # once the solution exists
+```
 
-```
-dotnet build
-dotnet test
-cd tools/mock-api && npm start
-pac solution pack --folder solution --zipfile out/BrokerForge.zip
-```
+CI (`.github/workflows/ci.yml`) runs restore, build, test and the mock smoke test on every push.
+
+## Current state
+
+Scaffolded; nothing is deployed and phase 0 has not started. Every stub throws `NotImplementedException` naming its phase, and the host turns that into a typed `Configuration` error rather than a 500.
+
+| Area | State |
+| --- | --- |
+| Contracts | Done: canonical request/response, exceptions with error round-trip, `CanonicalJson` |
+| Keys | Native GUID and reversible encoding done with property tests; key map is a phase 5 stub |
+| Descriptors | Model, parser, validator (all 12 rules) and query capability check done; renderer and response mapper are phase 1 stubs |
+| Auth | Static and Service Account done; Impersonate, SSO, OAuth are phase 3 stubs |
+| REST adapter | HTTP transport done; discovery is phase 2 (SwaggerForge) |
+| Host | Router, endpoints, appsettings-backed config, file-backed descriptors done; managed identity trust denies every call until phase 0; Dataverse-backed stores are phase 1 |
+| Plug-in | Request builder, QueryExpression translator, entity mapping, host client done; data source and managed identity calls are unverified (phase 0); Custom API routing is undecided (HLD 16) |
+| Mock API | Done, with test hooks for 500, slow and malformed responses |
+| Infra, solution | Skeletons |
 
 ## Working agreement
 

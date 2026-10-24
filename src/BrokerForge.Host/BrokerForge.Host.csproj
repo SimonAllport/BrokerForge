@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BrokerForge.Contracts\BrokerForge.Contracts.csproj" />
+    <ProjectReference Include="..\BrokerForge.Abstractions\BrokerForge.Abstractions.csproj" />
+    <ProjectReference Include="..\BrokerForge.Keys\BrokerForge.Keys.csproj" />
+    <ProjectReference Include="..\BrokerForge.Descriptors\BrokerForge.Descriptors.csproj" />
+    <ProjectReference Include="..\BrokerForge.Auth\BrokerForge.Auth.csproj" />
+    <ProjectReference Include="..\BrokerForge.Adapters.Rest\BrokerForge.Adapters.Rest.csproj" />
+  </ItemGroup>
+
+</Project>

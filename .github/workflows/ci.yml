@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Restore
+        run: dotnet restore BrokerForge.sln
+
+      - name: Build (warnings are errors)
+        run: dotnet build BrokerForge.sln --no-restore -c Release
+
+      # Includes the descriptor validator gate: every file under descriptors/ must parse and validate.
+      - name: Test
+        run: dotnet test BrokerForge.sln --no-build -c Release --logger "console;verbosity=normal"
+
+      - name: Mock API smoke test
+        working-directory: tools/mock-api
+        run: npm run check

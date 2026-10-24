@@ -1,0 +1,19 @@
+operation: updateOrder
+version: 1
+binds: Update
+table: ext_order
+request:
+  method: PATCH
+  path: /v2/orders/{orderId}
+  pathParams: { orderId: { id: "true" } }
+  headers:
+    X-Correlation: { context: correlationId }
+  body:
+    template:
+      customer: { ref: { col: ext_customerref } }
+      lines:    { col: ext_lines_json, format: json }
+errors:
+  404: NotFound
+  409: Conflict
+  422: { exception: Validation, message: $.error.detail }
+  default: Fail

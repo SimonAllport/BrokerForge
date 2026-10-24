@@ -1,0 +1,27 @@
+operation: createOrder
+version: 1
+binds: Create
+table: ext_order
+request:
+  method: POST
+  path: /v2/accounts/{accountId}/orders
+  pathParams: { accountId: { instance: accountId } }
+  headers:
+    X-Correlation:   { context: correlationId }
+    Idempotency-Key: { computed: uuid }
+  body:
+    template:
+      customer: { ref: { col: ext_customerref } }
+      lines:    { col: ext_lines_json, format: json }
+      placedBy: { context: userObjectId }
+response:
+  key: $.id
+  unmapped: [ext_name, ext_status, ext_placed]
+errors:
+  409: Conflict
+  422: { exception: Validation, message: $.error.detail }
+  default: Fail
+retry:
+  idempotent: true
+  attempts: 3
+  on: ["429", "503", network]

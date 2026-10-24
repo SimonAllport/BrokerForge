@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- OpenAPI -> draft descriptors + table schema (phase 2). Starting point: RESTVTP's SwaggerForge CLI. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>swaggerforge</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BrokerForge.Descriptors\BrokerForge.Descriptors.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,20 @@
+operation: submitOrder
+version: 1
+binds: customapi:ext_SubmitOrder
+request:
+  method: POST
+  path: /v2/orders/{orderId}/submit
+  pathParams: { orderId: { param: OrderId } }
+  headers:
+    X-Reason: { param: Reason, omitIfNull: true }
+  body:
+    template:
+      notify: { param: NotifyCustomer }
+response:
+  outputs:
+    SubmittedAt: { path: $.submittedAt, type: datetime }
+    Status:      $.state.code
+errors:
+  404: NotFound
+  409: Conflict
+  default: Fail

@@ -158,6 +158,7 @@ The provider sends one JSON shape for every message. It carries intent, not sour
 
 ```json
 {
+  "contractVersion": "1",
   "correlationId": "8c1f…",
   "environmentId": "4b2e…",
   "serviceInstance": "OrdersAPI",
@@ -165,15 +166,24 @@ The provider sends one JSON shape for every message. It carries intent, not sour
   "message": "RetrieveMultiple",
   "caller": { "userObjectId": "e7a0…", "async": false },
   "query": {
+    "allColumns": false,
     "columns": ["ext_name", "ext_status"],
-    "filter": { "and": [ { "col": "ext_status", "op": "eq", "value": "open" } ] },
+    "filter": {
+      "op": "and",
+      "conditions": [ { "col": "ext_status", "op": "eq", "values": ["100000000"] } ],
+      "groups": []
+    },
     "orderBy": [ { "col": "ext_name", "desc": false } ],
     "page": { "size": 50, "token": null }
   }
 }
 ```
 
-Create and Update carry `record`; Retrieve and Delete carry `id`; Custom APIs carry `inputs`. The host replies with `rows` and `next`, `record`, or `outputs`, plus the correlation ID.
+Create and Update carry `record`; Retrieve and Delete carry `id` (the Dataverse GUID; the host decodes it); Custom APIs carry `customApi` and `inputs`. Record fields, inputs and outputs are `{ "name", "type", "value" }` where `value` is always an invariant string (ISO 8601 UTC for date-times, option set integers, GUIDs in "D" format) so both serialisers agree (D-09).
+
+The host replies with `rows` and `next`, `record`, `id` (Create), or `outputs`, plus the correlation ID. Typed failures travel as an `error` envelope (`code`, `message`, `correlationId`, and `column`, `operator`, `path`, `statusCode` or `connectUrl` as relevant) with HTTP 200. Non-2xx means transport or trust: 401 trust failed, 400 not a canonical request, 5xx unexpected host failure, which the plug-in raises as `BrokerUnavailableException`.
+
+Source of truth: `src/BrokerForge.Contracts`. Both sides serialise with `CanonicalJson` (DataContractJsonSerializer), so the plug-in needs no extra dependencies.
 
 ### 7.2 Broker contract
 
@@ -299,7 +309,8 @@ The rule is fail loudly: the caller always sees a specific error rather than a p
 | Source 4xx or 5xx not mapped | Response mapping | `SourceException` with status, correlation ID and redacted body excerpt |
 | Timeout | Host | `SourceTimeoutException` at 90 seconds, inside the sandbox limit |
 | Response shape does not match map | Response mapping | `MappingException` naming the path |
-| Host unreachable | Provider | `BrokerUnavailableException` |
+| Host unreachable, or host trust rejected the plug-in | Provider | `BrokerUnavailableException` |
+| Unknown service instance, table, operation or Custom API; environment not allowed; invalid descriptor; auth mode not available | Host | `BrokerConfigurationException` |
 
 Retries happen only in the host, only for idempotent operations, and only for transient failures (429, 503, network). Create calls are retried only when the descriptor supplies an idempotency key. Every error carries the correlation ID back to the user.
 
@@ -377,6 +388,10 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 | D-05 | Descriptors as YAML in Git, deployed as config data | Reviewable, testable, environment-independent |
 | D-06 | Name: BrokerForge | Fits SwaggerForge and Control Forge; keeps the K2 lineage visible |
 | D-07 | API Management is optional, decided per client | Not every client runs APIM; the host already validates tokens, throttles and logs |
+| D-08 | Add `BrokerForge.Abstractions` (net8.0) for `IBroker`, `IAuthProvider`, `ServiceInstance` and `ObjectMap` | Lets Auth and Adapters depend on contracts rather than on each other; the plug-in never references it |
+| D-09 | Canonical values are invariant strings with a type tag; serialised with DataContractJsonSerializer on both sides | Works in the net462 sandbox with no extra assemblies; one serialiser means the wire format cannot drift |
+| D-10 | Add `BrokerConfigurationException` to the exception set | Unknown instance, operation or table and disallowed environments are neither source nor query errors and must still fail loudly |
+| D-11 | Undeclared queries are rejected in the host before authentication | No credential is used, and no source is called, for a request that will fail anyway |
 
 ### Open questions
 
@@ -386,6 +401,8 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 - [ ] Composite operations across brokers: in scope for v1 or later.
 - [ ] How to detect native-table references to key-map GUIDs before pruning.
 - [ ] Licensing and packaging model if BrokerForge is offered beyond client engagements.
+- [ ] How a Custom API call finds its host and service instance, since it has no virtual table data source (environment variables for the host, plus a per-API service instance recorded by the generator, is the likely answer).
+- [ ] Source of `environmentId` in the canonical request (data source column, organisation ID or a token claim), confirmed in phase 0.
 
 ## 17. Delivery phases
 
