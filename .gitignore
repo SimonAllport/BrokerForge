@@ -1,0 +1,10 @@
+bin/
+obj/
+*.user
+.vs/
+node_modules/
+out/
+*.snk
+*.pfx
+.env
+appsettings.*.local.json
