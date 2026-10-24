@@ -21,12 +21,12 @@ public class SampleDescriptorTests
     }
 
     [Fact]
-    public void File_store_loads_every_orders_operation()
+    public async Task File_store_loads_every_orders_operation()
     {
         var store = new FileDescriptorStore(RepoPaths.Descriptors);
         foreach (var op in new[] { "listOrders", "getOrder", "createOrder", "updateOrder", "deleteOrder", "submitOrder" })
         {
-            Assert.Equal(op, store.GetAsync("OrdersAPI", op, CancellationToken.None).Result.Operation);
+            Assert.Equal(op, (await store.GetAsync("OrdersAPI", op, CancellationToken.None)).Operation);
         }
     }
 }
