@@ -28,7 +28,7 @@ jobs:
 
       # Includes the descriptor validator gate: every file under descriptors/ must parse and validate.
       - name: Test
-        run: dotnet test BrokerForge.sln --no-build -c Release --logger "console;verbosity=normal"
+        run: dotnet test BrokerForge.sln --no-build -c Release --logger "console;verbosity=normal" --logger GitHubActions
 
       - name: Mock API smoke test
         working-directory: tools/mock-api
