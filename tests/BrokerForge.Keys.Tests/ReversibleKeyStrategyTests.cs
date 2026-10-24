@@ -17,11 +17,8 @@ public class ReversibleKeyStrategyTests
     public bool Int64_round_trips(long value) => RoundTrips(ExternalKey.FromInt64(value));
 
     [Property(MaxTest = 1000)]
-    public Property Strings_up_to_14_utf8_bytes_round_trip(NonNull<string> value)
-    {
-        var fits = Encoding.UTF8.GetByteCount(value.Get) <= ReversibleKeyStrategy.MaxStringBytes;
-        return Prop.When(fits && IsValidUtf16(value.Get), () => RoundTrips(ExternalKey.FromString(value.Get)));
-    }
+    public bool Strings_up_to_14_utf8_bytes_round_trip(NonNull<string> value) =>
+        RoundTrips(ExternalKey.FromString(FitTo14Bytes(value.Get)));
 
     [Property(MaxTest = 1000)]
     public bool Distinct_keys_never_share_a_guid(int a, int b) =>
@@ -76,25 +73,25 @@ public class ReversibleKeyStrategyTests
     private bool RoundTrips(ExternalKey original) =>
         _keys.TryDecode(_keys.Encode(original), out var decoded) && decoded == original;
 
-    private static bool IsValidUtf16(string s)
+    /// <summary>Keeps the leading characters that fit in 14 UTF-8 bytes, skipping lone surrogates (not valid UTF-8).</summary>
+    private static string FitTo14Bytes(string s)
     {
-        for (var i = 0; i < s.Length; i++)
+        var fitted = new StringBuilder();
+        foreach (var c in s)
         {
-            if (char.IsHighSurrogate(s[i]))
+            if (char.IsSurrogate(c))
             {
-                if (i + 1 >= s.Length || !char.IsLowSurrogate(s[i + 1]))
-                {
-                    return false;
-                }
+                continue;
+            }
 
-                i++;
-            }
-            else if (char.IsLowSurrogate(s[i]))
+            if (Encoding.UTF8.GetByteCount(fitted.ToString() + c) > ReversibleKeyStrategy.MaxStringBytes)
             {
-                return false;
+                break;
             }
+
+            fitted.Append(c);
         }
 
-        return true;
+        return fitted.ToString();
     }
 }
