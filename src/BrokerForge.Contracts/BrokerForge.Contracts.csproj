@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Shared surface between the Dataverse plug-in (net462) and the broker host (net8.0).
+    netstandard2.0 and no package dependencies, so the plug-in sandbox can load it.
+    Serialisation uses DataContractJsonSerializer (part of the framework on both sides).
+    Changing anything here is a contract change: ask first, update docs/hld.md 7.1 in the same change.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>BrokerForge.Contracts</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

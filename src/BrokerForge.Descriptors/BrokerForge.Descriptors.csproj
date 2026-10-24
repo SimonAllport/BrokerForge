@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- YamlDotNet is used only in Parsing/DescriptorParser.cs. -->
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BrokerForge.Contracts\BrokerForge.Contracts.csproj" />
+    <ProjectReference Include="..\BrokerForge.Abstractions\BrokerForge.Abstractions.csproj" />
+    <ProjectReference Include="..\BrokerForge.Keys\BrokerForge.Keys.csproj" />
+  </ItemGroup>
+
+</Project>

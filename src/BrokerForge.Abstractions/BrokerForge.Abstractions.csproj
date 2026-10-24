@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Host-side contracts shared by the host, auth providers and adapters: IBroker, IAuthProvider,
+    service instance and object map models. Not used by the plug-in. No package dependencies.
+    Added beside the layout in CLAUDE.md so Auth and Adapters do not depend on each other (HLD D-08).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BrokerForge.Contracts\BrokerForge.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>
