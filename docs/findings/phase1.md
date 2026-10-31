@@ -39,7 +39,9 @@ With `minReplicas: 1` there was no host cold start in these runs. Phase 0 measur
 
 ## Known gaps carried into phase 2
 
-- Option set columns on Create and Update are sent to the source as the Dataverse integer. The renderer reverse-maps option sets for filters only. The Orders descriptors do not write `ext_status`, so the criteria are unaffected.
+- Writing an option set column (Create or Update) is refused with `UnsupportedQueryException` until write descriptors can reverse-map option sets. Before the final review the integer was sent to the source silently.
+- A Create or Update that supplies a column no `col` binding sends is refused with a Validation error naming the column, so a form save can never appear to succeed while dropping a value. On `ext_order` that means Status, Reference and Placed cannot be edited in phase 1.
+- Dataverse asking for page N > 1 without a paging cookie (a jump to page) is refused. Back-navigation with a lower page number was not tested.
 - `ext_lines_json` is written on Create but not read back, because the spec has no map type that serialises a JSON subtree to a string.
 - Application Insights is deployed but the host does not send to it yet. Console logs, which carry the `correlationId` scope, go to Log Analytics (`ContainerAppConsoleLogs_CL`).
 
