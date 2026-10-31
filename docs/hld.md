@@ -166,14 +166,14 @@ The provider sends one JSON shape for every message. It carries intent, not sour
   "caller": { "userObjectId": "e7a0…", "async": false },
   "query": {
     "columns": ["ext_name", "ext_status"],
-    "filter": { "and": [ { "col": "ext_status", "op": "eq", "value": "open" } ] },
+    "filter": { "type": "and", "conditions": [ { "col": "ext_status", "op": "eq", "values": ["100000000"] } ], "groups": [] },
     "orderBy": [ { "col": "ext_name", "desc": false } ],
     "page": { "size": 50, "token": null }
   }
 }
 ```
 
-Create and Update carry `record`; Retrieve and Delete carry `id`; Custom APIs carry `inputs`. The host replies with `rows` and `next`, `record`, or `outputs`, plus the correlation ID.
+Every value on the wire is an invariant string or a list of them, so `DataContractJsonSerializer` and `System.Text.Json` read the same JSON (D-08). Filters nest as `{ type, conditions, groups }`. Create and Update carry `record` as a list of `{ col, type, value }` cells; Retrieve and Delete carry `id`; Custom APIs carry `inputs`. The host replies with `rows` and `next`, `record`, or `outputs`, plus the correlation ID.
 
 ### 7.2 Broker contract
 
@@ -381,6 +381,9 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 | D-07 | API Management is optional, decided per client | Not every client runs APIM; the host already validates tokens, throttles and logs |
 | D-08 | The plug-in compiles the Contracts source files in; there is no separate Contracts DLL or plug-in package | The sandbox loads only the registered assembly. Keeps the plug-in one signed DLL. DTOs use `[DataContract]` so `DataContractJsonSerializer` (plug-in) and `System.Text.Json` (host) both work without extra dependencies |
 | D-09 | One plug-in identity (app registration) per Dataverse environment; the host maps `azp` to one allowed environment ID and rejects a request whose `environmentId` does not match | The token has no environment claim (phase 0), so this is the only way the host can verify the environment |
+| D-10 | Interim for phase 1: service instances and object maps come from host configuration and descriptors from files in the image. The section 6 tables arrive with the generator in phase 2 | The tables need the generator to create them; phase 1 proves the pipeline first |
+| D-11 | Custom APIs are delivered in phase 2 with the generator, not phase 1 | The phase 1 criteria cover CRUD only, and Custom API registration needs the generator |
+| D-12 | When a page needs more than `maxCallsPerPage` source calls, the host returns what it has with a next token rather than failing | The Web API asks for 5000 rows when no page size is set; failing would break every such query. A next token means nothing is presented as complete when it is not |
 
 ### Open questions
 
@@ -397,7 +400,7 @@ Phases are sequenced by risk; durations are not yet estimated. Acceptance criter
 | Phase | Scope | Exit criteria |
 | --- | --- | --- |
 | 0. Spike | Verify the two provider SDK surfaces; managed identity call from plug-in to a stub host | Both surfaces confirmed in a real environment |
-| 1. Core | Canonical contract, host skeleton, REST adapter from RESTVTP, Service Account and Static modes, reversible keys | Orders mock API fully usable through a virtual table |
+| 1. Core | Canonical contract, host skeleton, REST adapter, Service Account and Static modes, reversible keys | Orders mock API fully usable through a virtual table |
 | 2. Tooling | SwaggerForge descriptor output, validator, generator, CI pipeline | New REST source onboarded with no code |
 | 3. Per-user security | OAuth, SSO and Impersonate modes, connect page, async context rule | A user-scoped source enforces per-user data |
 | 4. More adapters | SQL via Relay, OData, then SOAP and GraphQL as demand dictates | Each adapter passes the shared contract tests |

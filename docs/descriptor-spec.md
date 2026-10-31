@@ -1,6 +1,6 @@
 # BrokerForge — Operation Descriptor Specification
 
-Version 0.1 · Source of truth for `BrokerForge.Descriptors` (parser, validator, renderer, response mapper).
+Version 0.2 · Source of truth for `BrokerForge.Descriptors` (parser, validator, renderer, response mapper).
 
 An operation descriptor describes one call to a source: how to build the request from Dataverse inputs, and how to turn the response back into Dataverse rows, records or outputs. One descriptor per file, under `descriptors/<ServiceInstance>/<operation>.yaml`.
 
@@ -19,9 +19,14 @@ steps:     [ ... ]               # optional, see 9
 hook:      { ... }               # optional, see 10
 cache:     { ... }               # optional, see 11
 retry:     { ... }               # optional, see 11
+optionsets: { ... }              # optional, see 6 (option set maps)
+filters:   { ... }               # optional, see 5: allowOr (bool, default false), orStyle (only `in`)
+sortStable: true                 # required for RetrieveMultiple, see 5
 ```
 
 Unknown keys anywhere are a validation error, not ignored.
+
+**Phase 1 scope.** The parser rejects `steps`, `hook`, `jsonata` map entries and `customapi:` binds with "not supported until phase 2", and `cache` with "not supported until phase 5". Custom APIs are delivered in phase 2 with the generator.
 
 ## 2. `binds`
 
@@ -47,7 +52,7 @@ Every value in path, query, headers or body is either a literal (YAML scalar) or
 | `col` | `{ col: ext_status }` | Record column value | Create, Update |
 | `id` | `{ id: true }` or `{ id: orderId }` | Decoded external key, or a named part of a composite key | Retrieve, Update, Delete, Custom API with bound id |
 | `filter` | `{ filter: ext_status, ops: [eq, in] }` | Value from the query filter on that column | RetrieveMultiple query and path |
-| `sort` | `{ sort: { ext_name: name, createdon: created } }` | Source sort field for the requested column | RetrieveMultiple query |
+| `sort` | `{ sort: { ext_name: name, createdon: created }, descFormat: "-{field}" }` | Source sort field for the requested column. `descFormat` renders a descending sort; without it a descending sort is `UnsupportedQueryException` | RetrieveMultiple query |
 | `param` | `{ param: Reason }` | Custom API input parameter | Custom API |
 | `computed` | `{ computed: uuid }` | `uuid`, `utcnow` (ISO 8601) | all |
 | `paging` | `{ paging: pageSize, max: 100 }` | `pageSize`, `token`, `offset`, `pageNumber` | RetrieveMultiple query |
@@ -56,7 +61,7 @@ Binding modifiers (optional, on the same object):
 
 - `required: true` — missing value is `UnsupportedQueryException` (for filters) or a validation error at call time (for others). Default: required for `id`, `col` on Create where the column is required, `param` where the Custom API parameter is required.
 - `omitIfNull: true` — drop the query parameter or header when the value is null. Default true for query and headers.
-- `format` — `iso8601`, `date`, `epochSeconds`, `epochMillis`, `lower`, `upper`, `csv` (for `in` arrays).
+- `format` — `iso8601`, `date`, `epochSeconds`, `epochMillis`, `lower`, `upper`, `csv` (for `in` arrays), `json` (body template leaves only: parses a JSON string column into a nested value).
 
 `secret` is never allowed in body or path, so secrets cannot be echoed back by a source that reflects input.
 
@@ -115,13 +120,17 @@ Filters in a RetrieveMultiple query are honoured only if a `filter` binding decl
 | `gt`, `ge`, `lt`, `le` | GreaterThan … LessEqual | `?created_from=` |
 | `in` | In | `?status=open,closed` (`format: csv`) |
 | `like` | Like (begins with only) | `?q=` |
-| `null` | Null / NotNull | `?hasCustomer=false` |
+| `null` | Null / NotNull | `?hasCustomer=false` (not supported in phase 1: `UnsupportedQueryException`) |
 
 Rules:
 
 - A query condition on an undeclared column or operator raises `UnsupportedQueryException` naming both. The host never filters client-side.
 - `or` groups are rejected unless the descriptor declares `filters.allowOr: true` and the source supports it via `filters.orStyle` (only `in`-collapsible ORs on one column are supported in v1).
 - Link-entity (joined) conditions are rejected in v1.
+- A binding receives at most one condition. Two conditions for the same parameter are `UnsupportedQueryException`.
+- When the filtered column's `response.map` entry has `type: optionset:<map>`, the Dataverse value is reverse-mapped through that map before binding. A value with no mapping is `UnsupportedQueryException`.
+- `like` is begins-with only; a value containing `%` or `_` is `UnsupportedQueryException`.
+- One sort column per query. More is `UnsupportedQueryException`.
 - Sorting on an undeclared column raises `UnsupportedQueryException`. A query with no sort uses the source's default order; the descriptor must declare `sortStable: true|false` so paging behaviour is known.
 
 ## 6. `response`
@@ -135,6 +144,7 @@ response:
     ext_status: $.state.code
     ext_total:  { path: $.totals.gross, type: decimal }
     ext_placed: { path: $.placedAt, type: datetime }
+    ext_note:   { path: $.note, optional: true }
     ext_label:  { jsonata: "$uppercase(state.code) & ' / ' & reference" }
   outputs:                       # Custom API only: output parameter -> JSONPath
     SubmittedAt: $.submittedAt
@@ -142,7 +152,8 @@ response:
 
 Rules:
 
-- `rows` matching nothing returns an empty set only when the path exists and is an empty array. A missing path is `MappingException`.
+- `rows` matching nothing returns an empty set only when the path exists and is an empty array. A missing path is `MappingException`. Retrieve and RetrieveMultiple both require `rows`.
+- Within a row, JSON `null` maps to null. A map path that matches nothing is `MappingException` unless the entry has `optional: true`, which maps it to null.
 - Every column in the table's generated schema must appear in `map` or be explicitly listed under `response.unmapped: [ ... ]`. Silent gaps are a validation error.
 - `type` coerces: `string`, `int`, `decimal`, `bool`, `datetime`, `date`, `guid`, `optionset:<mapName>`. Coercion failure is `MappingException` naming column and path.
 - Composite keys: `key: { accountId: $.accountId, orderId: $.id }`. The object map's key strategy must be `keymap` or reversible if it fits.
@@ -178,7 +189,9 @@ paging:
 | `link` | URL from previous response | `Link` header `rel="next"` |
 | `none` | one call | never; requesting page 2 is `UnsupportedQueryException` |
 
-The host translates Dataverse paging cookies to and from the source token. If the source page size is smaller than Dataverse requested, the host makes further calls to fill the page, up to `paging.maxCallsPerPage` (default 5); exceeding it is `SourceException`, never a short page presented as complete.
+The host translates Dataverse paging cookies to and from the source token. If the source page size is smaller than Dataverse requested, the host makes further calls to fill the page, up to `paging.maxCallsPerPage` (default 5). When the budget runs out first, the host returns the rows collected with a next token: a complete page with more to follow, never a short page presented as the end.
+
+The page token the host hands to Dataverse names the operation and descriptor version. A token for another operation or an older version, or a corrupt token, is `UnsupportedQueryException`. A `link` URL is followed only when it starts with the service instance base URL.
 
 ## 8. `errors`
 
@@ -257,8 +270,8 @@ The validator rejects a descriptor when any of these hold:
 3. A path placeholder without a `pathParams` entry, or an unused entry.
 4. A reserved header declared.
 5. GET or DELETE with a body.
-6. RetrieveMultiple without `paging`, or Retrieve/RetrieveMultiple/Create without `response.key`.
-7. A table column neither mapped nor listed in `response.unmapped`.
+6. RetrieveMultiple without `paging`, Retrieve/RetrieveMultiple without `response.rows`, or Retrieve/RetrieveMultiple/Create without `response.key`.
+7. A table column neither mapped nor listed in `response.unmapped` (from phase 2, when the table schema exists).
 8. `errors.default` other than `Fail`.
 9. `retry` without `idempotent: true`, or Create retry without an idempotency key binding.
 10. A `hook` without `reason`.
@@ -280,7 +293,7 @@ request:
   query:
     status:   { filter: ext_status, ops: [eq, in], format: csv }
     customer: { filter: ext_customerref, ops: [eq] }
-    sort:     { sort: { ext_name: reference, ext_placed: placedAt } }
+    sort:     { sort: { ext_name: reference, ext_placed: placedAt }, descFormat: "-{field}" }
 paging:
   strategy: cursor
   pageSize: { param: limit, max: 100 }
