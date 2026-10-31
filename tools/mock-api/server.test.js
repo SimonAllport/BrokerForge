@@ -131,6 +131,13 @@ test('idempotency key replays', async () => {
   assert.match(bad.json.error.detail, /customer\.ref/);
 });
 
+test('create keeps a numeric totals.gross and defaults it to 0', async () => {
+  const a = await call('POST', '/v2/accounts/acc1/orders', { body: { customer: { ref: 'CUST-04' }, totals: { gross: 12.5 } } });
+  assert.equal((await call('GET', `/v2/orders/${a.json.id}`)).json.totals.gross, 12.5);
+  const b = await call('POST', '/v2/accounts/acc1/orders', { body: { customer: { ref: 'CUST-04' }, totals: { gross: null } } });
+  assert.equal((await call('GET', `/v2/orders/${b.json.id}`)).json.totals.gross, 0);
+});
+
 test('location create', async () => {
   const r = await call('POST', '/v2/accounts/acc1/orders-location', { body: { customer: { ref: 'CUST-03' } } });
   assert.equal(r.status, 201);

@@ -13,6 +13,7 @@ request:
     template:
       customer: { ref: { col: ext_customerref } }
       lines:    { col: ext_lines_json, format: json }
+      totals:   { gross: { col: ext_total } }
       placedBy: { context: userObjectId }
 response:
   key: $.id

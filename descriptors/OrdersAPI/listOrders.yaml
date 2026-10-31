@@ -21,6 +21,7 @@ response:
     ext_status:      { path: $.state.code, type: optionset:orderStatus }
     ext_customerref: $.customer.ref
     ext_placed:      { path: $.placedAt, type: datetime }
+    ext_total:       { path: $.totals.gross, type: decimal }
   unmapped: [ext_lines_json]
 optionsets:
   orderStatus: { open: 100000000, shipped: 100000001, cancelled: 100000002 }

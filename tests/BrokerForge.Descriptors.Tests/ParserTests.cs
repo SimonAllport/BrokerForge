@@ -124,7 +124,7 @@ public class ParserTests
     [Fact]
     public void Parse_RawBody_PlaceholdersBecomeBindings()
     {
-        var yaml = Mutate(OrdersYaml("updateOrder"), "    template:\n      customer: { ref: { col: ext_customerref } }\n      lines:    { col: ext_lines_json, format: json }\n",
+        var yaml = Mutate(OrdersYaml("updateOrder"), "    template:\n      customer: { ref: { col: ext_customerref } }\n      lines:    { col: ext_lines_json, format: json }\n      totals:   { gross: { col: ext_total } }\n",
             "    contentType: text/xml\n    raw: \"<o><c>{{ col.ext_customerref }}</c><id>{{ context.correlationId }}</id></o>\"\n");
         var body = DescriptorParser.Parse(yaml, "d").Request.Body!;
         Assert.Equal("text/xml", body.ContentType);

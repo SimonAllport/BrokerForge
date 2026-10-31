@@ -13,7 +13,7 @@ public class ResponseMapperTests
     internal static BrokerResult Result(int status, string body, params (string Name, string Value)[] headers) =>
         new(status, headers.ToDictionary(h => h.Name, h => new[] { h.Value }, StringComparer.OrdinalIgnoreCase), Encoding.UTF8.GetBytes(body));
 
-    private const string Order1 = """{"id":"ord_0001","reference":"REF-0001","state":{"code":"shipped"},"customer":{"ref":"CUST-01"},"placedAt":"2026-01-01T01:00:00+01:00"}""";
+    private const string Order1 = """{"id":"ord_0001","reference":"REF-0001","state":{"code":"shipped"},"customer":{"ref":"CUST-01"},"placedAt":"2026-01-01T01:00:00+01:00","totals":{"gross":1.5}}""";
 
     private static IReadOnlyList<MappedRow> List(string body, string? yaml = null) =>
         ResponseMapper.MapRows(yaml == null ? Orders("listOrders") : DescriptorParser.Parse(yaml, "listOrders.yaml"), Result(200, body), KeyKind.String, "corr-1");
@@ -61,7 +61,7 @@ public class ResponseMapperTests
     [Fact]
     public void Map_MissingPathNotOptional_ThrowsMappingNamingPath()
     {
-        var ex = Assert.Throws<MappingException>(() => List("""{"data":[{"id":"ord_1","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z"}]}"""));
+        var ex = Assert.Throws<MappingException>(() => List("""{"data":[{"id":"ord_1","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","totals":{"gross":1.5}}]}"""));
         Assert.Contains("ext_name", ex.Message);
         Assert.Contains("$.reference", ex.Message);
     }
@@ -70,22 +70,23 @@ public class ResponseMapperTests
     public void Map_OptionalMissing_Null()
     {
         var yaml = Mutate(OrdersYaml("listOrders"), "ext_name:        $.reference", "ext_name:        { path: $.reference, optional: true }");
-        var row = Assert.Single(List("""{"data":[{"id":"ord_1","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z"}]}""", yaml));
+        var row = Assert.Single(List("""{"data":[{"id":"ord_1","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","totals":{"gross":1.5}}]}""", yaml));
         Assert.Null(row.Cells.Single(c => c.Col == "ext_name").Value);
     }
 
     [Fact]
     public void Map_JsonNull_Null()
     {
-        var row = Assert.Single(List("""{"data":[{"id":"ord_1","reference":null,"state":{"code":"open"},"customer":{"ref":"C"},"placedAt":null}]}"""));
+        var row = Assert.Single(List("""{"data":[{"id":"ord_1","reference":null,"state":{"code":"open"},"customer":{"ref":"C"},"placedAt":null,"totals":{"gross":null}}]}"""));
         Assert.Null(row.Cells.Single(c => c.Col == "ext_name").Value);
         Assert.Null(row.Cells.Single(c => c.Col == "ext_placed").Value);
+        Assert.Equal((CellTypes.Decimal, null), (row.Cells.Single(c => c.Col == "ext_total").Type, row.Cells.Single(c => c.Col == "ext_total").Value));
     }
 
     [Fact]
     public void Map_TypeCoercionFailure_ThrowsNamingColumnAndPath()
     {
-        var ex = Assert.Throws<MappingException>(() => List("""{"data":[{"id":"ord_1","reference":"R","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"yesterday"}]}"""));
+        var ex = Assert.Throws<MappingException>(() => List("""{"data":[{"id":"ord_1","reference":"R","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"yesterday","totals":{"gross":1.5}}]}"""));
         Assert.Contains("ext_placed", ex.Message);
         Assert.Contains("$.placedAt", ex.Message);
     }
@@ -93,13 +94,13 @@ public class ResponseMapperTests
     [Fact]
     public void Map_ObjectForStringColumn_Throws()
     {
-        Assert.Throws<MappingException>(() => List("""{"data":[{"id":"ord_1","reference":{"a":1},"state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z"}]}"""));
+        Assert.Throws<MappingException>(() => List("""{"data":[{"id":"ord_1","reference":{"a":1},"state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","totals":{"gross":1.5}}]}"""));
     }
 
     [Fact]
     public void Map_OptionSetUnknown_ThrowsUnlessUnknownNull()
     {
-        const string body = """{"data":[{"id":"ord_1","reference":"R","state":{"code":"lost"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z"}]}""";
+        const string body = """{"data":[{"id":"ord_1","reference":"R","state":{"code":"lost"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","totals":{"gross":1.5}}]}""";
         var ex = Assert.Throws<MappingException>(() => List(body));
         Assert.Contains("lost", ex.Message);
         var yaml = Mutate(OrdersYaml("listOrders"), "cancelled: 100000002 }", "cancelled: 100000002, _unknown: null }");
@@ -109,8 +110,8 @@ public class ResponseMapperTests
     [Fact]
     public void Key_MissingOrNull_Throws()
     {
-        Assert.Throws<MappingException>(() => List("""{"data":[{"reference":"R","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z"}]}"""));
-        Assert.Throws<MappingException>(() => List("""{"data":[{"id":null,"reference":"R","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z"}]}"""));
+        Assert.Throws<MappingException>(() => List("""{"data":[{"reference":"R","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","totals":{"gross":1.5}}]}"""));
+        Assert.Throws<MappingException>(() => List("""{"data":[{"id":null,"reference":"R","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","totals":{"gross":1.5}}]}"""));
     }
 
     [Fact]
@@ -151,8 +152,8 @@ public class ResponseMapperTests
     [Fact]
     public void Map_MoneyType_MoneyCell()
     {
-        var yaml = Mutate(OrdersYaml("listOrders"), "    ext_customerref: $.customer.ref\n", "    ext_customerref: $.customer.ref\n    ext_total: { path: $.total, type: money }\n");
-        var body = """{"data":[{"id":"ord_1","reference":"R","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","total":12.50}]}""";
+        var body = """{"data":[{"id":"ord_1","reference":"R","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","totals":{"gross":12.50}}]}""";
+        var yaml = Mutate(OrdersYaml("listOrders"), "type: decimal }", "type: money }");
         var total = Assert.Single(List(body, yaml)).Cells.Single(c => c.Col == "ext_total");
         Assert.Equal((CellTypes.Money, "12.50"), (total.Type, total.Value));
         var ex = Assert.Throws<MappingException>(() => List(body.Replace("12.50", "\"lots\""), yaml));

@@ -247,7 +247,7 @@ public class PagingTests(MockApiFixture mock) : IAsyncLifetime
             Task.FromResult(new BrokerForge.Abstractions.BrokerResult(200, new Dictionary<string, string[]>(), System.Text.Encoding.UTF8.GetBytes(bodies[_next++])));
     }
 
-    private static string Order(int i) => $$"""{"id":"ord_{{i:D4}}","reference":"REF-{{i:D4}}","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z"}""";
+    private static string Order(int i) => $$$"""{"id":"ord_{{{i:D4}}}","reference":"REF-{{{i:D4}}}","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","totals":{"gross":1.5}}""";
 
     private static PagingCoordinator Scripted(params string[] bodies) => new(new OperationExecutor(new ScriptedBroker(bodies)), new Operations.MockKey(), Operations.TokenKey);
 

@@ -99,7 +99,7 @@ function create(body, idemKey) {
     customer: { ref: body.customer.ref },
     placedAt: new Date().toISOString(),
     lines: Array.isArray(body.lines) ? body.lines : [],
-    totals: { gross: 0 },
+    totals: { gross: body.totals && typeof body.totals.gross === 'number' ? body.totals.gross : 0 },
     ...(body.placedBy ? { placedBy: body.placedBy } : {}),
   };
   orders.push(order);

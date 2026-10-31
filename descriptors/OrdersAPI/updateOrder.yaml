@@ -12,6 +12,7 @@ request:
     template:
       customer: { ref: { col: ext_customerref } }
       lines:    { col: ext_lines_json, format: json }
+      totals:   { gross: { col: ext_total } }
 errors:
   404: NotFound
   422: { exception: Validation, message: $.error.detail }

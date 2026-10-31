@@ -50,7 +50,8 @@ for name in orders-api-key page-token-key; do
   done
 done
 
-TAG="$(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet || echo -dirty)"
+# A dirty tree gets a tag from its diff: reusing one "-dirty" tag would leave the old revision running.
+TAG="$(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet || echo "-dirty-$(git -C "$ROOT" diff | shasum | cut -c1-8)")"
 echo "== images $TAG"
 az acr build -r "$ACR" -t "brokerforge-host:$TAG" -f "$ROOT/src/BrokerForge.Host/Dockerfile" "$ROOT" --no-logs -o none
 az acr build -r "$ACR" -t "brokerforge-orders-mock:$TAG" "$ROOT/tools/mock-api" --no-logs -o none

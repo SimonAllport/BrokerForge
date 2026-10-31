@@ -205,6 +205,10 @@ def main(dll_path):
     ensure_attribute("ext_order", {
         "@odata.type": "Microsoft.Dynamics.CRM.MemoAttributeMetadata", "SchemaName": "ext_lines_json", "DisplayName": label("Lines (JSON)"),
         "RequiredLevel": {"Value": "None"}, "MaxLength": 100000, "Format": "TextArea", "ExternalName": "ext_lines_json"}, orders)
+    # Decimal, not Money: Dataverse refuses Money columns on virtual tables ("Attribute data type: money is not valid for this entity").
+    ensure_attribute("ext_order", {
+        "@odata.type": "Microsoft.Dynamics.CRM.DecimalAttributeMetadata", "SchemaName": "ext_total", "DisplayName": label("Total"),
+        "RequiredLevel": {"Value": "None"}, "Precision": 2, "MinValue": 0, "MaxValue": 1000000000, "ExternalName": "ext_total"}, orders)
     call("POST", "PublishXml", {"ParameterXml": "<importexportxml><entities><entity>ext_order</entity><entity>bf_brokerdatasource</entity></entities></importexportxml>"})
 
     step("read back")

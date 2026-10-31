@@ -78,16 +78,20 @@ def main():
 
     # 2. Retrieve by id.
     first = rows[0]
-    status, body, h = call("GET", f"ext_orders({first['ext_orderid']})?$select=ext_name,ext_customerref", name="retrieve")
+    status, body, h = call("GET", f"ext_orders({first['ext_orderid']})?$select=ext_name,ext_customerref,ext_total", name="retrieve")
     check(2, status == 200 and body.get("ext_name") == first["ext_name"], f"retrieve {first['ext_orderid']} returns {body.get('ext_name')}", h)
+    # The mock's seed total for order n is n x 10.50; the decimal column must carry it.
+    expected_total = int(first["ext_name"].split("-")[1]) * 10.5
+    check(2, body.get("ext_total") == expected_total, f"retrieve returns decimal ext_total {body.get('ext_total')} (expected {expected_total})", h)
 
     # 3. Create, then read it back.
-    status, body, h = call("POST", "ext_orders", {"ext_customerref": "CUST-ACCEPT", "ext_lines_json": '[{"sku":"A","qty":2}]'}, name="create")
+    status, body, h = call("POST", "ext_orders", {"ext_customerref": "CUST-ACCEPT", "ext_lines_json": '[{"sku":"A","qty":2}]', "ext_total": 12.5}, name="create")
     entity_id = re.search(r"\(([0-9a-f-]{36})\)", h.get("OData-EntityId", "") or "")
     check(3, status == 204 and entity_id is not None, f"create returns 204 with OData-EntityId {h.get('OData-EntityId')}", h)
     new_id = entity_id.group(1)
-    status, body, h = call("GET", f"ext_orders({new_id})?$select=ext_name,ext_customerref", name="retrieve")
-    check(3, status == 200 and body.get("ext_customerref") == "CUST-ACCEPT", f"created order reads back as {body.get('ext_name')} / {body.get('ext_customerref')}", h)
+    status, body, h = call("GET", f"ext_orders({new_id})?$select=ext_name,ext_customerref,ext_total", name="retrieve")
+    check(3, status == 200 and body.get("ext_customerref") == "CUST-ACCEPT" and body.get("ext_total") == 12.5,
+          f"created order reads back as {body.get('ext_name')} / {body.get('ext_customerref')} / {body.get('ext_total')}", h)
 
     # 4. Update one column.
     status, body, h = call("PATCH", f"ext_orders({new_id})", {"ext_customerref": "CUST-UPDATED"}, name="update")

@@ -76,13 +76,15 @@ public class OrdersEndToEndTests(MockApiFixture mock) : HostTestBase(mock)
         Assert.Equal(request.Id, response!.Record.Id);
         Assert.Equal("REF-0005", Value(response.Record, "ext_name"));
         Assert.Equal("CUST-05", Value(response.Record, "ext_customerref"));
+        var total = response.Record.Cells.Single(c => c.Col == "ext_total");
+        Assert.Equal((CellTypes.Decimal, "52.5"), (total.Type, total.Value));
     }
 
     [Fact]
     public async Task Create_ReturnsEncodedKey()
     {
         var request = HostFactory.Request("ext_order", Messages.Create);
-        request.Record = new() { Cell("ext_customerref", "CUST-77"), Cell("ext_lines_json", """[{"sku":"A","qty":1}]""") };
+        request.Record = new() { Cell("ext_customerref", "CUST-77"), Cell("ext_lines_json", """[{"sku":"A","qty":1}]"""), Cell("ext_total", "12.50", CellTypes.Decimal) };
         var (status, response, error) = await Host.Execute(request);
         Assert.True(status == 200, error?.Message);
         Assert.Equal(Id("ord_0121"), response!.Id);
@@ -91,6 +93,7 @@ public class OrdersEndToEndTests(MockApiFixture mock) : HostTestBase(mock)
         get.Id = response.Id;
         var (_, created, _) = await Host.Execute(get);
         Assert.Equal("CUST-77", Value(created!.Record, "ext_customerref"));
+        Assert.Equal("12.5", Value(created.Record, "ext_total"));
     }
 
     [Fact]
