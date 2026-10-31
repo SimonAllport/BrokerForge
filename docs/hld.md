@@ -358,6 +358,7 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 | ~~Unverified provider SDK surfaces behave differently from assumptions~~ | Closed | — | Verified in phase 0, see `docs/findings/phase0.md` |
 | Host cold start breaks the plug-in budget (23.5 s measured in phase 0 with scale to zero) | High without mitigation | High | `minReplicas >= 1` wherever users call the host |
 | Platform silently drops virtual table metadata (`DataProviderId` ignored unless the create passes virtual-table validation) | Medium | Medium | Generator reads back `TableType`, `DataProviderId` and `DataSourceId` and fails on mismatch |
+| Virtual tables cannot have currency (Money) columns: Dataverse refuses the column with `0x80044815` ("money is not valid for this entity"), verified in phase 1 | Certain | Low | Source amounts map to Decimal columns; currency, if needed, is a separate text column |
 | Virtual table platform gaps (offline, auditing, row-level security, Power BI) block a client use case | High | Medium | State gaps at scoping; route reporting to the source or a sync |
 | Users experience live-call latency as slowness | Medium | Medium | Caching, narrow views, latency targets per source |
 | Per-user modes need a connect step users skip | Medium | Medium | Clear error with connect link; connect prompt on first use |
