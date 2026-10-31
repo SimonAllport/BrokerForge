@@ -21,7 +21,7 @@ public static partial class DescriptorValidator
     [GeneratedRegex(@"\{([^{}]+)\}")]
     private static partial Regex PathPlaceholderRegex();
 
-    public static IReadOnlyList<DescriptorError> Validate(OperationDescriptor d, ReservedHeaders reserved)
+    public static IReadOnlyList<DescriptorError> Validate(OperationDescriptor d, ReservedNames reserved)
     {
         var errors = new List<DescriptorError>();
         var r = d.Request;
@@ -29,7 +29,15 @@ public static partial class DescriptorValidator
         foreach (var (name, binding) in r.PathParams)
             CheckBinding(d, binding, Location.Path, $"request.pathParams.{name}", inTemplate: false, errors);
         foreach (var (name, binding) in r.Query)
+        {
             CheckBinding(d, binding, Location.Query, $"request.query.{name}", inTemplate: false, errors);
+            if (reserved.ContainsQueryParam(name))
+                errors.Add(new(4, $"request.query.{name}", $"`{name}` is reserved: the service instance's authentication mode sends it"));
+        }
+        foreach (var (where, param) in new[] { ("paging.pageSize.param", d.Paging?.PageSize?.Param), ("paging.token.param", d.Paging?.Token?.Param),
+                     ("paging.offset.param", d.Paging?.Offset?.Param), ("paging.page.param", d.Paging?.Page?.Param) })
+            if (param != null && reserved.ContainsQueryParam(param))
+                errors.Add(new(4, where, $"`{param}` is reserved: the service instance's authentication mode sends it"));
         foreach (var (name, binding) in r.Headers)
         {
             CheckBinding(d, binding, Location.Header, $"request.headers.{name}", inTemplate: false, errors);

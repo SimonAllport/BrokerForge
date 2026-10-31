@@ -7,8 +7,8 @@ namespace BrokerForge.Descriptors.Tests;
 
 public class ValidatorTests
 {
-    private static IReadOnlyList<DescriptorError> Validate(string yaml, ReservedHeaders? reserved = null) =>
-        DescriptorValidator.Validate(DescriptorParser.Parse(yaml, "test.yaml"), reserved ?? NoAuthHeaders);
+    private static IReadOnlyList<DescriptorError> Validate(string yaml, ReservedNames? reserved = null) =>
+        DescriptorValidator.Validate(DescriptorParser.Parse(yaml, "test.yaml"), reserved ?? NoAuthNames);
 
     private static void AssertRule(int rule, IReadOnlyList<DescriptorError> errors, string? pathContains = null)
     {
@@ -21,7 +21,7 @@ public class ValidatorTests
     [MemberData(nameof(OrdersFiles))]
     public void OrdersDescriptors_PassValidation(string operation)
     {
-        Assert.Empty(DescriptorValidator.Validate(Orders(operation), ReservedHeaders.For(new[] { "X-Api-Key" })));
+        Assert.Empty(DescriptorValidator.Validate(Orders(operation), ReservedNames.For(new[] { "X-Api-Key" })));
     }
 
     [Fact]
@@ -87,10 +87,25 @@ public class ValidatorTests
     }
 
     [Fact]
+    public void Rule4_ReservedQueryParamFromAuthMode_Rejected()
+    {
+        var reserved = ReservedNames.For(Array.Empty<string>(), new[] { "Customer" });
+        AssertRule(4, Validate(OrdersYaml("listOrders"), reserved), "request.query.customer");
+        Assert.DoesNotContain(Validate(OrdersYaml("listOrders")), e => e.Rule == 4);
+    }
+
+    [Fact]
+    public void Rule4_ReservedQueryParamUsedByPaging_Rejected()
+    {
+        AssertRule(4, Validate(OrdersYaml("listOrders"), ReservedNames.For(Array.Empty<string>(), new[] { "cursor" })), "paging.token.param");
+        AssertRule(4, Validate(OrdersYaml("listOrders"), ReservedNames.For(Array.Empty<string>(), new[] { "limit" })), "paging.pageSize.param");
+    }
+
+    [Fact]
     public void Rule4_ReservedHeaderFromAuthMode_Rejected()
     {
         var yaml = Mutate(OrdersYaml("deleteOrder"), "X-Correlation:", "X-API-KEY:");
-        AssertRule(4, Validate(yaml, ReservedHeaders.For(new[] { "X-Api-Key" })), "X-API-KEY");
+        AssertRule(4, Validate(yaml, ReservedNames.For(new[] { "X-Api-Key" })), "X-API-KEY");
         Assert.DoesNotContain(Validate(yaml), e => e.Rule == 4);
     }
 

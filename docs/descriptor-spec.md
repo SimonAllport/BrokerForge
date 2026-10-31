@@ -103,7 +103,7 @@ request:
 
 Rules:
 
-- `Authorization` and any header the service instance's auth mode sets are reserved. Declaring them is a validation error.
+- `Authorization` and any header the service instance's auth mode sets are reserved, and so is the query parameter `apiKeyQuery` sends, whether declared under `query` or as a paging parameter. Names compare case-insensitively. Declaring them is a validation error.
 - GET and DELETE must not have a body.
 - `body.template` is a YAML structure mirrored into JSON. A leaf with `format: json` parses a JSON string column into a nested value; invalid JSON at call time is `MappingException`.
 - `body.raw` (alternative to `template`) is a string with `{{ binding }}` placeholders for XML and other formats. Placeholders use the same binding names: `{{ col.ext_status }}`, `{{ context.correlationId }}`. Values are XML-escaped when `contentType` is `text/xml`.
@@ -270,7 +270,7 @@ The validator rejects a descriptor when any of these hold:
 1. Unknown key, or a binding object with zero or more than one source key.
 2. A binding source not allowed for the field (table in 3) or for the message (`binds`).
 3. A path placeholder without a `pathParams` entry, or an unused entry.
-4. A reserved header declared.
+4. A reserved header or query parameter declared.
 5. GET or DELETE with a body.
 6. RetrieveMultiple without `paging`, Retrieve/RetrieveMultiple without `response.rows`, or Retrieve/RetrieveMultiple/Create without `response.key`.
 7. A table column neither mapped nor listed in `response.unmapped` (from phase 2, when the table schema exists).

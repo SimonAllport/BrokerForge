@@ -82,7 +82,7 @@ public sealed class HostConfigStore
             var dir = Path.Combine(root, instance.Name);
             if (!Directory.Exists(dir))
                 continue;
-            var reserved = AuthHeaders.For(instance);
+            var reserved = AuthReservedNames.For(instance);
             foreach (var file in Directory.GetFiles(dir, "*.yaml").Order(StringComparer.Ordinal))
             {
                 var source = $"{instance.Name}/{Path.GetFileName(file)}";

@@ -165,12 +165,20 @@ public class AuthProviderTests
     }
 
     [Fact]
-    public void AuthHeaders_ForStaticHeaderMode_ReservesHeader()
+    public void AuthReservedNames_ForStaticQueryMode_ReservesQueryParam()
     {
-        var reserved = AuthHeaders.For(Instance(new AuthConfig(AuthMode.Static, "apiKeyHeader", HeaderName: "X-Api-Key", SecretRef: "env:K")));
+        var reserved = AuthReservedNames.For(Instance(new AuthConfig(AuthMode.Static, "apiKeyQuery", QueryParam: "api_key", SecretRef: "env:K")));
+        Assert.True(reserved.ContainsQueryParam("API_KEY"));
+        Assert.False(AuthReservedNames.For(Instance(new AuthConfig(AuthMode.ServiceAccount, Scope: "s"))).ContainsQueryParam("api_key"));
+    }
+
+    [Fact]
+    public void AuthReservedNames_ForStaticHeaderMode_ReservesHeader()
+    {
+        var reserved = AuthReservedNames.For(Instance(new AuthConfig(AuthMode.Static, "apiKeyHeader", HeaderName: "X-Api-Key", SecretRef: "env:K")));
         Assert.True(reserved.Contains("x-api-key"));
         Assert.True(reserved.Contains("Authorization"));
-        Assert.False(AuthHeaders.For(Instance(new AuthConfig(AuthMode.ServiceAccount, Scope: "s"))).Contains("X-Api-Key"));
+        Assert.False(AuthReservedNames.For(Instance(new AuthConfig(AuthMode.ServiceAccount, Scope: "s"))).Contains("X-Api-Key"));
     }
 
     [Fact]

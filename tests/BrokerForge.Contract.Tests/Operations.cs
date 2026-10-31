@@ -32,7 +32,7 @@ internal static class Operations
     {
         var yaml = File.ReadAllText(DescriptorPath(name));
         var d = DescriptorParser.Parse(mutate == null ? yaml : mutate(yaml), name + ".yaml");
-        var errors = DescriptorValidator.Validate(d, ReservedHeaders.For(new[] { "X-Api-Key" }));
+        var errors = DescriptorValidator.Validate(d, ReservedNames.For(new[] { "X-Api-Key" }));
         Assert.True(errors.Count == 0, string.Join("; ", errors));
         return d;
     }

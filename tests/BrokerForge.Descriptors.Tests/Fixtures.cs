@@ -21,7 +21,7 @@ internal static class Fixtures
 
     public static OperationDescriptor Orders(string operation) => DescriptorParser.Parse(OrdersYaml(operation), operation + ".yaml");
 
-    public static readonly ReservedHeaders NoAuthHeaders = ReservedHeaders.For(Array.Empty<string>());
+    public static readonly ReservedNames NoAuthNames = ReservedNames.For(Array.Empty<string>());
 
     /// <summary>Replaces one exact fragment, failing the test if the fragment is missing so a mutation cannot silently do nothing.</summary>
     public static string Mutate(string yaml, string from, string to)
