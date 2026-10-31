@@ -136,4 +136,15 @@ public class ResponseMapperTests
         var ex = Assert.Throws<MappingException>(() => ResponseMapper.MapCreatedKey(d, Result(201, ""), KeyKind.String, "c"));
         Assert.Contains("Location", ex.Message);
     }
+
+    [Fact]
+    public void CreatedKey_HeaderPatternThatBacktracks_MappingExceptionWithinTimeout()
+    {
+        var yaml = Mutate(OrdersYaml("createOrder"), "  key: $.id\n", "  key: { header: Location, pattern: \"^(a+)+(?<id>b)$\" }\n");
+        var d = DescriptorParser.Parse(yaml, "createOrder.yaml");
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var ex = Assert.Throws<MappingException>(() => ResponseMapper.MapCreatedKey(d, Result(201, "", ("location", new string('a', 40) + "!")), KeyKind.String, "c"));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"took {watch.Elapsed}");
+        Assert.Contains("time", ex.Message);
+    }
 }

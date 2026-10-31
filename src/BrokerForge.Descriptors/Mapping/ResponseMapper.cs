@@ -15,6 +15,8 @@ namespace BrokerForge.Descriptors.Mapping;
 /// </summary>
 public static class ResponseMapper
 {
+    private static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(250);
+
     public static IReadOnlyList<MappedRow> MapRows(OperationDescriptor d, BrokerResult r, KeyKind keyKind, string correlationId)
     {
         MappingException Fail(string message) => new($"{message} (operation {d.Operation}).", correlationId);
@@ -64,7 +66,11 @@ public static class ResponseMapper
         {
             case HeaderKey h:
                 var header = r.Header(h.Header) ?? throw Fail($"the source returned no {h.Header} header for the new record's key");
-                var match = Regex.Match(header, h.Pattern);
+                // The header comes from the source and the pattern from the descriptor: bound the match so a
+                // backtracking pattern cannot hold the request.
+                Match match;
+                try { match = Regex.Match(header, h.Pattern, RegexOptions.None, MatchTimeout); }
+                catch (RegexMatchTimeoutException) { throw Fail($"matching the {h.Header} header against the key pattern {h.Pattern} ran out of time"); }
                 if (!match.Success || !match.Groups["id"].Success)
                     throw Fail($"the {h.Header} header does not match the key pattern {h.Pattern}");
                 return KeyFromText(match.Groups["id"].Value, keyKind, $"header {h.Header}", Fail);
