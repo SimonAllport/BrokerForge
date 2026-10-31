@@ -195,7 +195,7 @@ public static partial class RequestRenderer
 
     private sealed class Run(OperationDescriptor d, BindingContext ctx, ISecretResolver secrets, CancellationToken ct)
     {
-        public OperationDescriptor D { get; } = d;
+        public OperationDescriptor D => d;
         public HashSet<string> SecretParams { get; } = new(StringComparer.Ordinal);
 
         public MappedSourceException Validation(string message) =>

@@ -15,5 +15,6 @@
     <Project Path="tests/BrokerForge.Contracts.Tests/BrokerForge.Contracts.Tests.csproj" />
     <Project Path="tests/BrokerForge.Descriptors.Tests/BrokerForge.Descriptors.Tests.csproj" />
     <Project Path="tests/BrokerForge.Keys.Tests/BrokerForge.Keys.Tests.csproj" />
+    <Project Path="tests/BrokerForge.Plugin.Tests/BrokerForge.Plugin.Tests.csproj" />
   </Folder>
 </Solution>

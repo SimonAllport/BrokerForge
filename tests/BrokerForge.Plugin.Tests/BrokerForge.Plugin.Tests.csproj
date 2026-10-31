@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The plug-in is net462; its translation and error code are linked in here, the same way it links Contracts (D-08). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.PowerPlatform.Dataverse.Client" Version="1.1.32" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\BrokerForge.Contracts\**\*.cs" Exclude="..\..\src\BrokerForge.Contracts\obj\**;..\..\src\BrokerForge.Contracts\bin\**" LinkBase="Contracts" />
+    <Compile Include="..\..\src\BrokerForge.Plugin\Translation\*.cs" LinkBase="Plugin" />
+    <Compile Include="..\..\src\BrokerForge.Plugin\Transport\ErrorRaiser.cs" LinkBase="Plugin" />
+  </ItemGroup>
+</Project>
