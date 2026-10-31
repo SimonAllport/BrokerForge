@@ -49,10 +49,16 @@ public static partial class ExecuteEndpoint
         try
         {
             guard.Check(http.User, request);
+            var timeout = TimeSpan.FromSeconds(configuration.GetValue("Host:TimeoutSeconds", 90));
+            if (PrimaryKeyLookup(request, router) is { } lookup)
+            {
+                var rows = await LookUpByKey(lookup, router, secrets, tokenKey, Deadline.After(timeout), ct);
+                log.LogInformation("Completed {Message} on {Table} as a primary key lookup in {ElapsedMs} ms", request.Message, request.Table, watch.ElapsedMilliseconds);
+                return Results.Json(new CanonicalResponse { CorrelationId = correlationId, Rows = rows });
+            }
             var (op, broker) = await router.ResolveAsync(request, ct);
             log.LogInformation("Executing {Message} on {Table} with {Operation} v{Version}", request.Message, request.Table, op.Descriptor.Operation, op.Descriptor.Version);
 
-            var timeout = TimeSpan.FromSeconds(configuration.GetValue("Host:TimeoutSeconds", 90));
             var response = await Run(request, op, new OperationExecutor(broker), secrets, tokenKey, Deadline.After(timeout), ct);
             response.CorrelationId = correlationId;
             log.LogInformation("Completed {Message} on {Table} in {ElapsedMs} ms", request.Message, request.Table, watch.ElapsedMilliseconds);
@@ -66,6 +72,47 @@ public static partial class ExecuteEndpoint
             else
                 log.LogWarning("Failed {Message} on {Table} after {ElapsedMs} ms with {Status} {Error}: {Reason}", request.Message, request.Table, watch.ElapsedMilliseconds, status, payload.Error, payload.Message);
             return Results.Json(payload, statusCode: status);
+        }
+    }
+
+    /// <summary>
+    /// A RetrieveMultiple whose only condition is primary key eq one GUID, on a table with a Retrieve
+    /// operation. The platform sends these for Web API upserts and record lookups (phase 1 findings); the
+    /// source answers them through the Retrieve descriptor, so nothing is filtered in the host.
+    /// </summary>
+    private static CanonicalRequest? PrimaryKeyLookup(CanonicalRequest request, RequestRouter router)
+    {
+        if (request.Message != Messages.RetrieveMultiple || !router.HasOperation(request.Table, Messages.Retrieve))
+            return null;
+        var filter = request.Query?.Filter;
+        if (filter is not { Type: "and", Conditions.Count: 1 } || filter.Groups is { Count: > 0 } || request.Query!.Page?.Token != null)
+            return null;
+        var c = filter.Conditions[0];
+        if (c.Col != request.Table + "id" || c.Op != Ops.Eq || c.Values is not { Count: 1 } || !Guid.TryParse(c.Values[0], out _))
+            return null;
+        return new CanonicalRequest
+        {
+            CorrelationId = request.CorrelationId,
+            EnvironmentId = request.EnvironmentId,
+            ServiceInstance = request.ServiceInstance,
+            Table = request.Table,
+            Message = Messages.Retrieve,
+            Caller = request.Caller,
+            Id = c.Values[0],
+        };
+    }
+
+    private static async Task<List<Row>> LookUpByKey(CanonicalRequest retrieve, RequestRouter router, ISecretResolver secrets, PageTokenKey tokenKey, Deadline deadline, CancellationToken ct)
+    {
+        try
+        {
+            var (op, broker) = await router.ResolveAsync(retrieve, ct);
+            var response = await Run(retrieve, op, new OperationExecutor(broker), secrets, tokenKey, deadline, ct);
+            return new List<Row> { response.Record };
+        }
+        catch (Exception ex) when (ex is InvalidKeyException || ex is MappedSourceException { Kind: SourceErrorKinds.NotFound })
+        {
+            return new List<Row>();
         }
     }
 

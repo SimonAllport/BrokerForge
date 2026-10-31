@@ -385,6 +385,7 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 | D-11 | Custom APIs are delivered in phase 2 with the generator, not phase 1 | The phase 1 criteria cover CRUD only, and Custom API registration needs the generator |
 | D-12 | When a page needs more than `maxCallsPerPage` source calls, the host returns what it has with a next token rather than failing | The Web API asks for 5000 rows when no page size is set; failing would break every such query. A next token means nothing is presented as complete when it is not |
 | D-13 | Host-side shared contracts (`IBroker`, `IAuthProvider`, `IAuthenticatedChannel`, `ISecretResolver`, `ServiceInstance`, `RenderedRequest`, `BrokerResult`) live in a `BrokerForge.Abstractions` project, which is not in the original layout | Adapters and auth providers must reference them without referencing the descriptor engine or the host |
+| D-14 | A RetrieveMultiple whose only condition is primary key eq one GUID is answered by the table's Retrieve operation, and not found becomes an empty page | The platform queries a virtual table this way for Web API upserts (a plain PATCH) and record lookups (phase 1 findings). The source does the lookup, so nothing is filtered in the host; any other condition alongside the key is still refused |
 
 ### Open questions
 

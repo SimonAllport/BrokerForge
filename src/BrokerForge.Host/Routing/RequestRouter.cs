@@ -16,6 +16,9 @@ public sealed class RequestRouter(HostConfigStore config, IEnumerable<IAuthProvi
     private readonly Dictionary<AuthMode, IAuthProvider> _providers = providers.ToDictionary(p => p.Mode);
     private readonly Dictionary<string, IBroker> _brokers = brokers.ToDictionary(b => b.BrokerType);
 
+    public bool HasOperation(string? table, string message) =>
+        table != null && config.Map(table)?.Map.Operations.ContainsKey(message) == true;
+
     public async Task<(OperationContext Op, IBroker Broker)> ResolveAsync(CanonicalRequest request, CancellationToken ct)
     {
         var correlationId = request.CorrelationId!;

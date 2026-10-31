@@ -32,6 +32,40 @@ public class OrdersEndToEndTests(MockApiFixture mock) : HostTestBase(mock)
         Assert.Equal(Id("ord_0001"), response!.Rows[0].Id);
     }
 
+    // The Web API's PATCH (upsert) and other platform lookups query a virtual table by primary key
+    // through RetrieveMultiple (phase 1 findings). The host answers with the Retrieve operation.
+    [Fact]
+    public async Task List_PrimaryKeyEquality_RoutesToRetrieve()
+    {
+        var (status, response, error) = await Host.Execute(List("ext_order", 50, Where("ext_orderid", Ops.Eq, Id("ord_0007"))));
+        Assert.True(status == 200, error?.Message);
+        var row = Assert.Single(response!.Rows);
+        Assert.Equal(Id("ord_0007"), row.Id);
+        Assert.Equal("REF-0007", Value(row, "ext_name"));
+        Assert.Null(response.Next);
+    }
+
+    [Fact]
+    public async Task List_PrimaryKeyEquality_MissingRecord_EmptyPage()
+    {
+        var (status, response, _) = await Host.Execute(List("ext_order", 50, Where("ext_orderid", Ops.Eq, Id("ord_9999"))));
+        Assert.Equal(200, status);
+        Assert.Empty(response!.Rows);
+        var (foreign, other, _) = await Host.Execute(List("ext_order", 50, Where("ext_orderid", Ops.Eq, Guid.NewGuid().ToString())));
+        Assert.Equal(200, foreign);
+        Assert.Empty(other!.Rows);
+    }
+
+    [Fact]
+    public async Task List_PrimaryKeyWithOtherConditions_StillUnsupported()
+    {
+        var filter = Where("ext_orderid", Ops.Eq, Id("ord_0007"));
+        filter.Conditions.Add(new Condition { Col = "ext_customerref", Op = Ops.Eq, Values = new() { "CUST-07" } });
+        var (status, _, error) = await Host.Execute(List("ext_order", 50, filter));
+        Assert.Equal(400, status);
+        Assert.Contains("ext_orderid", error!.Message);
+    }
+
     [Fact]
     public async Task Retrieve_ByReversibleKey()
     {

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Phase 1: sign the plug-in and register the provider and ext_order virtual table (see setup_dataverse.py).
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# osslsigncode fails intermittently reading the PFX or reaching the timestamp server; retry before giving up.
+for attempt in 1 2 3; do
+  "$ROOT/tools/spike/sign-plugin.sh" && break
+  [ "$attempt" = 3 ] && exit 1
+  sleep 5
+done
+# macOS: the python.org build ships without CA certificates; the system Python uses the keychain.
+PY="${PYTHON:-$( [ -x /usr/bin/python3 ] && echo /usr/bin/python3 || echo python3 )}"
+"$PY" "$ROOT/tools/dev/setup_dataverse.py" "$ROOT/out/BrokerForge.Plugin.dll"
