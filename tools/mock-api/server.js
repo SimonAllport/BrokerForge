@@ -16,11 +16,13 @@ let orders;
 let nextId;
 let idempotency;
 let failed503;
+let lastEcho;
 function reset() {
   orders = seed();
   nextId = orders.length + 1;
   idempotency = new Map();
   failed503 = false;
+  lastEcho = undefined;
 }
 reset();
 
@@ -124,7 +126,7 @@ async function route(req, res) {
     const headers = { ...req.headers };
     delete headers['x-api-key'];
     const rawQuery = req.url.includes('?') ? req.url.slice(req.url.indexOf('?') + 1) : '';
-    return send(res, 200, {
+    lastEcho = {
       method: m,
       path: req.url.split('?')[0],
       query: Object.fromEntries(q),
@@ -132,7 +134,13 @@ async function route(req, res) {
       headers,
       contentType: req.headers['content-type'] ?? null,
       body: await readBody(req),
-    });
+    };
+    // `rows` lets a RetrieveMultiple descriptor read the echo as an empty list.
+    return send(res, 200, { ...lastEcho, rows: [] });
+  }
+  if (m === 'GET' && p === '/__echo/last') {
+    if (!lastEcho) throw new HttpError(404, 'no echo request since the last reset');
+    return send(res, 200, lastEcho);
   }
 
   if (m === 'GET' && p === '/v2/orders') {

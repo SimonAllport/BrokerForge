@@ -162,6 +162,17 @@ test('echo returns the request as received without the api key', async () => {
   assert.equal(r.json.body, '{"hello":"world"}');
 });
 
+test('last echo is kept for contract tests and echo carries an empty rows list', async () => {
+  assert.equal((await call('GET', '/__echo/last')).status, 404);
+  const r = await call('PUT', '/v2/echo/x?q=1', { body: { a: 1 } });
+  assert.deepEqual(r.json.rows, []);
+  const last = await call('GET', '/__echo/last');
+  assert.equal(last.json.method, 'PUT');
+  assert.equal(last.json.rawQuery, 'q=1');
+  await call('POST', '/__reset');
+  assert.equal((await call('GET', '/__echo/last')).status, 404);
+});
+
 test('reset restores seed', async () => {
   await call('DELETE', '/v2/orders/ord_0002');
   await call('POST', '/v2/accounts/a/orders', { body: { customer: { ref: 'X' } } });
