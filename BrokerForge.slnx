@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/BrokerForge.Abstractions/BrokerForge.Abstractions.csproj" />
+    <Project Path="src/BrokerForge.Auth/BrokerForge.Auth.csproj" />
     <Project Path="src/BrokerForge.Contracts/BrokerForge.Contracts.csproj" />
     <Project Path="src/BrokerForge.Descriptors/BrokerForge.Descriptors.csproj" />
     <Project Path="src/BrokerForge.Host/BrokerForge.Host.csproj" />
@@ -8,6 +9,7 @@
     <Project Path="src/BrokerForge.Plugin/BrokerForge.Plugin.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/BrokerForge.Auth.Tests/BrokerForge.Auth.Tests.csproj" />
     <Project Path="tests/BrokerForge.Contracts.Tests/BrokerForge.Contracts.Tests.csproj" />
     <Project Path="tests/BrokerForge.Descriptors.Tests/BrokerForge.Descriptors.Tests.csproj" />
     <Project Path="tests/BrokerForge.Keys.Tests/BrokerForge.Keys.Tests.csproj" />
