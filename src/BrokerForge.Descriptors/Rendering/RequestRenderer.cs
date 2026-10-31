@@ -44,6 +44,9 @@ public static partial class RequestRenderer
         {
             var text = ToText(await r.Resolve(binding, $"request.pathParams.{name}"))
                 ?? throw r.Validation($"path parameter `{name}` has no value");
+            // "." and ".." survive escaping and would move the request to another route once normalised.
+            if (text is "." or "..")
+                throw r.Validation($"path parameter `{name}` must not be a dot segment");
             path = path.Replace("{" + name + "}", Uri.EscapeDataString(text), StringComparison.Ordinal);
         }
 

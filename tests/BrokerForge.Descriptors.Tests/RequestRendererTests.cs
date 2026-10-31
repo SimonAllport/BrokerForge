@@ -53,6 +53,16 @@ public class RequestRendererTests
         Assert.Null(r.Body);
     }
 
+    [Theory]
+    [InlineData(".")]
+    [InlineData("..")]
+    public async Task Path_DotSegmentValue_ThrowsValidation(string value)
+    {
+        var d = Op("Retrieve", "  method: GET\n  path: /v2/orders/{orderId}\n  pathParams: { orderId: { id: true } }");
+        var ex = await Assert.ThrowsAsync<MappedSourceException>(() => Render(d, Ctx(id: ExternalKey.FromString(value))));
+        Assert.Equal(SourceErrorKinds.Validation, ex.Kind);
+    }
+
     [Fact]
     public async Task Path_NullValue_ThrowsValidation()
     {
