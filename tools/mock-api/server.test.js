@@ -160,6 +160,7 @@ test('echo returns the request as received without the api key', async () => {
   assert.equal(r.json.headers['x-api-key'], undefined);
   assert.equal(r.json.contentType, 'application/json');
   assert.equal(r.json.body, '{"hello":"world"}');
+  assert.equal(r.json.id, 'a/b');
 });
 
 test('last echo is kept for contract tests and echo carries an empty rows list', async () => {

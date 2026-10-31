@@ -135,8 +135,9 @@ async function route(req, res) {
       contentType: req.headers['content-type'] ?? null,
       body: await readBody(req),
     };
-    // `rows` lets a RetrieveMultiple descriptor read the echo as an empty list.
-    return send(res, 200, { ...lastEcho, rows: [] });
+    // `id` (the decoded last path segment) gives echo descriptors a key; `rows` lets a list read it as empty.
+    const segments = lastEcho.path.split('/');
+    return send(res, 200, { ...lastEcho, id: decodeURIComponent(segments[segments.length - 1]), rows: [] });
   }
   if (m === 'GET' && p === '/__echo/last') {
     if (!lastEcho) throw new HttpError(404, 'no echo request since the last reset');

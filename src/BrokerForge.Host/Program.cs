@@ -1,72 +1,87 @@
-using System.Security.Claims;
+using System.Text.Json.Serialization;
+using Azure.Core;
+using Azure.Identity;
+using BrokerForge.Abstractions;
+using BrokerForge.Adapters.Rest;
+using BrokerForge.Auth;
+using BrokerForge.Host.Config;
+using BrokerForge.Host.Endpoints;
+using BrokerForge.Host.Ingress;
+using BrokerForge.Host.Routing;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
-// Phase 0 stub host. Validates the plug-in's Power Platform managed identity token and
-// echoes its non-secret claims so phase 0 can record exactly what the token carries.
+// BrokerForge host (HLD 5.2): validates the plug-in's managed identity token, routes the canonical
+// request to its descriptor and adapter, and replies with rows, a record, an id or a typed error.
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddJsonConsole(o => o.IncludeScopes = true);
 
-var trust = builder.Configuration.GetSection("Trust");
-var tenantId = Require(trust, "TenantId");
-var audience = Require(trust, "Audience");
-var allowedClientId = Require(trust, "AllowedClientId");
-
-builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+builder.Services.Configure<TrustOptions>(builder.Configuration.GetSection("Trust"));
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
+// Configured from TrustOptions when first used, so the values come from the final configuration.
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IOptions<TrustOptions>>((options, trustOptions) =>
     {
-        options.Authority = $"https://login.microsoftonline.com/{tenantId}/v2.0";
+        var trust = trustOptions.Value;
+        options.Authority = $"https://login.microsoftonline.com/{trust.TenantId}/v2.0";
         options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidAudiences = [audience],
+            ValidAudiences = [trust.Audience],
             // Entra issues v1 or v2 tokens depending on the resource app's accessTokenAcceptedVersion.
             ValidIssuers =
             [
-                $"https://sts.windows.net/{tenantId}/",
-                $"https://login.microsoftonline.com/{tenantId}/v2.0",
+                $"https://sts.windows.net/{trust.TenantId}/",
+                $"https://login.microsoftonline.com/{trust.TenantId}/v2.0",
             ],
         };
         options.Events = new JwtBearerEvents
         {
             OnTokenValidated = ctx =>
             {
-                var p = ctx.Principal!;
-                if (p.FindFirstValue("tid") != tenantId)
-                    ctx.Fail($"Token tenant is not {tenantId}.");
-                else if ((p.FindFirstValue("appid") ?? p.FindFirstValue("azp")) != allowedClientId)
-                    ctx.Fail("Token was not issued to the allowed plug-in identity.");
+                if (ctx.Principal!.FindFirst("tid")?.Value != trust.TenantId)
+                    ctx.Fail($"Token tenant is not {trust.TenantId}.");
                 return Task.CompletedTask;
             },
             OnAuthenticationFailed = ctx =>
             {
-                ctx.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>().LogWarning(
-                    "Token rejected correlationId={CorrelationId}: {Reason}",
-                    ctx.Request.Headers["x-correlation-id"].ToString(), ctx.Exception.Message);
+                ctx.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("BrokerForge.Ingress")
+                    .LogWarning("Token rejected: {Reason}", ctx.Exception.Message);
                 return Task.CompletedTask;
             },
         };
     });
 builder.Services.AddAuthorization();
+builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull);
+
+builder.Services.AddHttpClient("sources", c => c.Timeout = Timeout.InfiniteTimeSpan)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5), AllowAutoRedirect = false });
+builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
+builder.Services.AddSingleton<ISecretResolver>(sp => new SecretResolverRouter(
+    new KeyVaultSecretResolver(sp.GetRequiredService<TokenCredential>()),
+    new EnvironmentSecretResolver(),
+    builder.Configuration.GetValue("Secrets:AllowEnvironment", false)));
+builder.Services.AddSingleton<IAuthProvider>(sp => new StaticAuthProvider(sp.GetRequiredService<ISecretResolver>(), sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
+builder.Services.AddSingleton<IAuthProvider>(sp => new ServiceAccountAuthProvider(sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
+builder.Services.AddSingleton<IBroker, RestBroker>();
+builder.Services.AddSingleton<HostConfigStore>();
+builder.Services.AddSingleton<CallerGuard>();
+builder.Services.AddSingleton<RequestRouter>();
 
 var app = builder.Build();
+
+// Validate trust and load every descriptor before taking traffic; any problem stops the host here.
+var trustProblems = app.Services.GetRequiredService<IOptions<TrustOptions>>().Value.Problems().ToList();
+if (trustProblems.Count > 0)
+    throw new InvalidOperationException("Host configuration is invalid:" + string.Concat(trustProblems.Select(p => "\n - " + p)));
+var store = app.Services.GetRequiredService<HostConfigStore>();
+app.Logger.LogInformation("Loaded descriptors: {Descriptors}", string.Join(", ", store.DescriptorNames));
+
 app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapGet("/healthz", () => Results.Ok("ok"));
-
-app.MapGet("/spike/whoami", (HttpContext http, ILogger<Program> log) =>
-{
-    var correlationId = http.Request.Headers["x-correlation-id"].ToString();
-    var claims = http.User.Claims
-        .GroupBy(c => c.Type)
-        .ToDictionary(g => g.Key, g => string.Join(" ", g.Select(c => c.Value)));
-    log.LogInformation("Validated plug-in call correlationId={CorrelationId} claims={Claims}",
-        correlationId, string.Join(",", claims.Keys));
-    return Results.Ok(new { correlationId, validated = true, claims });
-}).RequireAuthorization();
-
+ExecuteEndpoint.Map(app);
 app.Run();
 
-static string Require(IConfiguration section, string key) =>
-    section[key] is { Length: > 0 } v ? v : throw new InvalidOperationException($"Missing configuration Trust:{key}.");
+public partial class Program;
