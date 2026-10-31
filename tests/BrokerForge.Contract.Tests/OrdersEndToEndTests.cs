@@ -121,6 +121,35 @@ public class OrdersEndToEndTests(MockApiFixture mock) : HostTestBase(mock)
     }
 
     [Fact]
+    public async Task Update_UnboundColumn_400ValidationNamingColumn()
+    {
+        var update = HostFactory.Request("ext_order", Messages.Update);
+        update.Id = Id("ord_0002");
+        update.Record = new() { Cell("ext_customerref", "CUST-99"), Cell("ext_status", "100000001", CellTypes.OptionSet) };
+        var (status, _, error) = await Host.Execute(update);
+        Assert.Equal(400, status);
+        Assert.Equal("Validation", error!.Error);
+        Assert.Contains("ext_status", error.Message);
+
+        var get = HostFactory.Request("ext_order", Messages.Retrieve);
+        get.Id = update.Id;
+        Assert.Equal("CUST-02", Value((await Host.Execute(get)).Response!.Record, "ext_customerref"));
+    }
+
+    [Fact]
+    public async Task Create_UnboundColumn_400_NullUnboundTolerated()
+    {
+        var create = HostFactory.Request("ext_order", Messages.Create);
+        create.Record = new() { Cell("ext_customerref", "CUST-77"), Cell("ext_name", "MY-REF") };
+        var (status, _, error) = await Host.Execute(create);
+        Assert.Equal(400, status);
+        Assert.Contains("ext_name", error!.Message);
+
+        create.Record = new() { Cell("ext_customerref", "CUST-77"), new Cell { Col = "ext_name", Type = CellTypes.String, Value = null } };
+        Assert.Equal(200, (await Host.Execute(create)).Status);
+    }
+
+    [Fact]
     public async Task Delete_ThenRetrieve404()
     {
         var delete = HostFactory.Request("ext_order", Messages.Delete);

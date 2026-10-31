@@ -135,13 +135,33 @@ public static partial class ExecuteEndpoint
                 return new CanonicalResponse { Record = new Row { Id = request.Id, Cells = row.Cells.ToList() } };
 
             case Messages.Create:
+                RefuseUnboundColumns(request, op);
                 var created = await Call(op, executor, secrets, deadline, ct);
                 return new CanonicalResponse { Id = Encode(op, ResponseMapper.MapCreatedKey(d, created, op.Keys.Kind, correlationId)) };
 
             default:
+                if (request.Message == Messages.Update)
+                    RefuseUnboundColumns(request, op);
                 await Call(op, executor, secrets, deadline, ct);
                 return new CanonicalResponse();
         }
+    }
+
+    /// <summary>
+    /// A supplied value no binding sends would be dropped while Dataverse reports success, so refuse it.
+    /// A null on Create is tolerated: it asks for nothing.
+    /// </summary>
+    private static void RefuseUnboundColumns(CanonicalRequest request, OperationContext op)
+    {
+        var bound = RequestRenderer.BoundColumns(op.Descriptor.Request);
+        var dropped = (request.Record ?? new List<Cell>())
+            .Where(c => !bound.Contains(c.Col) && (request.Message == Messages.Update || c.Value != null))
+            .Select(c => c.Col)
+            .ToList();
+        if (dropped.Count > 0)
+            throw new MappedSourceException(SourceErrorKinds.Validation,
+                $"Column(s) {string.Join(", ", dropped)} cannot be saved: operation {op.Descriptor.Operation} does not send them to the source.",
+                op.Binding.CorrelationId);
     }
 
     private static async Task<BrokerResult> Call(OperationContext op, OperationExecutor executor, ISecretResolver secrets, Deadline deadline, CancellationToken ct)

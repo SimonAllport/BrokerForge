@@ -217,6 +217,38 @@ public class PagingTests(MockApiFixture mock) : IAsyncLifetime
         AssertCoverOnce(ids);
     }
 
+    private sealed class ScriptedBroker(params string[] bodies) : BrokerForge.Abstractions.IBroker
+    {
+        private int _next;
+        public string BrokerType => "rest";
+        public BrokerForge.Abstractions.BrokerCapabilities Capabilities { get; } = new(new HashSet<string>());
+        public Task<BrokerForge.Abstractions.DiscoveryResult> DiscoverAsync(BrokerForge.Abstractions.ServiceInstance instance, CancellationToken ct) => throw new NotSupportedException();
+        public Task<BrokerForge.Abstractions.BrokerResult> ExecuteAsync(BrokerForge.Abstractions.RenderedRequest request, BrokerForge.Abstractions.IAuthenticatedChannel channel, string correlationId, CancellationToken ct) =>
+            Task.FromResult(new BrokerForge.Abstractions.BrokerResult(200, new Dictionary<string, string[]>(), System.Text.Encoding.UTF8.GetBytes(bodies[_next++])));
+    }
+
+    private static string Order(int i) => $$"""{"id":"ord_{{i:D4}}","reference":"REF-{{i:D4}}","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z"}""";
+
+    private static PagingCoordinator Scripted(params string[] bodies) => new(new OperationExecutor(new ScriptedBroker(bodies)), new Operations.MockKey(), Operations.TokenKey);
+
+    [Fact]
+    public async Task Offset_EmptyPageBeforeTotal_ThrowsSource()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOffset", y => y.Replace("max: 40", "max: 2")));
+        var coordinator = Scripted("{\"items\":[" + Order(1) + "," + Order(2) + "],\"total\":10}", """{"items":[],"total":10}""");
+        var ex = await Assert.ThrowsAsync<SourceException>(() => coordinator.ReadPageAsync(op, Plan(op, 4), Budget(), CancellationToken.None));
+        Assert.Contains("total", ex.Message);
+    }
+
+    [Fact]
+    public async Task Page_SourceReturnsMoreThanAsked_ThrowsSource()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders", y => y.Replace("max: 100", "max: 2")));
+        var coordinator = Scripted("{\"data\":[" + string.Join(",", Order(1), Order(2), Order(3)) + "],\"meta\":{\"nextCursor\":null}}");
+        var ex = await Assert.ThrowsAsync<SourceException>(() => coordinator.ReadPageAsync(op, Plan(op, 2), Budget(), CancellationToken.None));
+        Assert.Contains("page size", ex.Message);
+    }
+
     [Fact]
     public async Task Deadline_AppliesAcrossPageCalls()
     {

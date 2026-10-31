@@ -124,6 +124,17 @@ public class QueryPlannerTests
     }
 
     [Fact]
+    public void Plan_CsvValueContainingComma_Throws()
+    {
+        var yaml = Mutate(OrdersYaml("listOrders"), "customer: { filter: ext_customerref, ops: [eq] }", "customer: { filter: ext_customerref, ops: [eq, in], format: csv }");
+        Assert.Equal(new[] { "A", "B" }, Plan(Q(And(C("ext_customerref", Ops.In, "A", "B"))), yaml).ByParam["customer"].SourceValues);
+        var ex = Rejects(Q(And(C("ext_customerref", Ops.In, "Smith, J", "ACME"))), yaml);
+        Assert.Contains("ext_customerref", ex.Message);
+        Assert.Contains(",", ex.Message);
+        Rejects(Q(And(C("ext_customerref", Ops.Eq, "a,b"))), yaml);
+    }
+
+    [Fact]
     public void Plan_EqWithTwoValues_Throws()
     {
         Rejects(Q(And(C("ext_customerref", Ops.Eq, "A", "B"))));

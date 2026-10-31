@@ -40,7 +40,11 @@ public static class QueryPlanner
             if (c.Op == Ops.Like && values.Any(v => v.Contains('%') || v.Contains('_')))
                 throw Reject($"Filter on column {c.Col} with operator like supports begins-with only; the value may not contain % or _");
 
-            byParam[match.Param] = new BoundFilter(c.Op, ReverseMap(d, c.Col, c.Op, values, Reject));
+            var sourceValues = ReverseMap(d, c.Col, c.Op, values, Reject);
+            // A csv parameter cannot carry a value that contains its own delimiter.
+            if (match.Binding.Modifiers.Format == "csv" && sourceValues.Any(v => v.Contains(',')))
+                throw Reject($"Filter on column {c.Col} with operator {c.Op}: a value contains a comma, which the source's comma-separated parameter cannot carry");
+            byParam[match.Param] = new BoundFilter(c.Op, sourceValues);
         }
 
         var requested = q.Page?.Size > 0 ? q.Page.Size : d.Paging?.PageSize?.Max ?? FallbackPageSize;

@@ -19,6 +19,10 @@ namespace BrokerForge.Plugin.Translation
             if (q.LinkEntities != null && q.LinkEntities.Count > 0)
                 throw new UnsupportedQueryException("Queries that join other tables (link-entity) are not supported on BrokerForge virtual tables.", correlationId);
 
+            // Without the cookie the host cannot know where page N starts; treating it as page 1 would repeat rows.
+            if (q.PageInfo != null && q.PageInfo.PageNumber > 1 && string.IsNullOrEmpty(q.PageInfo.PagingCookie))
+                throw new UnsupportedQueryException(string.Format("Dataverse asked for page {0} without a paging cookie; BrokerForge virtual tables page forward from page 1 only.", q.PageInfo.PageNumber), correlationId);
+
             var size = q.PageInfo != null && q.PageInfo.Count > 0 ? q.PageInfo.Count : q.TopCount ?? DefaultPageSize;
             return new CanonicalQuery
             {

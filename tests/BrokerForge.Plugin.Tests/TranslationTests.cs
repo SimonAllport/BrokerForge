@@ -118,6 +118,16 @@ public class TranslationTests
     }
 
     [Fact]
+    public void Translate_PageNumberAboveOneWithoutCookie_Throws()
+    {
+        var q = new QueryExpression("ext_order") { PageInfo = new PagingInfo { Count = 25, PageNumber = 3 } };
+        var ex = Assert.Throws<UnsupportedQueryException>(() => QueryTranslator.Translate(q, "c"));
+        Assert.Contains("page 3", ex.Message);
+        q.PageInfo.PageNumber = 1;
+        Assert.Null(QueryTranslator.Translate(q, "c").Page.Token);
+    }
+
+    [Fact]
     public void Translate_TopCountWhenNoPageInfo()
     {
         var q = new QueryExpression("ext_order") { TopCount = 7 };

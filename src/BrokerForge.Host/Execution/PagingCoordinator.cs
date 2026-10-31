@@ -95,6 +95,8 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
             calls++;
 
             SourceException Source(string why) => new($"{why} (operation {d.Operation}).", correlationId, result.Status);
+            if (strategy != "none" && page.Count > callSize)
+                throw Source($"The source returned {page.Count} rows for a page size of {callSize}, so it ignored the page size and pages cannot be tracked");
             switch (strategy)
             {
                 case "cursor":
@@ -112,6 +114,8 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
                         more = int.TryParse(total, NumberStyles.None, CultureInfo.InvariantCulture, out var t)
                             ? offset < t
                             : throw Source($"The total at {totalPath} is not a whole number");
+                        if (more && page.Count == 0)
+                            throw Source($"The source's total at {totalPath} is {t} but it returned no rows at offset {offset}");
                     }
                     else
                     {

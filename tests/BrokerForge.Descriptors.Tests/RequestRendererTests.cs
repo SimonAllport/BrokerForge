@@ -256,6 +256,14 @@ public class RequestRendererTests
     }
 
     [Fact]
+    public async Task Col_OptionSetValue_RefusedUntilReverseMapped()
+    {
+        var d = Op("Create", "  method: POST\n  path: /v2/o\n  body:\n    template:\n      state: { col: ext_status }");
+        var ex = await Assert.ThrowsAsync<UnsupportedQueryException>(() => Render(d, Ctx(record: new() { ["ext_status"] = Cell("ext_status", CellTypes.OptionSet, "100000000") })));
+        Assert.Contains("ext_status", ex.Message);
+    }
+
+    [Fact]
     public async Task RequiredMissing_ThrowsValidation()
     {
         var d = Op("Create", "  method: POST\n  path: /v2/o\n  body:\n    template:\n      ref: { col: ext_customerref, required: true }");

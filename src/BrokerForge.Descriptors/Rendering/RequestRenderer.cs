@@ -84,6 +84,28 @@ public static partial class RequestRenderer
         return new RenderedRequest(ctx.Instance.BaseUrl, spec.Method, pathAndQuery, headers, body, spec.Body?.ContentType, r.SecretParams, r.SecretValues);
     }
 
+    /// <summary>Every column a request's col bindings read, across path, query, headers and body.</summary>
+    public static IReadOnlySet<string> BoundColumns(RequestSpec spec)
+    {
+        var columns = new HashSet<string>(StringComparer.Ordinal);
+        void Add(Binding b) { if (b is ColBinding c) columns.Add(c.Column); }
+        void Walk(BodyNode? node)
+        {
+            switch (node)
+            {
+                case BodyObject o: foreach (var m in o.Members) Walk(m.Value); break;
+                case BodyArray a: foreach (var i in a.Items) Walk(i); break;
+                case BodyLeaf l: Add(l.Binding); break;
+            }
+        }
+        foreach (var b in spec.PathParams.Values.Concat(spec.Query.Select(q => q.Value)).Concat(spec.Headers.Select(h => h.Value)))
+            Add(b);
+        Walk(spec.Body?.Template);
+        foreach (var p in spec.Body?.RawPlaceholders ?? Array.Empty<RawPlaceholder>())
+            Add(p.Binding);
+        return columns;
+    }
+
     private static void AddPagingParams(PagingSpec? paging, PagingValues? values, List<string> query)
     {
         if (paging == null || values == null)
@@ -255,6 +277,9 @@ public static partial class RequestRenderer
                     }
                     if (ctx.Record == null || !ctx.Record.TryGetValue(c.Column, out var cell) || cell.Value == null)
                         return NullV.I;
+                    // The Dataverse integer is not the source's value, and write descriptors carry no option set map yet.
+                    if (cell.Type == CellTypes.OptionSet)
+                        throw new UnsupportedQueryException($"Column {c.Column} is an option set; writing option set values to a source is not supported until phase 2 (operation {d.Operation}).", ctx.CorrelationId);
                     return new TextV(cell.Value, cell.Type switch
                     {
                         CellTypes.Int or CellTypes.Decimal when JsonNumber().IsMatch(cell.Value) => Kind.Number,
