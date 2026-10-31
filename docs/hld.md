@@ -379,6 +379,8 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 | D-05 | Descriptors as YAML in Git, deployed as config data | Reviewable, testable, environment-independent |
 | D-06 | Name: BrokerForge | Fits SwaggerForge and Control Forge; keeps the K2 lineage visible |
 | D-07 | API Management is optional, decided per client | Not every client runs APIM; the host already validates tokens, throttles and logs |
+| D-08 | The plug-in compiles the Contracts source files in; there is no separate Contracts DLL or plug-in package | The sandbox loads only the registered assembly. Keeps the plug-in one signed DLL. DTOs use `[DataContract]` so `DataContractJsonSerializer` (plug-in) and `System.Text.Json` (host) both work without extra dependencies |
+| D-09 | One plug-in identity (app registration) per Dataverse environment; the host maps `azp` to one allowed environment ID and rejects a request whose `environmentId` does not match | The token has no environment claim (phase 0), so this is the only way the host can verify the environment |
 
 ### Open questions
 
@@ -388,9 +390,6 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 - [ ] Composite operations across brokers: in scope for v1 or later.
 - [ ] How to detect native-table references to key-map GUIDs before pruning.
 - [ ] Licensing and packaging model if BrokerForge is offered beyond client engagements.
-- [ ] One plug-in identity (app registration) per environment, so the host can map `azp` to an allowed environment. Phase 0 found no environment claim in the token, so a shared identity would leave the canonical request's `environmentId` unverifiable. Proposed; needs a decision before phase 1 ingress.
-- [ ] Do `netstandard2.0` Contracts load in the `net462` plug-in sandbox without a plug-in package? Test at the start of phase 1.
-
 ## 17. Delivery phases
 
 Phases are sequenced by risk; durations are not yet estimated. Acceptance criteria per phase are in `CLAUDE.md`.

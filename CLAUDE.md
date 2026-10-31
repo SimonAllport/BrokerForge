@@ -20,9 +20,7 @@ BrokerForge surfaces external data sources in Microsoft Dataverse the way K2 ser
 | SmartObject | Virtual table (CRUD) + Custom APIs (all other methods) |
 | Host server | Broker host: ASP.NET Core service on Azure Container Apps |
 
-It generalises **RESTVTP**, an existing config-driven REST virtual table provider. RESTVTP code is the starting point for the REST adapter, SwaggerForge and the Node mock API.
-
-- RESTVTP repo: `<set path before starting>`
+It generalises **RESTVTP**, an existing config-driven REST virtual table provider. RESTVTP code is not available to this repo, so the REST adapter, SwaggerForge and the Node mock API are built fresh from `docs/hld.md` and `docs/descriptor-spec.md`.
 
 ## Request pipeline and boundaries
 
@@ -55,7 +53,7 @@ Phase 0 verified these on 31 October 2026. Read `docs/findings/phase0.md` before
 - [x] How `IEntityDataSourceRetrieverService` is resolved inside the provider plug-in to read the data source record.
 - [x] Plug-in to host call using Power Platform managed identity (`IManagedIdentityService.AcquireToken`) and host-side validation of that token (audience, tenant; environment only through the plug-in identity, see the findings).
 
-Still unverified (listed under "Still open" in the findings): `netstandard2.0` Contracts loading in the `net462` sandbox, CA-issued certificate subjects, `AcquireToken(Guid, …)`.
+Still unverified (listed under "Still open" in the findings): CA-issued certificate subjects, `AcquireToken(Guid, …)`. The `netstandard2.0` loading question no longer applies: the plug-in compiles Contracts source in (HLD D-08).
 
 ## Stack
 
