@@ -36,7 +36,7 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
         var fixedSize = Math.Min(plan.PageSize, target);
         if (plan.Token != null)
         {
-            var (tokenStrategy, c) = PageToken.Parse(plan.Token, d, plan, tokenKey, correlationId);
+            var (tokenStrategy, c) = PageToken.Parse(plan.Token, op, plan, tokenKey, correlationId);
             if (strategy == "none")
                 throw Reject("This source returns everything in one page; there is no next page to request");
             if (tokenStrategy != strategy)
@@ -155,7 +155,7 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
             "link" => $"{fixedSize} {link}",
             _ => throw new InvalidOperationException(strategy),
         };
-        return (rows, PageToken.Create(d, strategy, state, plan, tokenKey));
+        return (rows, PageToken.Create(op, strategy, state, plan, tokenKey));
     }
 
     private static string? NextFrom(BrokerResult result, RenderedRequest request, string baseUrl, Func<string, SourceException> fail)

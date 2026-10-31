@@ -9,28 +9,30 @@ namespace BrokerForge.Host.Execution;
 
 /// <summary>
 /// The host's page token, carried by Dataverse in the paging cookie (phase 0 findings 4): base64url JSON
-/// <c>{ op, v, s, c, h }</c> = operation, descriptor version, strategy, strategy cursor and a hash of the
-/// bound filters and sort, then "." and an HMAC-SHA256 tag under the host's page token key. The cookie is
+/// <c>{ i, t, op, v, s, c, h }</c> = service instance, table, operation, descriptor version, strategy,
+/// strategy cursor and a hash of the bound filters and sort, then "." and an HMAC-SHA256 tag under the host's page token key. The cookie is
 /// user-visible and editable, so the tag stops a caller steering the host's credentials (a forged link or
 /// offset); any mismatch or corruption is refused, never treated as page 1.
 /// </summary>
 public static class PageToken
 {
-    private sealed record Payload(string Op, int V, string S, string C, string H);
+    private sealed record Payload(string I, string T, string Op, int V, string S, string C, string H);
 
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     private const int TagBytes = 16;
 
-    public static string Create(OperationDescriptor d, string strategy, string cursor, QueryPlan plan, byte[] key)
+    public static string Create(OperationContext op, string strategy, string cursor, QueryPlan plan, byte[] key)
     {
-        var payload = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new Payload(d.Operation, d.Version, strategy, cursor, QueryHash(plan)), Json));
+        var d = op.Descriptor;
+        var payload = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new Payload(op.Instance.Name, op.Map.Table, d.Operation, d.Version, strategy, cursor, QueryHash(plan)), Json));
         return payload + "." + Base64Url(Tag(payload, key));
     }
 
     /// <summary>Returns the strategy and cursor, or throws <see cref="UnsupportedQueryException"/>.</summary>
-    public static (string Strategy, string Cursor) Parse(string token, OperationDescriptor d, QueryPlan plan, byte[] key, string correlationId)
+    public static (string Strategy, string Cursor) Parse(string token, OperationContext op, QueryPlan plan, byte[] key, string correlationId)
     {
+        var d = op.Descriptor;
         UnsupportedQueryException Reject(string why) => new($"The page token is not valid for operation {d.Operation}: {why}.", correlationId);
         Payload? payload;
         try
@@ -44,8 +46,10 @@ public static class PageToken
         {
             throw Reject("it is corrupt");
         }
-        if (payload is not { Op: not null, S: not null, C: not null, H: not null })
+        if (payload is not { I: not null, T: not null, Op: not null, S: not null, C: not null, H: not null })
             throw Reject("it is incomplete");
+        if (payload.I != op.Instance.Name || payload.T != op.Map.Table)
+            throw Reject($"it was issued for table {payload.T} on service instance {payload.I}");
         if (payload.Op != d.Operation)
             throw Reject($"it was issued by operation {payload.Op}");
         if (payload.V != d.Version)
