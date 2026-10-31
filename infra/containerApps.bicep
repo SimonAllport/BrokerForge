@@ -44,6 +44,7 @@ resource mock 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: environment.id
     configuration: {
+      activeRevisionsMode: 'Single'
       ingress: { external: false, targetPort: 8080, transport: 'http' }
       registries: registries
       secrets: [ { name: 'mock-api-key', keyVaultUrl: '${secretUri}/orders-api-key', identity: identityId } ]
@@ -77,6 +78,7 @@ resource host 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: environment.id
     configuration: {
+      activeRevisionsMode: 'Single'
       ingress: { external: true, targetPort: 8080, transport: 'auto' }
       registries: registries
     }

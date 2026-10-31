@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Read this first, then `docs/hld.md` and `docs/descriptor-spec.md`.
 
-**Current state:** design only. The repo holds docs; none of the projects in the layout below exist yet. Check `git ls-files` before assuming a project, solution file or command is there.
+**Current state:** phase 1 built and verified live (`docs/findings/phase1.md`). Projects not in the layout below yet: SwaggerForge, `solution/`. Check `git ls-files` before assuming a project is there. Phase 1 config comes from host settings and `descriptors/` files (HLD D-10); `src/BrokerForge.Abstractions` holds the host-side shared interfaces (D-13).
 
 ## What this is
 
@@ -154,19 +154,19 @@ Work one phase at a time. A phase is done only when every criterion passes. Stop
 
 ## Commands
 
-Fill these in as the projects are created:
-
 ```
-dotnet build
-dotnet test
+dotnet build BrokerForge.slnx
+dotnet test BrokerForge.slnx                    # contract tests start tools/mock-api with node
 dotnet test tests/BrokerForge.Descriptors.Tests --filter "FullyQualifiedName~<TestName>"   # single test
-cd tools/mock-api && npm start
-pac solution pack --folder solution --zipfile out/BrokerForge.zip
-tools/spike/sign-plugin.sh                  # Release build, strong name + Authenticode (osslsigncode) -> out/
-source tools/spike/dv.sh && dv GET bf_spikerows   # Web API call as the az CLI user
+cd tools/mock-api && npm test                   # MOCK_API_KEY=<any> npm start to run it
+tools/spike/sign-plugin.sh                      # Release build, strong name + Authenticode (osslsigncode) -> out/
+tools/dev/deploy.sh                             # Azure dev env (infra/main.bicep), images, Key Vault secrets
+tools/dev/setup-dataverse.sh                    # sign + register provider, bf_brokerdatasource, ext_order
+tools/dev/acceptance.sh                         # phase 1 done criteria through the Web API
+source tools/spike/dv.sh && dv GET ext_orders   # Web API call as the az CLI user
 ```
 
-The solution file is `BrokerForge.slnx` (.NET 10 SDK format). macOS notes: `net462` builds through `Microsoft.NETFramework.ReferenceAssemblies`; signing material lives in `~/.brokerforge/spike-signing/` (outside the repo) and spike IDs in `~/.brokerforge/spike-ids.env`. In zsh, never name a shell variable `path` (it is tied to `$PATH`).
+The solution file is `BrokerForge.slnx` (.NET 10 SDK format). macOS notes: `net462` builds through `Microsoft.NETFramework.ReferenceAssemblies`; signing material lives in `~/.brokerforge/spike-signing/` (outside the repo), spike IDs in `~/.brokerforge/spike-ids.env` and dev IDs in `~/.brokerforge/dev-ids.env`. Use `/usr/bin/python3` for the dev scripts (the python.org build has no CA certificates). `osslsigncode` fails intermittently; the scripts retry. In zsh, never name a shell variable `path` (it is tied to `$PATH`).
 
 ## Working agreement
 

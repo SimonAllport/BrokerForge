@@ -49,7 +49,18 @@ def correlation(message):
     return f", correlationId {m.group(1)}" if m else ""
 
 
+def remove_leftovers():
+    """Deletes orders an interrupted earlier run created, so the seed counts below hold."""
+    for ref in ("CUST-ACCEPT", "CUST-UPDATED"):
+        status, body, _ = call("GET", f"ext_orders?$select=ext_name&$filter=ext_customerref eq '{ref}'")
+        for row in body.get("value", []) if status == 200 else []:
+            call("DELETE", f"ext_orders({row['ext_orderid']})")
+            print(f"removed leftover {row['ext_name']} ({ref})")
+
+
 def main():
+    remove_leftovers()
+
     # 1. Declared filter and cursor paging across Dataverse pages.
     url = "ext_orders?$select=ext_name,ext_status,ext_customerref&$filter=ext_status eq 100000000"
     rows, pages, first_headers = [], 0, None
@@ -87,8 +98,12 @@ def main():
     # 5. Delete, then the record is gone.
     status, body, h = call("DELETE", f"ext_orders({new_id})", name="delete")
     check(5, status == 204, f"delete returns HTTP {status}", h)
+    # The platform returns HTTP 400 / 0x80040265 for every provider error, whatever code the plug-in raises
+    # (phase 1 findings), so "not found" is asserted on the BrokerForge kind in the message.
     status, body, h = call("GET", f"ext_orders({new_id})?$select=ext_name")
-    check(5, status == 404, f"retrieve after delete returns HTTP {status}", h, correlation(error_message(body)))
+    msg = error_message(body)
+    check(5, status in (400, 404) and msg.startswith("NotFound:") and "correlationId" in msg,
+          f"retrieve after delete fails with HTTP {status}: {msg[:120]}", h, correlation(msg))
 
     # 6. Undeclared filter fails loudly.
     status, body, h = call("GET", "ext_orders?$select=ext_name&$filter=ext_name eq 'REF-0001'")

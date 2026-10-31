@@ -365,6 +365,7 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 | Host becomes a single point of failure for every source | Low | High | Multi-replica deployment, health probes, availability alerting |
 | Key-map growth or pruning breaks lookups | Low | Medium | Prefer reversible encoding; prune only unreferenced rows |
 | Descriptor language grows into a programming language | Medium | Medium | Fixed binding set; code hooks for the rest |
+| Provider errors reach Web API callers as HTTP 400 / `0x80040265` whatever code the plug-in raises (phase 1 findings); callers cannot branch on not-found or conflict by status code | High | Low | The BrokerForge kind and correlation ID lead every message; verify `FaultException<OrganizationServiceFault>` in phase 2 |
 
 ## 16. Decisions and open questions
 
