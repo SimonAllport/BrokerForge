@@ -1,0 +1,178 @@
+using System.Diagnostics;
+using BrokerForge.Contracts;
+using BrokerForge.Descriptors.Planning;
+using BrokerForge.Host.Execution;
+
+namespace BrokerForge.Contract.Tests;
+
+[Collection(MockApiCollection.Name)]
+public class PagingTests(MockApiFixture mock) : IAsyncLifetime
+{
+    public Task InitializeAsync() => mock.ResetAsync();
+    public Task DisposeAsync() => Task.CompletedTask;
+
+    private static Deadline Budget() => Deadline.After(TimeSpan.FromSeconds(30));
+
+    private static QueryPlan Plan(OperationContext op, int size, string? token = null, CanonicalQuery? query = null)
+    {
+        var q = query ?? new CanonicalQuery();
+        q.Page = new PageRequest { Size = size, Token = token };
+        return QueryPlanner.Plan(op.Descriptor, q, "corr-1");
+    }
+
+    private async Task<(List<string> Ids, int Pages)> ReadAll(string descriptor, int size, CanonicalQuery? query = null)
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load(descriptor));
+        var ids = new List<string>();
+        string? token = null;
+        var pages = 0;
+        do
+        {
+            var (rows, next) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, size, token, query), Budget(), CancellationToken.None);
+            Assert.True(rows.Count <= size, $"page {pages} returned {rows.Count} rows for a page size of {size}");
+            ids.AddRange(rows.Select(r => r.Key.Value));
+            token = next;
+            pages++;
+            Assert.True(pages < 100, "paging did not terminate");
+        } while (token != null);
+        return (ids, pages);
+    }
+
+    private static void AssertCoverOnce(List<string> ids, int expected = 120)
+    {
+        Assert.Equal(expected, ids.Count);
+        Assert.Equal(expected, ids.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Cursor_AllPagesCover120Once()
+    {
+        var (ids, pages) = await ReadAll("listOrders", 50);
+        AssertCoverOnce(ids);
+        Assert.Equal(3, pages);
+    }
+
+    [Fact]
+    public async Task Offset_AllPagesCover120Once() => AssertCoverOnce((await ReadAll("listOffset", 50)).Ids);
+
+    [Fact]
+    public async Task PageNumber_AllPagesCover120Once() => AssertCoverOnce((await ReadAll("listPaged", 50)).Ids);
+
+    [Fact]
+    public async Task Link_AllPagesCover120Once() => AssertCoverOnce((await ReadAll("listLink", 50)).Ids);
+
+    [Fact]
+    public async Task Cursor_FilterAppliesAcrossPages()
+    {
+        var query = new CanonicalQuery
+        {
+            Filter = new FilterGroup { Type = "and", Conditions = new() { new Condition { Col = "ext_status", Op = Ops.Eq, Values = new() { "100000000" } } } },
+        };
+        AssertCoverOnce((await ReadAll("listOrders", 25, query)).Ids, 40);
+    }
+
+    [Fact]
+    public async Task None_FirstPageReturnsAll_SecondPageThrowsUnsupported()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listAll"));
+        var (rows, next) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 50), Budget(), CancellationToken.None);
+        Assert.Equal(120, rows.Count);
+        Assert.Null(next);
+        var token = PageToken.Create(op.Descriptor, "none", "1", Plan(op, 50));
+        await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(op, Plan(op, 50, token), Budget(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Page_SourceSmallerThanRequest_FillsAcrossCalls()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders", y => y.Replace("max: 100", "max: 10")));
+        var (rows, next) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 25), Budget(), CancellationToken.None);
+        Assert.Equal(25, rows.Count);
+        Assert.NotNull(next);
+        var (rest, _) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 25, next), Budget(), CancellationToken.None);
+        Assert.Equal("ord_0026", rest[0].Key.Value);
+    }
+
+    [Fact]
+    public async Task Page_RequestLargerThanFillBudget_ReturnsFullCallsWithNextToken()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders", y => y.Replace("max: 100", "max: 10").Replace("  token:", "  maxCallsPerPage: 3\n  token:")));
+        var (rows, next) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 5000), Budget(), CancellationToken.None);
+        Assert.Equal(30, rows.Count);
+        Assert.NotNull(next);
+    }
+
+    [Fact]
+    public async Task PageNumber_SizeKeptFromTokenAcrossPages()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listPaged"));
+        var (first, next) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 30), Budget(), CancellationToken.None);
+        Assert.Equal(30, first.Count);
+        var (second, _) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 30, next), Budget(), CancellationToken.None);
+        Assert.Equal("ord_0031", second[0].Key.Value);
+    }
+
+    [Fact]
+    public async Task Token_FromOtherOperation_ThrowsUnsupportedQuery()
+    {
+        var cursorOp = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders"));
+        var (_, next) = await Operations.Coordinator().ReadPageAsync(cursorOp, Plan(cursorOp, 10), Budget(), CancellationToken.None);
+        var offsetOp = await Operations.Context(mock.BaseUrl, Operations.Load("listOffset"));
+        var ex = await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(offsetOp, Plan(offsetOp, 10, next), Budget(), CancellationToken.None));
+        Assert.Contains("listOrders", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("not-a-token")]
+    [InlineData("eyJvcCI6Imxpc3RPcmRlcnMifQ")]
+    [InlineData("")]
+    public async Task Token_Corrupt_ThrowsUnsupportedQuery(string token)
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders"));
+        var plan = Plan(op, 10) with { Token = token };
+        await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(op, plan, Budget(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Token_OlderDescriptorVersion_ThrowsUnsupportedQuery()
+    {
+        var v1 = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders"));
+        var (_, next) = await Operations.Coordinator().ReadPageAsync(v1, Plan(v1, 10), Budget(), CancellationToken.None);
+        var v2 = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders", y => y.Replace("version: 1", "version: 2")));
+        var ex = await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(v2, Plan(v2, 10, next), Budget(), CancellationToken.None));
+        Assert.Contains("version", ex.Message);
+    }
+
+    [Fact]
+    public async Task Token_WithDifferentFilter_ThrowsUnsupportedQuery()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders"));
+        var (_, next) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 10), Budget(), CancellationToken.None);
+        var filtered = new CanonicalQuery
+        {
+            Filter = new FilterGroup { Type = "and", Conditions = new() { new Condition { Col = "ext_customerref", Op = Ops.Eq, Values = new() { "CUST-01" } } } },
+        };
+        await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(op, Plan(op, 10, next, filtered), Budget(), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("http://evil.example/v2/orders-link?offset=10")]
+    [InlineData("{base}.evil.example/v2/orders-link")]
+    [InlineData("{base}@evil.example/v2")]
+    public async Task LinkToken_OutsideBaseUrl_ThrowsUnsupportedQuery(string url)
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listLink"));
+        var token = PageToken.Create(op.Descriptor, "link", url.Replace("{base}", mock.BaseUrl), Plan(op, 10));
+        await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(op, Plan(op, 10, token), Budget(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Deadline_AppliesAcrossPageCalls()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders"));
+        var q = new CanonicalQuery { Filter = new FilterGroup { Type = "and", Conditions = new() { new Condition { Col = "ext_customerref", Op = Ops.Eq, Values = new() { "__slow" } } } } };
+        var watch = Stopwatch.StartNew();
+        await Assert.ThrowsAsync<SourceTimeoutException>(() => Operations.Coordinator().ReadPageAsync(op, Plan(op, 10, null, q), Deadline.After(TimeSpan.FromSeconds(1)), CancellationToken.None));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2));
+    }
+}

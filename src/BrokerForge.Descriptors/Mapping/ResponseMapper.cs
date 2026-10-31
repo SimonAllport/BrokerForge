@@ -50,6 +50,13 @@ public static class ResponseMapper
         }).ToList();
     }
 
+    /// <summary>The scalar at a JSONPath in a response body (paging next-cursor and totals), or null when missing or JSON null.</summary>
+    public static string? SelectScalar(byte[] body, string path, Func<string, Exception> fail)
+    {
+        var matches = Json.Select(Json.Parse(body, fail), path);
+        return matches.Count == 1 ? Json.ScalarText(matches[0]) : null;
+    }
+
     public static ExternalKey MapCreatedKey(OperationDescriptor d, BrokerResult r, KeyKind keyKind, string correlationId)
     {
         MappingException Fail(string message) => new($"{message} (operation {d.Operation}).", correlationId);
