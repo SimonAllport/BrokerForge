@@ -19,6 +19,7 @@ public sealed class CallerGuard(IOptions<TrustOptions> trust)
         var caller = trust.Value.AllowedCallers.FirstOrDefault(c => string.Equals(c.ClientId, client, StringComparison.OrdinalIgnoreCase))
             ?? throw new CallerRejectedException($"Client {client ?? "(none)"} is not an allowed BrokerForge caller.");
         if (!string.Equals(caller.EnvironmentId, request.EnvironmentId, StringComparison.OrdinalIgnoreCase))
-            throw new CallerRejectedException($"Client {client} is allowed for environment {caller.EnvironmentId}, not {request.EnvironmentId ?? "(none)"}.");
+            // The reply goes back to the caller, so it names the environment asked for, not the one configured.
+            throw new CallerRejectedException($"Client {client} is not allowed for environment {request.EnvironmentId ?? "(none)"}.");
     }
 }

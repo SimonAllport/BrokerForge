@@ -56,6 +56,9 @@ public class IngressTests(MockApiFixture mock) : IAsyncLifetime
         var (status, _, error) = await _host.Execute(request);
         Assert.Equal(403, status);
         Assert.Equal(request.CorrelationId, error!.CorrelationId);
+        // The reply names what was asked for, never the environment this client is allowed to reach.
+        Assert.Contains(HostFactory.Environment2, error.Message);
+        Assert.DoesNotContain(HostFactory.Environment1, error.Message, StringComparison.OrdinalIgnoreCase);
         // The other caller is allowed for environment 2 only.
         Assert.Equal(200, (await _host.Execute(request, HostFactory.Token(azp: HostFactory.OtherApp))).Status);
     }
