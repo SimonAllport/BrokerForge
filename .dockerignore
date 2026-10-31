@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+**/node_modules/
+.git/
+.superpowers/
+out/
+tests/
+docs/
+*.snk
+*.pfx
+.env
