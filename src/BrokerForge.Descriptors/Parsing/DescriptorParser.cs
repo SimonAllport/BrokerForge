@@ -299,6 +299,8 @@ public static partial class DescriptorParser
                         throw Fail(ep, "`jsonata` transforms are not supported until phase 2");
                     OnlyKeys(em, ep, "path", "type", "optional");
                     var type = OptionalScalar(em, "type");
+                    if (type == "money")
+                        throw Fail(Join(ep, "type"), "type money is not available: virtual tables cannot have Money columns (HLD 15); map amounts with type decimal");
                     if (type != null && !MapEntry.Types.Contains(type) && !type.StartsWith("optionset:", StringComparison.Ordinal))
                         throw Fail(Join(ep, "type"), $"type must be one of {string.Join(", ", MapEntry.Types)} or optionset:<map>; got `{type}`");
                     map[col] = new MapEntry(

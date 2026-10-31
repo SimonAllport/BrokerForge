@@ -182,7 +182,7 @@ public class TranslationTests
         Assert.Equal((CellTypes.String, "REF"), (cells["ext_name"].Type, cells["ext_name"].Value));
         Assert.Equal((CellTypes.Int, "3"), (cells["ext_count"].Type, cells["ext_count"].Value));
         Assert.Equal((CellTypes.Decimal, "1.5"), (cells["ext_total"].Type, cells["ext_total"].Value));
-        Assert.Equal((CellTypes.Money, "2.5"), (cells["ext_money"].Type, cells["ext_money"].Value));
+        Assert.Equal((CellTypes.Decimal, "2.5"), (cells["ext_money"].Type, cells["ext_money"].Value));
         Assert.Equal((CellTypes.Bool, "false"), (cells["ext_flag"].Type, cells["ext_flag"].Value));
         Assert.Equal((CellTypes.DateTime, "2026-01-01T00:00:00.0000000Z"), (cells["ext_placed"].Type, cells["ext_placed"].Value));
         Assert.Equal((CellTypes.OptionSet, "100000001"), (cells["ext_status"].Type, cells["ext_status"].Value));
@@ -210,7 +210,6 @@ public class TranslationTests
                 new() { Col = "ext_placed", Type = CellTypes.DateTime, Value = "2026-01-01T01:00:00.0000000Z" },
                 new() { Col = "ext_total", Type = CellTypes.Decimal, Value = "12.5" },
                 new() { Col = "ext_count", Type = CellTypes.Int, Value = "4" },
-                new() { Col = "ext_money", Type = CellTypes.Money, Value = "9.99" },
                 new() { Col = "ext_flag", Type = CellTypes.Bool, Value = "true" },
                 new() { Col = "ext_note", Type = CellTypes.String, Value = null },
             },
@@ -224,7 +223,6 @@ public class TranslationTests
         Assert.Equal((DateTimeKind.Utc, 1), (placed.Kind, placed.Hour));
         Assert.Equal(12.5m, e["ext_total"]);
         Assert.Equal(4, e["ext_count"]);
-        Assert.Equal(9.99m, ((Money)e["ext_money"]).Value);
         Assert.Equal(true, e["ext_flag"]);
         Assert.Null(e["ext_note"]);
     }

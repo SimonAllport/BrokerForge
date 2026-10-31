@@ -132,4 +132,13 @@ public class ParserTests
             p => Assert.Equal("ext_customerref", Assert.IsType<ColBinding>(p.Binding).Column),
             p => Assert.Equal("correlationId", Assert.IsType<ContextBinding>(p.Binding).Name));
     }
+
+    [Fact]
+    public void Parse_MoneyType_RejectedBecauseVirtualTablesHaveNoMoneyColumns()
+    {
+        var yaml = Mutate(OrdersYaml("listOrders"), "{ path: $.totals.gross, type: decimal }", "{ path: $.totals.gross, type: money }");
+        var ex = Assert.Throws<DescriptorException>(() => DescriptorParser.Parse(yaml, "d"));
+        Assert.Contains("decimal", ex.Message);
+        Assert.Contains("Money", ex.Message);
+    }
 }
