@@ -72,10 +72,12 @@ DEV_HOST_URL=$HOST_URL
 IMAGE_TAG=$TAG
 IDS_EOF
 
-echo "== waiting for $HOST_URL/healthz"
+echo "== waiting for $HOST_URL/healthz on image $TAG alone"
+# Healthy is not enough: the outgoing revision keeps answering until it is deactivated (phase 1 findings 5 and 8).
 for attempt in $(seq 1 30); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "$HOST_URL/healthz" || true)"
-  if [ "$code" = 200 ]; then
+  images="$(az containerapp revision list -g "$RG" -n bf-dev-host --query "[?properties.active].properties.template.containers[0].image" -o tsv | sort -u)"
+  if [ "$code" = 200 ] && [ "$images" = "$SERVER/brokerforge-host:$TAG" ]; then
     echo "healthy: $HOST_URL (ids in $OUT)"
     exit 0
   fi
