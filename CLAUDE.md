@@ -166,7 +166,7 @@ tools/dev/acceptance.sh                         # phase 1 done criteria through 
 source tools/spike/dv.sh && dv GET ext_orders   # Web API call as the az CLI user
 ```
 
-The solution file is `BrokerForge.slnx` (.NET 10 SDK format). macOS notes: `net462` builds through `Microsoft.NETFramework.ReferenceAssemblies`; signing material lives in `~/.brokerforge/spike-signing/` (outside the repo), spike IDs in `~/.brokerforge/spike-ids.env` and dev IDs in `~/.brokerforge/dev-ids.env`. Use `/usr/bin/python3` for the dev scripts (the python.org build has no CA certificates). Signing uses the PEM certificate and key (`cert.pem`, `cert.key`); signing from the PFX failed intermittently with a passphrase prompt. The scripts still retry the timestamp server. In zsh, never name a shell variable `path` (it is tied to `$PATH`).
+The solution file is `BrokerForge.slnx` (.NET 10 SDK format). macOS notes: `net462` builds through `Microsoft.NETFramework.ReferenceAssemblies`; signing material lives in `~/.brokerforge/spike-signing/` (outside the repo), the app registration, environment and managed identity IDs in `~/.brokerforge/spike-ids.env` and dev IDs in `~/.brokerforge/dev-ids.env`. The dev apps scale to zero between sessions, so the first call after a pause takes about 25 seconds; `deploy.sh` sets the host back to one replica. Use `/usr/bin/python3` for the dev scripts (the python.org build has no CA certificates). Signing uses the PEM certificate and key (`cert.pem`, `cert.key`); signing from the PFX failed intermittently with a passphrase prompt. The scripts still retry the timestamp server. In zsh, never name a shell variable `path` (it is tied to `$PATH`).
 
 ## Working agreement
 
