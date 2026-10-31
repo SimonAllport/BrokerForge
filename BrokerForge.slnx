@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/BrokerForge.Abstractions/BrokerForge.Abstractions.csproj" />
     <Project Path="src/BrokerForge.Contracts/BrokerForge.Contracts.csproj" />
     <Project Path="src/BrokerForge.Descriptors/BrokerForge.Descriptors.csproj" />
     <Project Path="src/BrokerForge.Host/BrokerForge.Host.csproj" />
