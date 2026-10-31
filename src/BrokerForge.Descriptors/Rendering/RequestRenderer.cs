@@ -130,7 +130,7 @@ public static partial class RequestRenderer
                 return Encoding.UTF8.GetBytes(node?.ToJsonString() ?? "null");
             case BodySpec.Form:
                 if (b.Template is not BodyObject form || form.Members.Any(m => m.Value is not BodyLeaf))
-                    throw new InvalidOperationException($"{r.D.Source}: a form body template must be a flat mapping of fields");
+                    throw new ConfigurationException($"{r.D.Source}: a form body template must be a flat mapping of fields");
                 var pairs = new List<string>();
                 foreach (var (name, leaf) in form.Members)
                 {
@@ -143,7 +143,7 @@ public static partial class RequestRenderer
                 }
                 return Encoding.UTF8.GetBytes(string.Join("&", pairs));
             default:
-                throw new InvalidOperationException($"{r.D.Source}: {b.ContentType} bodies use `raw`, not `template`");
+                throw new ConfigurationException($"{r.D.Source}: {b.ContentType} bodies use `raw`, not `template`");
         }
     }
 
@@ -243,10 +243,10 @@ public static partial class RequestRenderer
                 case InstanceBinding i:
                     return ctx.Instance.Config.TryGetValue(i.Key, out var config)
                         ? new TextV(config, Kind.String)
-                        : throw new InvalidOperationException($"Service instance {ctx.Instance.Name} has no config value `{i.Key}` ({d.Source} {path}).");
+                        : throw new ConfigurationException($"Service instance {ctx.Instance.Name} has no config value `{i.Key}` ({d.Source} {path}).");
                 case SecretBinding s:
                     if (!ctx.Instance.Secrets.TryGetValue(s.Name, out var reference))
-                        throw new InvalidOperationException($"Service instance {ctx.Instance.Name} has no secret reference named `{s.Name}` ({d.Source} {path}).");
+                        throw new ConfigurationException($"Service instance {ctx.Instance.Name} has no secret reference named `{s.Name}` ({d.Source} {path}).");
                     var secret = await secrets.GetAsync(SecretRef.Parse(reference), ct);
                     SecretValues.Add(secret);
                     SecretValues.Add(Uri.EscapeDataString(secret));
@@ -288,7 +288,7 @@ public static partial class RequestRenderer
                     });
                 case IdBinding id:
                     if (id.Part != null)
-                        throw new InvalidOperationException($"{d.Source}: composite key parts are not supported until the key map (phase 5)");
+                        throw new ConfigurationException($"{d.Source}: composite key parts are not supported until the key map (phase 5)");
                     if (ctx.Id == null)
                         throw Validation("the record id is required");
                     return new TextV(ctx.Id.Value, ctx.Id.Kind is Keys.KeyKind.Int32 or Keys.KeyKind.Int64 ? Kind.Number : Kind.String);

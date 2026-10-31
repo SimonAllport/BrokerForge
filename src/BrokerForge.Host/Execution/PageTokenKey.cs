@@ -14,10 +14,10 @@ public sealed record PageTokenKey(byte[] Value)
     {
         var reference = configuration["Host:PageTokenKeyRef"];
         if (string.IsNullOrWhiteSpace(reference))
-            throw new InvalidOperationException("Host configuration is invalid:\n - Host:PageTokenKeyRef is required (kv:<secret uri> or env:<VARIABLE>)");
+            throw new ConfigurationException("Host configuration is invalid:\n - Host:PageTokenKeyRef is required (kv:<secret uri> or env:<VARIABLE>)");
         var value = await secrets.GetAsync(SecretRef.Parse(reference), CancellationToken.None);
         if (value.Length < MinimumLength)
-            throw new InvalidOperationException($"Host configuration is invalid:\n - the secret named by Host:PageTokenKeyRef must be at least {MinimumLength} characters");
+            throw new ConfigurationException($"Host configuration is invalid:\n - the secret named by Host:PageTokenKeyRef must be at least {MinimumLength} characters");
         return new PageTokenKey(System.Text.Encoding.UTF8.GetBytes(value));
     }
 }

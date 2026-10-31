@@ -17,7 +17,7 @@ public sealed class StaticAuthProvider(ISecretResolver secrets, HttpClient http)
     {
         var auth = instance.Auth;
         if (auth.Mode != AuthMode.Static)
-            throw new InvalidOperationException($"Service instance {instance.Name} uses {auth.Mode}, not Static.");
+            throw new ConfigurationException($"Service instance {instance.Name} uses {auth.Mode}, not Static.");
         if (string.IsNullOrEmpty(auth.SecretRef))
             throw new CredentialUnavailableException($"Service instance {instance.Name} has no Auth.SecretRef for Static mode.");
 

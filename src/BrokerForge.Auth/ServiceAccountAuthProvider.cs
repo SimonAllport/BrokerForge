@@ -15,7 +15,7 @@ public sealed class ServiceAccountAuthProvider(TokenCredential credential, HttpC
     {
         var auth = instance.Auth;
         if (auth.Mode != AuthMode.ServiceAccount)
-            throw new InvalidOperationException($"Service instance {instance.Name} uses {auth.Mode}, not ServiceAccount.");
+            throw new ConfigurationException($"Service instance {instance.Name} uses {auth.Mode}, not ServiceAccount.");
         if (string.IsNullOrEmpty(auth.Scope))
             throw new CredentialUnavailableException($"Service instance {instance.Name} has no Auth.Scope for ServiceAccount mode.");
 

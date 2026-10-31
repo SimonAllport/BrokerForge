@@ -1,3 +1,4 @@
+using BrokerForge.Abstractions;
 using BrokerForge.Auth;
 using BrokerForge.Contracts;
 using BrokerForge.Host.Ingress;
@@ -35,7 +36,7 @@ public static class ErrorTranslator
         MappingException or SourceException => (502, Payload(ex)),
         SourceTimeoutException => (504, Payload(ex)),
         CredentialUnavailableException => (500, Payload(ex)),
-        InvalidOperationException => (500, Payload("ConfigurationError", ex.Message)),
+        ConfigurationException => (500, Payload("ConfigurationError", ex.Message)),
         _ => (500, Payload("InternalError", "Unexpected host failure.")),
     };
 

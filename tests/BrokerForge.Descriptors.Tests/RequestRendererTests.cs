@@ -132,7 +132,7 @@ public class RequestRendererTests
     public async Task Header_UnknownSecretName_ThrowsWithoutValue()
     {
         var d = Op("Delete", "  method: DELETE\n  path: /v2/o\n  headers:\n    X-Partner: { secret: nope }");
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Render(d, Ctx()));
+        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => Render(d, Ctx()));
         Assert.Contains("nope", ex.Message);
     }
 

@@ -33,9 +33,9 @@ public sealed class RequestRouter(HostConfigStore config, IEnumerable<IAuthProvi
         var descriptor = config.Descriptor(instance.Name, operation)!;
 
         var broker = _brokers.GetValueOrDefault(instance.BrokerType)
-            ?? throw new InvalidOperationException($"No adapter is registered for broker type {instance.BrokerType}.");
+            ?? throw new ConfigurationException($"No adapter is registered for broker type {instance.BrokerType}.");
         var provider = _providers.GetValueOrDefault(instance.Auth.Mode)
-            ?? throw new InvalidOperationException($"No authentication provider is registered for mode {instance.Auth.Mode}.");
+            ?? throw new ConfigurationException($"No authentication provider is registered for mode {instance.Auth.Mode}.");
         var caller = request.Caller ?? new CallerContext();
         var channel = await provider.AuthenticateAsync(instance, caller, correlationId, ct);
 

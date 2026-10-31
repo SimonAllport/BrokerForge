@@ -31,7 +31,7 @@ public sealed class HostConfigStore
         LoadDescriptors(configuration["Config:DescriptorsPath"], problems);
         LoadMaps(configuration.GetSection("ObjectMaps"), problems);
         if (problems.Count > 0)
-            throw new InvalidOperationException("Host configuration is invalid:" + string.Concat(problems.Select(p => "\n - " + p)));
+            throw new ConfigurationException("Host configuration is invalid:" + string.Concat(problems.Select(p => "\n - " + p)));
     }
 
     public IReadOnlyCollection<string> DescriptorNames => _descriptors.Keys.Select(k => $"{k.Instance}/{k.Operation}").ToList();

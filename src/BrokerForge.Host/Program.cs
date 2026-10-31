@@ -78,7 +78,7 @@ var app = builder.Build();
 // Validate trust and load every descriptor before taking traffic; any problem stops the host here.
 var trustProblems = app.Services.GetRequiredService<IOptions<TrustOptions>>().Value.Problems().ToList();
 if (trustProblems.Count > 0)
-    throw new InvalidOperationException("Host configuration is invalid:" + string.Concat(trustProblems.Select(p => "\n - " + p)));
+    throw new ConfigurationException("Host configuration is invalid:" + string.Concat(trustProblems.Select(p => "\n - " + p)));
 var store = app.Services.GetRequiredService<HostConfigStore>();
 app.Logger.LogInformation("Loaded descriptors: {Descriptors}", string.Join(", ", store.DescriptorNames));
 app.Services.GetRequiredService<PageTokenKey>();

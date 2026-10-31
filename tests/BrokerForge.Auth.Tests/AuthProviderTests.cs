@@ -141,7 +141,7 @@ public class AuthProviderTests
     public async Task Providers_RejectOtherModes()
     {
         var (provider, _) = Static(Dummy);
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<ConfigurationException>(() =>
             provider.AuthenticateAsync(Instance(new AuthConfig(AuthMode.ServiceAccount, Scope: "s")), Caller, "c", CancellationToken.None));
     }
 

@@ -23,7 +23,7 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
     public async Task<(IReadOnlyList<MappedRow> Rows, string? Next)> ReadPageAsync(OperationContext op, QueryPlan plan, Deadline deadline, CancellationToken ct)
     {
         var d = op.Descriptor;
-        var paging = d.Paging ?? throw new InvalidOperationException($"{d.Source}: RetrieveMultiple has no paging block");
+        var paging = d.Paging ?? throw new ConfigurationException($"{d.Source}: RetrieveMultiple has no paging block");
         var correlationId = op.Binding.CorrelationId;
         var strategy = paging.Strategy;
         var target = plan.RequestedSize;
