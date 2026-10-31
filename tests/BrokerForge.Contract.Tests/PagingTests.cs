@@ -270,6 +270,15 @@ public class PagingTests(MockApiFixture mock) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Page_SourceRepeatsAKey_ThrowsSource()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders"));
+        var coordinator = Scripted("{\"data\":[" + string.Join(",", Order(1), Order(2), Order(1)) + "],\"meta\":{\"nextCursor\":null}}");
+        var ex = await Assert.ThrowsAsync<SourceException>(() => coordinator.ReadPageAsync(op, Plan(op, 10), Budget(), CancellationToken.None));
+        Assert.Contains("ord_0001", ex.Message);
+    }
+
+    [Fact]
     public async Task Deadline_AppliesAcrossPageCalls()
     {
         var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders"));

@@ -65,6 +65,7 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
         }
 
         var rows = new List<MappedRow>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         var budget = strategy == "none" ? 1 : paging.MaxCallsPerPage;
         var calls = 0;
         bool more;
@@ -97,6 +98,10 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
             SourceException Source(string why) => new($"{why} (operation {d.Operation}).", correlationId, result.Status);
             if (strategy != "none" && page.Count > callSize)
                 throw Source($"The source returned {page.Count} rows for a page size of {callSize}, so it ignored the page size and pages cannot be tracked");
+            // Two rows with one key would reach Dataverse as one record twice. Checked within the page only:
+            // the host keeps no state between pages.
+            if (page.FirstOrDefault(row => !seen.Add(row.Key.Value)) is { } repeated)
+                throw Source($"The source returned key {repeated.Key.Value} twice in one page");
             switch (strategy)
             {
                 case "cursor":

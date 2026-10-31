@@ -193,6 +193,8 @@ The host translates Dataverse paging cookies to and from the source token. If th
 
 The page token the host hands to Dataverse names the service instance, table, operation and descriptor version and is signed with the host's page token key (HMAC-SHA256, `Host:PageTokenKeyRef`). A token for another instance, table or operation, an older version or a different filter, or a token that is corrupt or unsigned, is `UnsupportedQueryException`. A `link` URL is followed only when it has the service instance base URL's scheme, host and port and exactly the operation's request path; only its query may differ.
 
+A source page the host cannot track is `SourceException`: more rows than the page size asked for, an empty page while `total` says rows remain, the same cursor twice, or the same key twice within one Dataverse page.
+
 ## 8. `errors`
 
 ```yaml
