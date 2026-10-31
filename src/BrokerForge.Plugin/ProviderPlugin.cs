@@ -62,6 +62,17 @@ namespace BrokerForge.Plugin
                 tracing.Trace("BrokerForge failed correlationId={0}: {1}", correlationId, ex.GetType().Name);
                 throw ErrorRaiser.ToException(ex);
             }
+            catch (InvalidPluginExecutionException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // A wire or platform fault (an unreadable host reply, an unexpected input type). The user
+                // still gets the correlation ID to quote; the detail goes to the trace log only.
+                tracing.Trace("BrokerForge failed correlationId={0}: {1}: {2}", correlationId, ex.GetType().Name, ex.Message);
+                throw ErrorRaiser.ToException(new ErrorPayload { Error = "InternalError", Message = "The BrokerForge plug-in failed (" + ex.GetType().Name + ").", CorrelationId = correlationId });
+            }
         }
 
         private static string UserObjectId(IPluginExecutionContext context)
@@ -95,7 +106,11 @@ namespace BrokerForge.Plugin
                     request.Id = ((EntityReference)inputs["Target"]).Id.ToString();
                     break;
                 case Messages.Create:
-                    request.Record = RecordTranslator.ToCells((Entity)inputs["Target"], correlationId);
+                    var created = (Entity)inputs["Target"];
+                    // The source assigns keys and the host encodes them; an id chosen by the caller would be dropped.
+                    if (created.Id != Guid.Empty || created.Contains(created.LogicalName + "id"))
+                        throw new UnsupportedQueryException("Create cannot take an id: the source assigns the key of a new " + created.LogicalName + " record.", correlationId);
+                    request.Record = RecordTranslator.ToCells(created, correlationId);
                     break;
                 case Messages.Update:
                     var target = (Entity)inputs["Target"];

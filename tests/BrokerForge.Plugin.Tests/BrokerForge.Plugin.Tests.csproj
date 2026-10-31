@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="..\..\src\BrokerForge.Contracts\**\*.cs" Exclude="..\..\src\BrokerForge.Contracts\obj\**;..\..\src\BrokerForge.Contracts\bin\**" LinkBase="Contracts" />
     <Compile Include="..\..\src\BrokerForge.Plugin\Translation\*.cs" LinkBase="Plugin" />
-    <Compile Include="..\..\src\BrokerForge.Plugin\Transport\ErrorRaiser.cs" LinkBase="Plugin" />
+    <Compile Include="..\..\src\BrokerForge.Plugin\Transport\*.cs" LinkBase="Plugin" />
+    <Compile Include="..\..\src\BrokerForge.Plugin\ProviderPlugin.cs" LinkBase="Plugin" />
   </ItemGroup>
 </Project>
