@@ -31,6 +31,7 @@ public static partial class ExecuteEndpoint
         CallerGuard guard,
         RequestRouter router,
         ISecretResolver secrets,
+        PageTokenKey tokenKey,
         IConfiguration configuration,
         ILoggerFactory loggers,
         CancellationToken ct)
@@ -52,7 +53,7 @@ public static partial class ExecuteEndpoint
             log.LogInformation("Executing {Message} on {Table} with {Operation} v{Version}", request.Message, request.Table, op.Descriptor.Operation, op.Descriptor.Version);
 
             var timeout = TimeSpan.FromSeconds(configuration.GetValue("Host:TimeoutSeconds", 90));
-            var response = await Run(request, op, new OperationExecutor(broker), secrets, Deadline.After(timeout), ct);
+            var response = await Run(request, op, new OperationExecutor(broker), secrets, tokenKey, Deadline.After(timeout), ct);
             response.CorrelationId = correlationId;
             log.LogInformation("Completed {Message} on {Table} in {ElapsedMs} ms", request.Message, request.Table, watch.ElapsedMilliseconds);
             return Results.Json(response);
@@ -68,7 +69,7 @@ public static partial class ExecuteEndpoint
         }
     }
 
-    private static async Task<CanonicalResponse> Run(CanonicalRequest request, OperationContext op, OperationExecutor executor, ISecretResolver secrets, Deadline deadline, CancellationToken ct)
+    private static async Task<CanonicalResponse> Run(CanonicalRequest request, OperationContext op, OperationExecutor executor, ISecretResolver secrets, PageTokenKey tokenKey, Deadline deadline, CancellationToken ct)
     {
         var d = op.Descriptor;
         var correlationId = op.Binding.CorrelationId;
@@ -76,7 +77,7 @@ public static partial class ExecuteEndpoint
         {
             case Messages.RetrieveMultiple:
                 var plan = QueryPlanner.Plan(d, request.Query ?? new CanonicalQuery(), correlationId);
-                var (rows, next) = await new PagingCoordinator(executor, secrets).ReadPageAsync(op, plan, deadline, ct);
+                var (rows, next) = await new PagingCoordinator(executor, secrets, tokenKey.Value).ReadPageAsync(op, plan, deadline, ct);
                 return new CanonicalResponse { Rows = rows.Select(r => ToRow(op, r)).ToList(), Next = next };
 
             case Messages.Retrieve:

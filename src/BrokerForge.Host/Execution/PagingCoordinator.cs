@@ -13,9 +13,9 @@ namespace BrokerForge.Host.Execution;
 /// Reads one Dataverse page (descriptor spec 7). It fills the requested page with up to
 /// paging.maxCallsPerPage source calls; when the budget runs out first it returns the rows collected
 /// with a next token (D-12). Every call shares the request deadline. Pages are never padded, trimmed
-/// or filtered client-side.
+/// or filtered client-side. <paramref name="tokenKey"/> signs the page tokens it hands out.
 /// </summary>
-public sealed partial class PagingCoordinator(OperationExecutor executor, ISecretResolver secrets)
+public sealed partial class PagingCoordinator(OperationExecutor executor, ISecretResolver secrets, byte[] tokenKey)
 {
     [GeneratedRegex(@"<([^>]+)>\s*;\s*rel=""?next""?", RegexOptions.IgnoreCase)]
     private static partial Regex NextLink();
@@ -36,7 +36,7 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
         var fixedSize = Math.Min(plan.PageSize, target);
         if (plan.Token != null)
         {
-            var (tokenStrategy, c) = PageToken.Parse(plan.Token, d, plan, correlationId);
+            var (tokenStrategy, c) = PageToken.Parse(plan.Token, d, plan, tokenKey, correlationId);
             if (strategy == "none")
                 throw Reject("This source returns everything in one page; there is no next page to request");
             if (tokenStrategy != strategy)
@@ -78,7 +78,12 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
             var request = await RequestRenderer.RenderAsync(d.Request, d, binding, secrets, ct);
             if (link != null)
             {
+                // A link may change the query (its cursor) but never the operation's path.
                 var uri = new Uri(link);
+                if (uri.AbsolutePath != RenderedPath(request))
+                    throw plan.Token != null && calls == 0
+                        ? Reject("The page token's link is not for this operation's path")
+                        : new SourceException($"The source's next link is not for this operation's path (operation {d.Operation}).", correlationId);
                 request = request with { BaseUrl = uri.GetLeftPart(UriPartial.Authority), PathAndQuery = uri.PathAndQuery };
             }
 
@@ -143,7 +148,7 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
             "link" => $"{fixedSize} {link}",
             _ => throw new InvalidOperationException(strategy),
         };
-        return (rows, PageToken.Create(d, strategy, state, plan));
+        return (rows, PageToken.Create(d, strategy, state, plan, tokenKey));
     }
 
     private static string? NextFrom(BrokerResult result, RenderedRequest request, string baseUrl, Func<string, SourceException> fail)
@@ -158,6 +163,9 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
             }
         return null;
     }
+
+    private static string RenderedPath(RenderedRequest request) =>
+        new Uri(request.BaseUrl.TrimEnd('/') + request.PathAndQuery).AbsolutePath;
 
     /// <summary>True when <paramref name="url"/> has the base URL's scheme, host and port, no user info, and a path under the base path.</summary>
     public static bool UnderBase(string url, string baseUrl)

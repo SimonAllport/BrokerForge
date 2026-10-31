@@ -191,7 +191,7 @@ paging:
 
 The host translates Dataverse paging cookies to and from the source token. If the source page size is smaller than Dataverse requested, the host makes further calls to fill the page, up to `paging.maxCallsPerPage` (default 5). When the budget runs out first, the host returns the rows collected with a next token: a complete page with more to follow, never a short page presented as the end.
 
-The page token the host hands to Dataverse names the operation and descriptor version. A token for another operation or an older version, or a corrupt token, is `UnsupportedQueryException`. A `link` URL is followed only when it starts with the service instance base URL.
+The page token the host hands to Dataverse names the operation and descriptor version and is signed with the host's page token key (HMAC-SHA256, `Host:PageTokenKeyRef`). A token for another operation, an older version or a different filter, or a token that is corrupt or unsigned, is `UnsupportedQueryException`. A `link` URL is followed only when it has the service instance base URL's scheme, host and port and exactly the operation's request path; only its query may differ.
 
 ## 8. `errors`
 

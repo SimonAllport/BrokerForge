@@ -46,5 +46,7 @@ internal static class Operations
         return new OperationContext(instance, map, d, new ReversibleKeyStrategy(KeyKind.String), channel, binding);
     }
 
-    public static PagingCoordinator Coordinator() => new(new OperationExecutor(new RestBroker()), new MockKey());
+    public static readonly byte[] TokenKey = System.Text.Encoding.UTF8.GetBytes("bf-test-page-token-key-0123456789abcdef");
+
+    public static PagingCoordinator Coordinator() => new(new OperationExecutor(new RestBroker()), new MockKey(), TokenKey);
 }

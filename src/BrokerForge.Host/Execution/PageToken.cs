@@ -10,8 +10,9 @@ namespace BrokerForge.Host.Execution;
 /// <summary>
 /// The host's page token, carried by Dataverse in the paging cookie (phase 0 findings 4): base64url JSON
 /// <c>{ op, v, s, c, h }</c> = operation, descriptor version, strategy, strategy cursor and a hash of the
-/// bound filters and sort. The cookie is user-visible, so a token is untrusted input: any mismatch or
-/// corruption is refused, never treated as page 1.
+/// bound filters and sort, then "." and an HMAC-SHA256 tag under the host's page token key. The cookie is
+/// user-visible and editable, so the tag stops a caller steering the host's credentials (a forged link or
+/// offset); any mismatch or corruption is refused, never treated as page 1.
 /// </summary>
 public static class PageToken
 {
@@ -19,17 +20,25 @@ public static class PageToken
 
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public static string Create(OperationDescriptor d, string strategy, string cursor, QueryPlan plan) =>
-        Base64Url(JsonSerializer.SerializeToUtf8Bytes(new Payload(d.Operation, d.Version, strategy, cursor, QueryHash(plan)), Json));
+    private const int TagBytes = 16;
+
+    public static string Create(OperationDescriptor d, string strategy, string cursor, QueryPlan plan, byte[] key)
+    {
+        var payload = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new Payload(d.Operation, d.Version, strategy, cursor, QueryHash(plan)), Json));
+        return payload + "." + Base64Url(Tag(payload, key));
+    }
 
     /// <summary>Returns the strategy and cursor, or throws <see cref="UnsupportedQueryException"/>.</summary>
-    public static (string Strategy, string Cursor) Parse(string token, OperationDescriptor d, QueryPlan plan, string correlationId)
+    public static (string Strategy, string Cursor) Parse(string token, OperationDescriptor d, QueryPlan plan, byte[] key, string correlationId)
     {
         UnsupportedQueryException Reject(string why) => new($"The page token is not valid for operation {d.Operation}: {why}.", correlationId);
         Payload? payload;
         try
         {
-            payload = JsonSerializer.Deserialize<Payload>(FromBase64Url(token), Json);
+            var dot = token.IndexOf('.');
+            if (dot <= 0 || !CryptographicOperations.FixedTimeEquals(FromBase64Url(token[(dot + 1)..]), Tag(token[..dot], key)))
+                throw Reject("it was not issued by this host or has been altered");
+            payload = JsonSerializer.Deserialize<Payload>(FromBase64Url(token[..dot]), Json);
         }
         catch (Exception ex) when (ex is FormatException or JsonException)
         {
@@ -55,6 +64,8 @@ public static class PageToken
             text.Append("sort\u0001").Append(sort.SourceField).Append(sort.Desc ? "\u0001desc" : "");
         return Base64Url(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()))[..12]);
     }
+
+    private static byte[] Tag(string payload, byte[] key) => HMACSHA256.HashData(key, Encoding.ASCII.GetBytes(payload))[..TagBytes];
 
     private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 

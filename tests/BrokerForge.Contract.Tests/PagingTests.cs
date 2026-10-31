@@ -78,7 +78,7 @@ public class PagingTests(MockApiFixture mock) : IAsyncLifetime
         var (rows, next) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 50), Budget(), CancellationToken.None);
         Assert.Equal(120, rows.Count);
         Assert.Null(next);
-        var token = PageToken.Create(op.Descriptor, "none", "1", Plan(op, 50));
+        var token = PageToken.Create(op.Descriptor, "none", "1", Plan(op, 50), Operations.TokenKey);
         await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(op, Plan(op, 50, token), Budget(), CancellationToken.None));
     }
 
@@ -162,7 +162,40 @@ public class PagingTests(MockApiFixture mock) : IAsyncLifetime
     public async Task LinkToken_OutsideBaseUrl_ThrowsUnsupportedQuery(string url)
     {
         var op = await Operations.Context(mock.BaseUrl, Operations.Load("listLink"));
-        var token = PageToken.Create(op.Descriptor, "link", url.Replace("{base}", mock.BaseUrl), Plan(op, 10));
+        var token = PageToken.Create(op.Descriptor, "link", "10 " + url.Replace("{base}", mock.BaseUrl), Plan(op, 10), Operations.TokenKey);
+        await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(op, Plan(op, 10, token), Budget(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Token_Tampered_ThrowsUnsupportedQuery()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOffset"));
+        var (_, next) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 10), Budget(), CancellationToken.None);
+        var dot = next!.IndexOf('.');
+        var payload = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(Pad(next[..dot].Replace('-', '+').Replace('_', '/'))));
+        Assert.Contains("\"c\":\"10\"", payload);
+        var forged = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payload.Replace("\"c\":\"10\"", "\"c\":\"90\""))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(op, Plan(op, 10, forged + next[dot..]), Budget(), CancellationToken.None));
+    }
+
+    private static string Pad(string s) => s.PadRight(s.Length + (4 - s.Length % 4) % 4, '=');
+
+    [Fact]
+    public async Task Token_SignedWithOtherKey_ThrowsUnsupportedQuery()
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOffset"));
+        var token = PageToken.Create(op.Descriptor, "offset", "10", Plan(op, 10), System.Text.Encoding.UTF8.GetBytes("another-key-another-key-another-key!!"));
+        await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(op, Plan(op, 10, token), Budget(), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("/v2/orders/ord_0001")]
+    [InlineData("/v2/orders-link/../orders")]
+    [InlineData("/v2/orders-link%2F..%2Forders")]
+    public async Task LinkToken_SignedButOtherPath_ThrowsUnsupportedQuery(string path)
+    {
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listLink"));
+        var token = PageToken.Create(op.Descriptor, "link", "10 " + mock.BaseUrl + path + "?limit=10&offset=10", Plan(op, 10), Operations.TokenKey);
         await Assert.ThrowsAsync<UnsupportedQueryException>(() => Operations.Coordinator().ReadPageAsync(op, Plan(op, 10, token), Budget(), CancellationToken.None));
     }
 

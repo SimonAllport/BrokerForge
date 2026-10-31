@@ -6,6 +6,7 @@ using BrokerForge.Adapters.Rest;
 using BrokerForge.Auth;
 using BrokerForge.Host.Config;
 using BrokerForge.Host.Endpoints;
+using BrokerForge.Host.Execution;
 using BrokerForge.Host.Ingress;
 using BrokerForge.Host.Routing;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -68,6 +69,7 @@ builder.Services.AddSingleton<IBroker, RestBroker>();
 builder.Services.AddSingleton<HostConfigStore>();
 builder.Services.AddSingleton<CallerGuard>();
 builder.Services.AddSingleton<RequestRouter>();
+builder.Services.AddSingleton(sp => PageTokenKey.LoadAsync(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<ISecretResolver>()).GetAwaiter().GetResult());
 
 var app = builder.Build();
 
@@ -77,6 +79,7 @@ if (trustProblems.Count > 0)
     throw new InvalidOperationException("Host configuration is invalid:" + string.Concat(trustProblems.Select(p => "\n - " + p)));
 var store = app.Services.GetRequiredService<HostConfigStore>();
 app.Logger.LogInformation("Loaded descriptors: {Descriptors}", string.Join(", ", store.DescriptorNames));
+app.Services.GetRequiredService<PageTokenKey>();
 
 app.UseAuthentication();
 app.UseAuthorization();

@@ -47,6 +47,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
         Copy(Path.Combine(MockApiFixture.RepoRoot, "tests", "BrokerForge.Contract.Tests", "descriptors", "host"), _descriptors);
         System.Environment.SetEnvironmentVariable("BF_TEST_MOCK_KEY", MockApiFixture.ApiKey);
         System.Environment.SetEnvironmentVariable("BF_TEST_PARTNER_KEY", PartnerSecret);
+        System.Environment.SetEnvironmentVariable("BF_TEST_PAGE_TOKEN_KEY", "bf-test-page-token-key-0123456789abcdef");
     }
 
     private static void Copy(string from, string to)
@@ -71,6 +72,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
             ["Trust:AllowedCallers:1:EnvironmentId"] = Environment2,
             ["Host:TimeoutSeconds"] = "3",
             ["Secrets:AllowEnvironment"] = "true",
+            ["Host:PageTokenKeyRef"] = "env:BF_TEST_PAGE_TOKEN_KEY",
             ["Config:DescriptorsPath"] = _descriptors,
         };
         void Instance(string name, params (string Key, string Value)[] extra)
