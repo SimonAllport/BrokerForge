@@ -23,6 +23,7 @@ All seven acceptance assertions in `tools/dev/acceptance.sh` pass. They are the 
 3. **`IPluginExecutionContext6.EnvironmentId` is populated** in the provider context, with the Power Platform environment ID that the host's caller check (D-09) expects. The data source record does not need an environment column.
 4. **The spike assembly could not be updated in place.** Dataverse refuses an assembly update that drops a registered plug-in type, and `SpikeRetrieveMultiplePlugin` is still used by the phase 0 table. The phase 1 plug-in is registered side by side as version `0.1.0.0` with the same name and key. Updating within `0.1.x` replaces it in place.
 5. **Two host revisions served traffic briefly after a redeploy.** One call reached the old image. `activeRevisionsMode: 'Single'` is now explicit in Bicep.
+6. **Dataverse sets `Target.Id` on every virtual table Create**, including a Web API POST with no id. Only a caller-supplied id also puts the primary key column (`ext_orderid`) in `Target.Attributes`. The plug-in refuses a Create carrying that column (`UnsupportedQueryException`), because the source assigns the key and the caller's id would be dropped. Verified live: a POST without an id returned 201 with the source key, and one with `ext_orderid` was refused. A Web API upsert (`PATCH` to an id that does not exist) is therefore refused too.
 
 ## Latency (NFR-01: host overhead 150 ms at p95)
 
@@ -43,6 +44,8 @@ With `minReplicas: 1` there was no host cold start in these runs. Phase 0 measur
 - A Create or Update that supplies a column no `col` binding sends is refused with a Validation error naming the column, so a form save can never appear to succeed while dropping a value. On `ext_order` that means Status, Reference and Placed cannot be edited in phase 1.
 - Dataverse asking for page N > 1 without a paging cookie (a jump to page) is refused. Back-navigation with a lower page number was not tested.
 - `ext_lines_json` is written on Create but not read back, because the spec has no map type that serialises a JSON subtree to a string.
+- Money columns: the plug-in returns a `decimal` cell as `decimal`, which a Dataverse Money column does not accept. The plug-in cannot tell the column type without reading table metadata, and the canonical contract has no `money` cell type. Adding one is a Contracts and descriptor schema change, so it waits for a decision. `ext_order` has no Money column.
+- Duplicate keys are detected within one Dataverse page only; the host keeps no state between pages.
 - Application Insights is deployed but the host does not send to it yet. Console logs, which carry the `correlationId` scope, go to Log Analytics (`ContainerAppConsoleLogs_CL`).
 
 ## Deployed resources

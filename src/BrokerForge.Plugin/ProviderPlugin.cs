@@ -108,7 +108,8 @@ namespace BrokerForge.Plugin
                 case Messages.Create:
                     var created = (Entity)inputs["Target"];
                     // The source assigns keys and the host encodes them; an id chosen by the caller would be dropped.
-                    if (created.Id != Guid.Empty || created.Contains(created.LogicalName + "id"))
+                    // Target.Id is no signal: Dataverse fills it on every virtual table Create.
+                    if (created.Contains(created.LogicalName + "id"))
                         throw new UnsupportedQueryException("Create cannot take an id: the source assigns the key of a new " + created.LogicalName + " record.", correlationId);
                     request.Record = RecordTranslator.ToCells(created, correlationId);
                     break;

@@ -159,10 +159,24 @@ public class ProviderPluginTests
     }
 
     [Fact]
+    public void Execute_CreateWithPlatformAssignedId_CallsHost()
+    {
+        // Live: Dataverse sets Target.Id on every virtual table Create, even when the caller sent no id.
+        var newId = Guid.NewGuid();
+        using var host = new StubHost(200, $$"""{"correlationId":"{{Correlation}}","id":"{{newId}}"}""");
+        var services = Services(host.Url, Messages.Create, new ParameterCollection { ["Target"] = new Entity("ext_order", Guid.NewGuid()) { ["ext_customerref"] = "CUST-01" } });
+        new ProviderPlugin().Execute(services);
+        Assert.Equal(1, host.Calls);
+        var context = (IPluginExecutionContext)services.GetService(typeof(IPluginExecutionContext))!;
+        Assert.Equal(newId, context.OutputParameters["id"]);
+    }
+
+    [Fact]
     public void Execute_CreateWithClientSuppliedId_RefusedWithoutCallingHost()
     {
         using var host = new StubHost(200, "{}");
-        var target = new Entity("ext_order", Guid.NewGuid()) { ["ext_customerref"] = "CUST-01" };
+        var id = Guid.NewGuid();
+        var target = new Entity("ext_order", id) { ["ext_orderid"] = id, ["ext_customerref"] = "CUST-01" };
         var ex = Assert.Throws<InvalidPluginExecutionException>(() => new ProviderPlugin().Execute(Services(host.Url, Messages.Create, new ParameterCollection { ["Target"] = target })));
         Assert.StartsWith(nameof(UnsupportedQueryException), ex.Message);
         Assert.Contains("id", ex.Message);
