@@ -1,6 +1,12 @@
-# CLAUDE.md — BrokerForge
+# CLAUDE.md
 
-Handover for Claude Code. Read this first, then `docs/hld.md` and `docs/descriptor-spec.md`.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## BrokerForge handover
+
+Read this first, then `docs/hld.md` and `docs/descriptor-spec.md`.
+
+**Current state:** design only. The repo holds docs; none of the projects in the layout below exist yet. Check `git ls-files` before assuming a project, solution file or command is there.
 
 ## What this is
 
@@ -18,6 +24,20 @@ It generalises **RESTVTP**, an existing config-driven REST virtual table provide
 
 - RESTVTP repo: `<set path before starting>`
 
+## Request pipeline and boundaries
+
+Every message takes the same path (HLD 4, 10):
+
+1. Plug-in turns the Dataverse message into the canonical request (HLD 7.1) and calls the host with a managed identity token.
+2. Host ingress validates the token, audience, tenant and environment ID.
+3. Router resolves `bf_serviceinstance` and the approved `bf_operation` descriptor (cached from Dataverse).
+4. Descriptor engine checks filters/sort/paging against the descriptor (fail here if undeclared), then binds values and renders the request.
+5. `IAuthProvider` for the instance's mode returns an `IAuthenticatedChannel`.
+6. `IBroker` adapter executes the rendered request over that channel and returns the raw result.
+7. Descriptor engine maps rows, applies error maps, encodes keys (Keys project), and the host replies with `rows`/`next`, `record` or `outputs`.
+
+Boundaries that span projects: adapters never read secrets or descriptors; hooks never read secrets; only the host resolves `secret` bindings; the plug-in holds no descriptor or source logic.
+
 ## Non-negotiable principles
 
 1. **Fail loudly.** Never return partial, approximate or client-side-filtered results. Unsupported filter, operator, sort, missing credential, unmapped status code or response shape mismatch is a typed exception naming the cause. No silent fallbacks anywhere.
@@ -29,13 +49,13 @@ It generalises **RESTVTP**, an existing config-driven REST virtual table provide
 
 ## Verify before building on it
 
-These are unverified. Phase 0 exists to confirm them. Do not build adapters on assumptions about them.
+Phase 0 verified these on 31 October 2026. Read `docs/findings/phase0.md` before touching registration, the provider plug-in or host ingress.
 
-- [ ] How the `entitydataprovider` table is queried for the virtual table data provider registration.
-- [ ] How `IEntityDataSourceRetrieverService` is resolved inside the provider plug-in to read the data source record.
-- [ ] Plug-in to host call using Power Platform managed identity (`IManagedIdentityService.AcquireToken`) and host-side validation of that token (audience, tenant, environment).
+- [x] How the `entitydataprovider` table is queried for the virtual table data provider registration.
+- [x] How `IEntityDataSourceRetrieverService` is resolved inside the provider plug-in to read the data source record.
+- [x] Plug-in to host call using Power Platform managed identity (`IManagedIdentityService.AcquireToken`) and host-side validation of that token (audience, tenant; environment only through the plug-in identity, see the findings).
 
-When verified, write the finding, the exact API usage and a link to the source in `docs/findings/phase0.md`.
+Still unverified (listed under "Still open" in the findings): `netstandard2.0` Contracts loading in the `net462` sandbox, CA-issued certificate subjects, `AcquireToken(Guid, …)`.
 
 ## Stack
 
@@ -141,9 +161,14 @@ Fill these in as the projects are created:
 ```
 dotnet build
 dotnet test
+dotnet test tests/BrokerForge.Descriptors.Tests --filter "FullyQualifiedName~<TestName>"   # single test
 cd tools/mock-api && npm start
 pac solution pack --folder solution --zipfile out/BrokerForge.zip
+tools/spike/sign-plugin.sh                  # Release build, strong name + Authenticode (osslsigncode) -> out/
+source tools/spike/dv.sh && dv GET bf_spikerows   # Web API call as the az CLI user
 ```
+
+The solution file is `BrokerForge.slnx` (.NET 10 SDK format). macOS notes: `net462` builds through `Microsoft.NETFramework.ReferenceAssemblies`; signing material lives in `~/.brokerforge/spike-signing/` (outside the repo) and spike IDs in `~/.brokerforge/spike-ids.env`. In zsh, never name a shell variable `path` (it is tied to `$PATH`).
 
 ## Working agreement
 

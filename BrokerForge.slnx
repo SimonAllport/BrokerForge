@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BrokerForge.Host/BrokerForge.Host.csproj" />
+    <Project Path="src/BrokerForge.Plugin/BrokerForge.Plugin.csproj" />
+  </Folder>
+</Solution>

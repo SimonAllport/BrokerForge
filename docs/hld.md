@@ -235,7 +235,7 @@ Plug-ins never receive the user's own access token, and the sandbox cannot promp
 
 ### 9.2 Trust between hops
 
-1. **Plug-in to host.** The plug-in gets a token through `IManagedIdentityService` (Power Platform managed identity). The host validates audience, tenant and environment ID, with API Management repeating the token check at the edge where it is deployed. The caller's Entra object ID in the request is trusted only because the caller is that authenticated plug-in.
+1. **Plug-in to host.** The plug-in gets a token through `IManagedIdentityService` (Power Platform managed identity). The host validates audience, tenant and environment ID, with API Management repeating the token check at the edge where it is deployed. The caller's Entra object ID in the request is trusted only because the caller is that authenticated plug-in. Phase 0 found that the token carries no environment claim: the environment is bound only by the federated credential subject, so the host can check the environment only by mapping the token's `azp` to one environment (see section 16).
 2. **Host to source.** The service instance's `IAuthProvider` attaches the credential. On-prem traffic goes through Azure Relay Hybrid Connections or a VNet; per-user Windows authentication through the relay is out of scope.
 
 ### 9.3 Async and workflow calls
@@ -355,7 +355,9 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Unverified provider SDK surfaces (`entitydataprovider` query, `IEntityDataSourceRetrieverService`) behave differently from assumptions | Medium | High | Spike in phase 0 before any adapter work |
+| ~~Unverified provider SDK surfaces behave differently from assumptions~~ | Closed | — | Verified in phase 0, see `docs/findings/phase0.md` |
+| Host cold start breaks the plug-in budget (23.5 s measured in phase 0 with scale to zero) | High without mitigation | High | `minReplicas >= 1` wherever users call the host |
+| Platform silently drops virtual table metadata (`DataProviderId` ignored unless the create passes virtual-table validation) | Medium | Medium | Generator reads back `TableType`, `DataProviderId` and `DataSourceId` and fails on mismatch |
 | Virtual table platform gaps (offline, auditing, row-level security, Power BI) block a client use case | High | Medium | State gaps at scoping; route reporting to the source or a sync |
 | Users experience live-call latency as slowness | Medium | Medium | Caching, narrow views, latency targets per source |
 | Per-user modes need a connect step users skip | Medium | Medium | Clear error with connect link; connect prompt on first use |
@@ -386,6 +388,8 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 - [ ] Composite operations across brokers: in scope for v1 or later.
 - [ ] How to detect native-table references to key-map GUIDs before pruning.
 - [ ] Licensing and packaging model if BrokerForge is offered beyond client engagements.
+- [ ] One plug-in identity (app registration) per environment, so the host can map `azp` to an allowed environment. Phase 0 found no environment claim in the token, so a shared identity would leave the canonical request's `environmentId` unverifiable. Proposed; needs a decision before phase 1 ingress.
+- [ ] Do `netstandard2.0` Contracts load in the `net462` plug-in sandbox without a plug-in package? Test at the start of phase 1.
 
 ## 17. Delivery phases
 
