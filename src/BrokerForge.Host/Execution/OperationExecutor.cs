@@ -20,11 +20,13 @@ public sealed class OperationExecutor(IBroker broker)
 
         for (var attempt = 1; ; attempt++)
         {
-            if (deadline.Passed)
+            // One read: checking Passed and then reading Remaining again could hand CancelAfter a negative span.
+            var remaining = deadline.Remaining;
+            if (remaining <= TimeSpan.Zero)
                 throw Timeout(d, correlationId, null);
 
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            budget.CancelAfter(deadline.Remaining);
+            budget.CancelAfter(remaining);
             var last = attempt >= attempts;
             try
             {

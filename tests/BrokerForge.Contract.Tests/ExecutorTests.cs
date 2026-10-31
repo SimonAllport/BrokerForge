@@ -95,6 +95,34 @@ public class ExecutorTests(MockApiFixture mock) : IAsyncLifetime
         }
     }
 
+    /// <summary>Answers each read from a script, so a test can cross the deadline between two reads.</summary>
+    private sealed class ScriptedClock(params DateTimeOffset[] reads) : TimeProvider
+    {
+        private int _next;
+        public override DateTimeOffset GetUtcNow() => reads[Math.Min(_next++, reads.Length - 1)];
+    }
+
+    [Fact]
+    public async Task Deadline_PassingBetweenTwoReads_DoesNotBreakTheTimer()
+    {
+        // A second read of Remaining would be negative; the executor must time the call from the one it checked.
+        var at = DateTimeOffset.UtcNow;
+        var deadline = new Deadline(at, new ScriptedClock(at - TimeSpan.FromSeconds(1), at + TimeSpan.FromMilliseconds(5)));
+        var result = await new OperationExecutor(new AlwaysBroker(200)).ExecuteAsync(Descriptor(""), Get("http://x", "/"), null!, deadline, "corr-1", CancellationToken.None);
+        Assert.Equal(200, result.Status);
+    }
+
+    [Fact]
+    public async Task Deadline_AlreadyPassed_SourceTimeoutWithoutCalling()
+    {
+        var at = DateTimeOffset.UtcNow;
+        var broker = new AlwaysBroker(200);
+        var ex = await Assert.ThrowsAsync<SourceTimeoutException>(() =>
+            new OperationExecutor(broker).ExecuteAsync(Descriptor(""), Get("http://x", "/"), null!, new Deadline(at, new ScriptedClock(at + TimeSpan.FromMilliseconds(5))), "corr-1", CancellationToken.None));
+        Assert.Equal("corr-1", ex.CorrelationId);
+        Assert.Equal(0, broker.Calls);
+    }
+
     [Fact]
     public async Task Retry_StopsAtDeadline()
     {
