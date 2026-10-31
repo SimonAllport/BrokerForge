@@ -2,7 +2,7 @@
 # Phase 1: sign the plug-in and register the provider and ext_order virtual table (see setup_dataverse.py).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-# osslsigncode fails intermittently reading the PFX or reaching the timestamp server; retry before giving up.
+# The timestamp server is occasionally unreachable; retry before giving up.
 for attempt in 1 2 3; do
   "$ROOT/tools/spike/sign-plugin.sh" && break
   [ "$attempt" = 3 ] && exit 1
