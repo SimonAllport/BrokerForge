@@ -24,9 +24,11 @@ az group create -n "$RG" -l "$LOCATION" -o none
 DEPLOYER="$(az ad signed-in-user show --query id -o tsv)"
 
 echo "== base: identity, registry, Key Vault, monitoring"
-read -r ACR VAULT VAULT_URI < <(az deployment group create -g "$RG" -n bf-base -f "$ROOT/infra/main.bicep" \
+base="$(az deployment group create -g "$RG" -n bf-base -f "$ROOT/infra/main.bicep" \
   -p deployApps=false deployerObjectId="$DEPLOYER" \
-  --query "[properties.outputs.registryName.value, properties.outputs.vaultName.value, properties.outputs.vaultUri.value]" -o tsv | tr '\n' ' ')
+  --query "[properties.outputs.registryName.value, properties.outputs.vaultName.value]" -o tsv)"
+ACR="$(sed -n 1p <<< "$base")"
+VAULT="$(sed -n 2p <<< "$base")"
 
 echo "== secrets in $VAULT (generated once, never printed)"
 secret_file="$(mktemp)"
