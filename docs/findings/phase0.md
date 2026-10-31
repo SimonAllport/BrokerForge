@@ -155,6 +155,28 @@ Tests:
 | First call (host scaled to zero, first token exchange) | 23.5 s |
 | Warm calls | 31–46 ms, one at 1.4 s |
 
+## 4. Paging (verified 31 October 2026, phase 1 Task 1)
+
+The spike plug-in was changed to report `QueryExpression.PageInfo` in every row and to return three pages, setting `PagingCookie = "bf-test-<page>"` and `MoreRecords = true` on pages 1 and 2 (`src/BrokerForge.Plugin/SpikeRetrieveMultiplePlugin.cs`, commit with this section).
+
+| Call | What the provider received | What the caller got |
+| --- | --- | --- |
+| `GET bf_spikerows`, `Prefer: odata.maxpagesize=2` | `QueryExpression`, `PageNumber=1`, `Count=2`, `PagingCookie=null` | 2 rows and an `@odata.nextLink` whose `$skiptoken` is `<cookie pagenumber="2" pagingcookie="bf-test-1" istracking="False" />` |
+| Follow that `nextLink` | `PageNumber=2`, `Count=2`, `PagingCookie="bf-test-1"` | 2 rows, next link carrying `bf-test-2` |
+| Follow again | `PageNumber=3`, `PagingCookie="bf-test-2"` | 2 rows, no next link (`MoreRecords=false`) |
+| `$top=3` | `PageNumber=1`, `Count=3`, `TopCount=null` | 3 rows and no next link, even though the provider said `MoreRecords=true` |
+| No page size | `Count=5000` | 5000 rows and a next link |
+| FetchXML `count="2" page="2" paging-cookie="bf-test-1"` | `QueryExpression` (FetchXML is converted), `PageNumber=2`, `PagingCookie="bf-test-1"` | 2 rows, `@Microsoft.Dynamics.CRM.morerecords: true`, `fetchxmlpagingcookie` carrying `bf-test-2` |
+| Page 1 returns `Count - 1` rows with `MoreRecords=true` | `Count=3` | 2 rows and a next link. A short page with more to follow is accepted |
+
+What this means for the design:
+
+- The provider's `PagingCookie` string comes back verbatim on the next page, through both the Web API and FetchXML. The host's page token can travel in it, so the host stays stateless (HLD 12).
+- The platform puts the cookie in an XML attribute inside `$skiptoken`, and the user can see and edit it. The host must treat the token as untrusted input (descriptor spec 7: operation, version and link checks).
+- `$top` arrives as `PageInfo.Count`, not `TopCount`, and the platform suppresses the next link itself. The plug-in needs no special case.
+- With no page size the provider is asked for 5000 rows. This confirms G9 / D-12: a page bounded by `maxCallsPerPage` must return a next token, not fail.
+- `ReturnTotalRecordCount` was false in every call; FetchXML reports `totalrecordcount: 0`. Phase 1 does not return totals.
+
 ## Consequences for the design
 
 These need decisions; they are recorded in `docs/hld.md` sections 15 and 16.

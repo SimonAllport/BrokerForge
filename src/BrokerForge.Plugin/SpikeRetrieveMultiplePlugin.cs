@@ -2,6 +2,7 @@ using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Query;
 
 namespace BrokerForge.Plugin
 {
@@ -51,12 +52,31 @@ namespace BrokerForge.Plugin
             var hostReply = CallHost(hostUrl, token, correlationId);
             tracing.Trace("host replied: {0}", hostReply);
 
-            var row = new Entity(context.PrimaryEntityName, Guid.Parse("00000000-0000-0000-0000-000000000001"));
-            row["bf_name"] = "hard-coded row";
-            row["bf_hostreply"] = hostReply.Length > 4000 ? hostReply.Substring(0, 4000) : hostReply;
+            // Paging probe (phase 1, Task 1): report what the platform passes in, and page through
+            // three pages of PageInfo.Count rows so the cookie round-trip can be observed.
+            var query = context.InputParameters.Contains("Query") ? context.InputParameters["Query"] as QueryExpression : null;
+            var page = query?.PageInfo;
+            var pageNumber = page?.PageNumber ?? 0;
+            var count = page != null && page.Count > 0 ? page.Count : 3;
+            var probe = string.Format("queryType={0} pageNumber={1} count={2} cookie={3} returnTotal={4} topCount={5}",
+                context.InputParameters.Contains("Query") ? context.InputParameters["Query"]?.GetType().Name : "none",
+                pageNumber, page?.Count, page?.PagingCookie ?? "(null)", page?.ReturnTotalRecordCount, query?.TopCount);
+            tracing.Trace("paging probe: {0}", probe);
 
+            var effectivePage = pageNumber < 1 ? 1 : pageNumber;
             var collection = new EntityCollection { EntityName = context.PrimaryEntityName };
-            collection.Entities.Add(row);
+            var rowsThisPage = effectivePage == 1 && count > 1 ? count - 1 : count; // short first page
+            for (var i = 0; i < rowsThisPage; i++)
+            {
+                var n = effectivePage * 1000 + i;
+                var row = new Entity(context.PrimaryEntityName, new Guid(n, 0, 0, new byte[8]));
+                row["bf_name"] = "page " + effectivePage + " row " + i;
+                row["bf_hostreply"] = probe;
+                collection.Entities.Add(row);
+            }
+            collection.MoreRecords = effectivePage < 3;
+            if (collection.MoreRecords)
+                collection.PagingCookie = "bf-test-" + effectivePage;
             context.OutputParameters["BusinessEntityCollection"] = collection;
         }
 
