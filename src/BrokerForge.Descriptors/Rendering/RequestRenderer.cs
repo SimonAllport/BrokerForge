@@ -282,7 +282,7 @@ public static partial class RequestRenderer
                         throw new UnsupportedQueryException($"Column {c.Column} is an option set; writing option set values to a source is not supported until phase 2 (operation {d.Operation}).", ctx.CorrelationId);
                     return new TextV(cell.Value, cell.Type switch
                     {
-                        CellTypes.Int or CellTypes.Decimal when JsonNumber().IsMatch(cell.Value) => Kind.Number,
+                        CellTypes.Int or CellTypes.Decimal or CellTypes.Money when JsonNumber().IsMatch(cell.Value) => Kind.Number,
                         CellTypes.Bool => Kind.Bool,
                         _ => Kind.String,
                     });

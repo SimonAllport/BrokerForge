@@ -171,6 +171,14 @@ public class RequestRendererTests
     }
 
     [Fact]
+    public async Task Body_MoneyColumnIsANumber()
+    {
+        var d = Op("Create", "  method: POST\n  path: /v2/o\n  body:\n    template:\n      total: { col: ext_total }");
+        var r = await Render(d, Ctx(record: new() { ["ext_total"] = Cell("ext_total", CellTypes.Money, "12.50") }));
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""{"total":12.50}"""), BodyJson(r)), BodyJson(r).ToJsonString());
+    }
+
+    [Fact]
     public async Task Body_FormatJsonParsesColumn()
     {
         var d = Fixtures.Orders("createOrder");

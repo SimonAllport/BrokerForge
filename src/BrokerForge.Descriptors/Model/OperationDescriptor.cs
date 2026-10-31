@@ -56,7 +56,7 @@ public sealed record CompositeKey(IReadOnlyDictionary<string, string> Parts) : K
 /// <summary><see cref="Type"/> is null (string) or one of string, int, decimal, bool, datetime, date, guid, optionset:&lt;map&gt;.</summary>
 public sealed record MapEntry(string Path, string? Type, bool Optional)
 {
-    public static readonly IReadOnlySet<string> Types = new HashSet<string> { "string", "int", "decimal", "bool", "datetime", "date", "guid" };
+    public static readonly IReadOnlySet<string> Types = new HashSet<string> { "string", "int", "decimal", "money", "bool", "datetime", "date", "guid" };
     public string? OptionSetName => Type != null && Type.StartsWith("optionset:", StringComparison.Ordinal) ? Type["optionset:".Length..] : null;
 }
 

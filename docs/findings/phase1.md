@@ -44,7 +44,6 @@ With `minReplicas: 1` there was no host cold start in these runs. Phase 0 measur
 - A Create or Update that supplies a column no `col` binding sends is refused with a Validation error naming the column, so a form save can never appear to succeed while dropping a value. On `ext_order` that means Status, Reference and Placed cannot be edited in phase 1.
 - Dataverse asking for page N > 1 without a paging cookie (a jump to page) is refused. Back-navigation with a lower page number was not tested.
 - `ext_lines_json` is written on Create but not read back, because the spec has no map type that serialises a JSON subtree to a string.
-- Money columns: the plug-in returns a `decimal` cell as `decimal`, which a Dataverse Money column does not accept. The plug-in cannot tell the column type without reading table metadata, and the canonical contract has no `money` cell type. Adding one is a Contracts and descriptor schema change, so it waits for a decision. `ext_order` has no Money column.
 - Duplicate keys are detected within one Dataverse page only; the host keeps no state between pages.
 - Application Insights is deployed but the host does not send to it yet. Console logs, which carry the `correlationId` scope, go to Log Analytics (`ContainerAppConsoleLogs_CL`).
 

@@ -151,6 +151,7 @@ public static class ResponseMapper
             CellTypes.String => text,
             CellTypes.Int => int.TryParse(text, NumberStyles.AllowLeadingSign, inv, out var i) ? i.ToString(inv) : throw Bad("an integer"),
             CellTypes.Decimal => decimal.TryParse(text, NumberStyles.Number | NumberStyles.AllowExponent, inv, out var m) ? m.ToString(inv) : throw Bad("a decimal"),
+            CellTypes.Money => decimal.TryParse(text, NumberStyles.Number | NumberStyles.AllowExponent, inv, out var money) ? money.ToString(inv) : throw Bad("an amount"),
             CellTypes.Bool => kind is JsonValueKind.True or JsonValueKind.False || text is "true" or "false" ? text : throw Bad("a boolean"),
             CellTypes.DateTime => kind == JsonValueKind.String && DateTimeOffset.TryParse(text, inv, DateTimeStyles.AssumeUniversal, out var at)
                 ? at.UtcDateTime.ToString("o", inv)

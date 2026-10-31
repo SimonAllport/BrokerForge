@@ -48,6 +48,8 @@ namespace BrokerForge.Plugin.Translation
             {
                 case CellTypes.Int: return int.Parse(cell.Value, NumberStyles.AllowLeadingSign, inv);
                 case CellTypes.Decimal: return decimal.Parse(cell.Value, NumberStyles.Number | NumberStyles.AllowExponent, inv);
+                // A Money column accepts only Money; a bare decimal fails on the platform.
+                case CellTypes.Money: return new Money(decimal.Parse(cell.Value, NumberStyles.Number | NumberStyles.AllowExponent, inv));
                 case CellTypes.Bool: return cell.Value == "true";
                 case CellTypes.DateTime:
                 case CellTypes.Date:

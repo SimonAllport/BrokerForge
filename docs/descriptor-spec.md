@@ -142,7 +142,7 @@ response:
   map:                           # column logical name -> JSONPath (or transform)
     ext_name:   $.reference
     ext_status: $.state.code
-    ext_total:  { path: $.totals.gross, type: decimal }
+    ext_total:  { path: $.totals.gross, type: money }
     ext_placed: { path: $.placedAt, type: datetime }
     ext_note:   { path: $.note, optional: true }
     ext_label:  { jsonata: "$uppercase(state.code) & ' / ' & reference" }
@@ -155,7 +155,7 @@ Rules:
 - `rows` matching nothing returns an empty set only when the path exists and is an empty array. A missing path is `MappingException`. Retrieve and RetrieveMultiple both require `rows`.
 - Within a row, JSON `null` maps to null. A map path that matches nothing is `MappingException` unless the entry has `optional: true`, which maps it to null.
 - Every column in the table's generated schema must appear in `map` or be explicitly listed under `response.unmapped: [ ... ]`. Silent gaps are a validation error.
-- `type` coerces: `string`, `int`, `decimal`, `bool`, `datetime`, `date`, `guid`, `optionset:<mapName>`. Coercion failure is `MappingException` naming column and path.
+- `type` coerces: `string`, `int`, `decimal`, `money` (for Dataverse currency columns), `bool`, `datetime`, `date`, `guid`, `optionset:<mapName>`. Coercion failure is `MappingException` naming column and path.
 - Composite keys: `key: { accountId: $.accountId, orderId: $.id }`. The object map's key strategy must be `keymap` or reversible if it fits.
 - Create must return a key. If the source returns 201 with a `Location` header only, use `key: { header: Location, pattern: "/orders/(?<id>[^/]+)$" }`.
 

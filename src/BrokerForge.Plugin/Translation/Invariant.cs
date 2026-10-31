@@ -19,7 +19,7 @@ namespace BrokerForge.Plugin.Translation
                 case long l: text = l.ToString(CultureInfo.InvariantCulture); cellType = Contracts.CellTypes.Int; return true;
                 case decimal m: text = m.ToString(CultureInfo.InvariantCulture); cellType = Contracts.CellTypes.Decimal; return true;
                 case double d: text = d.ToString("R", CultureInfo.InvariantCulture); cellType = Contracts.CellTypes.Decimal; return true;
-                case Money money: text = money.Value.ToString(CultureInfo.InvariantCulture); cellType = Contracts.CellTypes.Decimal; return true;
+                case Money money: text = money.Value.ToString(CultureInfo.InvariantCulture); cellType = Contracts.CellTypes.Money; return true;
                 case bool b: text = b ? "true" : "false"; cellType = Contracts.CellTypes.Bool; return true;
                 case DateTime dt:
                     var utc = dt.Kind == DateTimeKind.Local ? dt.ToUniversalTime() : DateTime.SpecifyKind(dt, DateTimeKind.Utc);

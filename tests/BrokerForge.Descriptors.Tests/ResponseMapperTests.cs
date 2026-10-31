@@ -147,4 +147,15 @@ public class ResponseMapperTests
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"took {watch.Elapsed}");
         Assert.Contains("time", ex.Message);
     }
+
+    [Fact]
+    public void Map_MoneyType_MoneyCell()
+    {
+        var yaml = Mutate(OrdersYaml("listOrders"), "    ext_customerref: $.customer.ref\n", "    ext_customerref: $.customer.ref\n    ext_total: { path: $.total, type: money }\n");
+        var body = """{"data":[{"id":"ord_1","reference":"R","state":{"code":"open"},"customer":{"ref":"C"},"placedAt":"2026-01-01T00:00:00Z","total":12.50}]}""";
+        var total = Assert.Single(List(body, yaml)).Cells.Single(c => c.Col == "ext_total");
+        Assert.Equal((CellTypes.Money, "12.50"), (total.Type, total.Value));
+        var ex = Assert.Throws<MappingException>(() => List(body.Replace("12.50", "\"lots\""), yaml));
+        Assert.Contains("ext_total", ex.Message);
+    }
 }
