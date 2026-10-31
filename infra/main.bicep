@@ -79,4 +79,4 @@ module apps 'containerApps.bicep' = if (deployApps) {
 output registryName string = registry.name
 output vaultName string = vault.outputs.name
 output vaultUri string = vault.outputs.vaultUri
-output hostUrl string = deployApps ? apps.outputs.hostUrl : ''
+output hostUrl string = apps.?outputs.hostUrl ?? ''
