@@ -81,7 +81,7 @@ public static partial class RequestRenderer
             body = b.Template != null ? await RenderTemplate(r, b) : Encoding.UTF8.GetBytes(await RenderRaw(r, b));
 
         var pathAndQuery = query.Count == 0 ? path : path + (path.Contains('?') ? "&" : "?") + string.Join("&", query);
-        return new RenderedRequest(ctx.Instance.BaseUrl, spec.Method, pathAndQuery, headers, body, spec.Body?.ContentType, r.SecretParams);
+        return new RenderedRequest(ctx.Instance.BaseUrl, spec.Method, pathAndQuery, headers, body, spec.Body?.ContentType, r.SecretParams, r.SecretValues);
     }
 
     private static void AddPagingParams(PagingSpec? paging, PagingValues? values, List<string> query)
@@ -197,6 +197,7 @@ public static partial class RequestRenderer
     {
         public OperationDescriptor D => d;
         public HashSet<string> SecretParams { get; } = new(StringComparer.Ordinal);
+        public List<string> SecretValues { get; } = new();
 
         public MappedSourceException Validation(string message) =>
             new(SourceErrorKinds.Validation, $"{message} (operation {d.Operation}).", ctx.CorrelationId);
@@ -224,7 +225,10 @@ public static partial class RequestRenderer
                 case SecretBinding s:
                     if (!ctx.Instance.Secrets.TryGetValue(s.Name, out var reference))
                         throw new InvalidOperationException($"Service instance {ctx.Instance.Name} has no secret reference named `{s.Name}` ({d.Source} {path}).");
-                    return new TextV(await secrets.GetAsync(SecretRef.Parse(reference), ct), Kind.String);
+                    var secret = await secrets.GetAsync(SecretRef.Parse(reference), ct);
+                    SecretValues.Add(secret);
+                    SecretValues.Add(Uri.EscapeDataString(secret));
+                    return new TextV(secret, Kind.String);
                 case ContextBinding c:
                     return c.Name switch
                     {

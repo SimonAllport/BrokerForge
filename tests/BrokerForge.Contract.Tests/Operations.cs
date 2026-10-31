@@ -21,7 +21,7 @@ internal static class Operations
 
     public static ServiceInstance Instance(string baseUrl) => new("OrdersAPI", "rest", baseUrl,
         new AuthConfig(AuthMode.Static, "apiKeyHeader", HeaderName: "X-Api-Key", SecretRef: "env:UNUSED"),
-        new Dictionary<string, string> { ["accountId"] = "acc-1" }, new Dictionary<string, string>());
+        new Dictionary<string, string> { ["accountId"] = "acc-1" }, new Dictionary<string, string> { ["partnerKey"] = "env:UNUSED" });
 
     public static string DescriptorPath(string name) =>
         File.Exists(Path.Combine(MockApiFixture.RepoRoot, "descriptors", "OrdersAPI", name + ".yaml"))

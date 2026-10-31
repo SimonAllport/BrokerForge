@@ -200,6 +200,24 @@ public class PagingTests(MockApiFixture mock) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task LinkToken_NeverCarriesQuerySecrets()
+    {
+        // The mock builds its next link from the incoming query, as many sources do, so the secret comes back in it.
+        var op = await Operations.Context(mock.BaseUrl, Operations.Load("listLink", y => y.Replace("    customer:", "    k: { secret: partnerKey }\n    customer:")));
+        var ids = new List<string>();
+        string? token = null;
+        do
+        {
+            var (rows, next) = await Operations.Coordinator().ReadPageAsync(op, Plan(op, 50, token), Budget(), CancellationToken.None);
+            ids.AddRange(rows.Select(r => r.Key.Value));
+            if (next != null)
+                Assert.DoesNotContain(MockApiFixture.ApiKey, System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(Pad(next[..next.IndexOf('.')].Replace('-', '+').Replace('_', '/')))));
+            token = next;
+        } while (token != null);
+        AssertCoverOnce(ids);
+    }
+
+    [Fact]
     public async Task Deadline_AppliesAcrossPageCalls()
     {
         var op = await Operations.Context(mock.BaseUrl, Operations.Load("listOrders"));

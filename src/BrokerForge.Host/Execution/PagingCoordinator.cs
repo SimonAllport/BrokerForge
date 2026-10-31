@@ -84,11 +84,12 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
                     throw plan.Token != null && calls == 0
                         ? Reject("The page token's link is not for this operation's path")
                         : new SourceException($"The source's next link is not for this operation's path (operation {d.Operation}).", correlationId);
-                request = request with { BaseUrl = uri.GetLeftPart(UriPartial.Authority), PathAndQuery = uri.PathAndQuery };
+                // Secret query parameters were stripped before the link went into a token; put the descriptor's back.
+                request = request with { BaseUrl = uri.GetLeftPart(UriPartial.Authority), PathAndQuery = WithParams(uri.PathAndQuery, SecretPairs(request)) };
             }
 
             var result = await executor.ExecuteAsync(d, request, op.Channel, deadline, correlationId, ct);
-            ErrorMapper.ThrowIfError(d, result, correlationId, SecretValues(request));
+            ErrorMapper.ThrowIfError(d, result, correlationId, Redact(request, op.Channel));
             var page = ResponseMapper.MapRows(d, result, op.Keys.Kind, correlationId);
             rows.AddRange(page);
             calls++;
@@ -124,6 +125,8 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
                     break;
                 case "link":
                     link = NextFrom(result, request, op.Instance.BaseUrl, Source);
+                    if (link != null)
+                        link = WithoutParams(link, SecretParamNames(request, op.Instance));
                     more = link != null;
                     break;
                 default:
@@ -180,15 +183,33 @@ public sealed partial class PagingCoordinator(OperationExecutor executor, ISecre
             && (u.AbsolutePath + "/").StartsWith(basePath, StringComparison.Ordinal);
     }
 
-    public static IEnumerable<string> SecretValues(RenderedRequest request)
+    /// <summary>Every secret value a source reply could echo back: rendered secrets and the channel's credentials.</summary>
+    public static IEnumerable<string> Redact(RenderedRequest request, IAuthenticatedChannel? channel) =>
+        request.SecretValues.Concat(channel?.CredentialValues ?? Array.Empty<string>());
+
+    private static HashSet<string> SecretParamNames(RenderedRequest request, ServiceInstance instance)
     {
-        if (request.SecretQueryParams.Count == 0 || request.PathAndQuery.IndexOf('?') is not (var q and >= 0))
-            yield break;
-        foreach (var pair in request.PathAndQuery[(q + 1)..].Split('&'))
-        {
-            var eq = pair.IndexOf('=');
-            if (eq > 0 && request.SecretQueryParams.Contains(Uri.UnescapeDataString(pair[..eq])))
-                yield return Uri.UnescapeDataString(pair[(eq + 1)..]);
-        }
+        var names = new HashSet<string>(request.SecretQueryParams, StringComparer.Ordinal);
+        if (instance.Auth is { StaticKind: "apiKeyQuery", QueryParam: { } p })
+            names.Add(p);
+        return names;
     }
+
+    private static IEnumerable<string> QueryPairs(string pathAndQuery) =>
+        pathAndQuery.IndexOf('?') is var q and >= 0 ? pathAndQuery[(q + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries) : Array.Empty<string>();
+
+    private static string ParamName(string pair) => Uri.UnescapeDataString(pair.IndexOf('=') is var eq and > 0 ? pair[..eq] : pair);
+
+    private static List<string> SecretPairs(RenderedRequest request) =>
+        QueryPairs(request.PathAndQuery).Where(p => request.SecretQueryParams.Contains(ParamName(p))).ToList();
+
+    private static string WithoutParams(string url, HashSet<string> names)
+    {
+        var uri = new Uri(url);
+        var kept = QueryPairs(uri.PathAndQuery).Where(p => !names.Contains(ParamName(p))).ToList();
+        return uri.GetLeftPart(UriPartial.Path) + (kept.Count == 0 ? "" : "?" + string.Join("&", kept));
+    }
+
+    private static string WithParams(string pathAndQuery, List<string> pairs) =>
+        pairs.Count == 0 ? pathAndQuery : pathAndQuery + (pathAndQuery.Contains('?') ? "&" : "?") + string.Join("&", pairs);
 }

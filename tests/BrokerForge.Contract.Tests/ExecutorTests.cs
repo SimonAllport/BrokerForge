@@ -31,7 +31,7 @@ public class ExecutorTests(MockApiFixture mock) : IAsyncLifetime
         "operation: probe\nversion: 1\nbinds: Delete\nrequest:\n  method: GET\n  path: /v2/orders\n" + retry, "probe.yaml");
 
     private static RenderedRequest Get(string baseUrl, string pathAndQuery) =>
-        new(baseUrl, "GET", pathAndQuery, Array.Empty<KeyValuePair<string, string>>(), null, null, new HashSet<string>());
+        new(baseUrl, "GET", pathAndQuery, Array.Empty<KeyValuePair<string, string>>(), null, null, new HashSet<string>(), Array.Empty<string>());
 
     private static readonly OperationExecutor Executor = new(new RestBroker());
 

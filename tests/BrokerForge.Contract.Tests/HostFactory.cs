@@ -101,6 +101,8 @@ public sealed class HostFactory : WebApplicationFactory<Program>
         Map("ext_echo", "EchoAPI", ("Create", "echoCreateJson"), ("Update", "echoUpdate"), ("Retrieve", "echoGet"), ("RetrieveMultiple", "echoList"));
         Map("ext_echoxml", "EchoAPI", ("Create", "echoCreateXml"));
         Map("ext_echoform", "EchoAPI", ("Create", "echoCreateForm"));
+        Map("ext_echoq", "EchoAPI", ("Retrieve", "echoQuerySecret"));
+        Map("ext_echofail", "EchoAPI", ("Retrieve", "echoFail"));
 
         builder.ConfigureAppConfiguration(c => c.AddInMemoryCollection(settings));
         builder.ConfigureLogging(l => l.AddProvider(new CaptureLoggerProvider(Logs)));

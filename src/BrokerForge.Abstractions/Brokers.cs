@@ -5,6 +5,9 @@ namespace BrokerForge.Abstractions;
 /// <summary>An HTTP channel with credentials already attached by an <see cref="IAuthProvider"/>.</summary>
 public interface IAuthenticatedChannel
 {
+    /// <summary>The credential values this channel attaches, for redaction only. Never logged or sent anywhere else.</summary>
+    IReadOnlyCollection<string> CredentialValues { get; }
+
     Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct);
 }
 

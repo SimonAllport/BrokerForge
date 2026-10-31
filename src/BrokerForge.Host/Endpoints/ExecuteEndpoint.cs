@@ -149,7 +149,7 @@ public static partial class ExecuteEndpoint
         var d = op.Descriptor;
         var request = await RequestRenderer.RenderAsync(d.Request, d, op.Binding, secrets, ct);
         var result = await executor.ExecuteAsync(d, request, op.Channel, deadline, op.Binding.CorrelationId, ct);
-        ErrorMapper.ThrowIfError(d, result, op.Binding.CorrelationId, PagingCoordinator.SecretValues(request));
+        ErrorMapper.ThrowIfError(d, result, op.Binding.CorrelationId, PagingCoordinator.Redact(request, op.Channel));
         return result;
     }
 

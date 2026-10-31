@@ -103,6 +103,20 @@ public class AuthProviderTests
     }
 
     [Fact]
+    public async Task Channels_ExposeCredentialValuesForRedaction()
+    {
+        var (provider, _) = Static(Dummy);
+        foreach (var kind in new[] { "apiKeyHeader", "apiKeyQuery", "basic" })
+        {
+            var channel = await provider.AuthenticateAsync(Instance(new AuthConfig(AuthMode.Static, kind, HeaderName: "X-Api-Key", QueryParam: "k", Username: "svc", SecretRef: "env:K")), Caller, "c", CancellationToken.None);
+            Assert.Contains(Dummy, channel.CredentialValues);
+        }
+        var bearer = await new ServiceAccountAuthProvider(new StubCredential("tok-xyz"), new HttpClient(new Capture()))
+            .AuthenticateAsync(Instance(new AuthConfig(AuthMode.ServiceAccount, Scope: "s")), Caller, "c", CancellationToken.None);
+        Assert.Contains("tok-xyz", bearer.CredentialValues);
+    }
+
+    [Fact]
     public async Task ServiceAccount_AttachesBearerFromCredential()
     {
         var capture = new Capture();

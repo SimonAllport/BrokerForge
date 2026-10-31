@@ -57,7 +57,9 @@ builder.Services.AddAuthorization();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull);
 
 builder.Services.AddHttpClient("sources", c => c.Timeout = Timeout.InfiniteTimeSpan)
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5), AllowAutoRedirect = false });
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5), AllowAutoRedirect = false })
+    // .NET 8's client logging writes the full request URI, and a query can carry a secret (principle 4).
+    .RemoveAllLoggers();
 builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
 builder.Services.AddSingleton<ISecretResolver>(sp => new SecretResolverRouter(
     new KeyVaultSecretResolver(sp.GetRequiredService<TokenCredential>()),

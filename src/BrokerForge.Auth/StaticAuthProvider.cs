@@ -21,7 +21,7 @@ public sealed class StaticAuthProvider(ISecretResolver secrets, HttpClient http)
         if (string.IsNullOrEmpty(auth.SecretRef))
             throw new CredentialUnavailableException($"Service instance {instance.Name} has no Auth.SecretRef for Static mode.");
 
-        Action<HttpRequestMessage> attach = auth.StaticKind switch
+        (Action<HttpRequestMessage> Attach, string[] Values) attach = auth.StaticKind switch
         {
             "apiKeyHeader" when string.IsNullOrEmpty(auth.HeaderName) => throw Config(instance, "apiKeyHeader needs Auth.HeaderName"),
             "apiKeyQuery" when string.IsNullOrEmpty(auth.QueryParam) => throw Config(instance, "apiKeyQuery needs Auth.QueryParam"),
@@ -29,10 +29,10 @@ public sealed class StaticAuthProvider(ISecretResolver secrets, HttpClient http)
             "apiKeyHeader" or "apiKeyQuery" or "basic" => await Attach(instance, auth, ct),
             _ => throw Config(instance, $"Auth.StaticKind must be apiKeyHeader, apiKeyQuery or basic; got `{auth.StaticKind}`"),
         };
-        return new HttpChannel(http, attach);
+        return new HttpChannel(http, attach.Attach, attach.Values);
     }
 
-    private async Task<Action<HttpRequestMessage>> Attach(ServiceInstance instance, AuthConfig auth, CancellationToken ct)
+    private async Task<(Action<HttpRequestMessage>, string[])> Attach(ServiceInstance instance, AuthConfig auth, CancellationToken ct)
     {
         var secret = await secrets.GetAsync(SecretRef.Parse(auth.SecretRef!), ct);
         if (secret.Contains('\r') || secret.Contains('\n'))
@@ -41,18 +41,19 @@ public sealed class StaticAuthProvider(ISecretResolver secrets, HttpClient http)
         switch (auth.StaticKind)
         {
             case "apiKeyHeader":
-                return request => request.Headers.TryAddWithoutValidation(auth.HeaderName!, secret);
+                return (request => request.Headers.TryAddWithoutValidation(auth.HeaderName!, secret), new[] { secret });
             case "apiKeyQuery":
                 var pair = Uri.EscapeDataString(auth.QueryParam!) + "=" + Uri.EscapeDataString(secret);
-                return request =>
+                return (request =>
                 {
                     var uri = request.RequestUri!;
                     var builder = new UriBuilder(uri) { Query = string.IsNullOrEmpty(uri.Query) ? pair : uri.Query.TrimStart('?') + "&" + pair };
                     request.RequestUri = builder.Uri;
-                };
+                }, new[] { secret, Uri.EscapeDataString(secret) });
             default:
-                var basic = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(auth.Username + ":" + secret)));
-                return request => request.Headers.Authorization = basic;
+                var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(auth.Username + ":" + secret));
+                var basic = new AuthenticationHeaderValue("Basic", encoded);
+                return (request => request.Headers.Authorization = basic, new[] { secret, encoded });
         }
     }
 

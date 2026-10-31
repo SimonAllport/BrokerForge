@@ -52,6 +52,31 @@ public class DescriptorFeatureTests(MockApiFixture mock) : HostTestBase(mock)
     }
 
     [Fact]
+    public async Task Logs_NeverContainQuerySecret()
+    {
+        var request = HostFactory.Request("ext_echoq", Messages.Retrieve, "EchoAPI");
+        request.Id = Id("x");
+        var (status, _, error) = await Host.Execute(request);
+        Assert.True(status == 200, error?.Message);
+        Assert.Equal("k=" + HostFactory.PartnerSecret, (await LastEcho())["rawQuery"]!.GetValue<string>());
+        Assert.NotEmpty(Host.Logs);
+        Assert.DoesNotContain(Host.Logs, line => line.Contains(HostFactory.PartnerSecret));
+    }
+
+    [Fact]
+    public async Task ErrorText_RedactsHeaderSecrets()
+    {
+        var request = HostFactory.Request("ext_echofail", Messages.Retrieve, "EchoAPI");
+        request.Id = Id("x");
+        var (status, _, error) = await Host.Execute(request);
+        Assert.Equal(502, status);
+        Assert.Equal("SourceException", error!.Error);
+        Assert.Contains("x-partner", error.Message);
+        Assert.DoesNotContain(HostFactory.PartnerSecret, error.Message);
+        Assert.DoesNotContain(Host.Logs, line => line.Contains(HostFactory.PartnerSecret));
+    }
+
+    [Fact]
     public async Task Logs_CarryCorrelationId()
     {
         var request = HostFactory.Request("ext_echo", Messages.Create, "EchoAPI");

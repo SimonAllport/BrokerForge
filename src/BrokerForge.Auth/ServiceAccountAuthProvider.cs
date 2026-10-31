@@ -29,6 +29,6 @@ public sealed class ServiceAccountAuthProvider(TokenCredential credential, HttpC
             throw new CredentialUnavailableException($"The host identity could not get a token for scope {auth.Scope}.", ex);
         }
         var header = new AuthenticationHeaderValue("Bearer", token.Token);
-        return new HttpChannel(http, request => request.Headers.Authorization = header);
+        return new HttpChannel(http, request => request.Headers.Authorization = header, token.Token);
     }
 }
