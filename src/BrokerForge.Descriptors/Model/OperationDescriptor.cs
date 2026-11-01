@@ -18,7 +18,12 @@ public sealed record OperationDescriptor(
     bool? SortStable,
     string Source)
 {
+    public const string CustomApiPrefix = "customapi:";
+
     public bool IsRead => Binds is Messages.Retrieve or Messages.RetrieveMultiple;
+
+    /// <summary>The Custom API unique name for <c>customapi:&lt;UniqueName&gt;</c> binds, otherwise null.</summary>
+    public string? CustomApi => Binds.StartsWith(CustomApiPrefix, StringComparison.Ordinal) ? Binds[CustomApiPrefix.Length..] : null;
 }
 
 public sealed record RequestSpec(
@@ -46,17 +51,24 @@ public sealed record BodyObject(IReadOnlyList<KeyValuePair<string, BodyNode>> Me
 public sealed record BodyArray(IReadOnlyList<BodyNode> Items) : BodyNode;
 public sealed record BodyLeaf(Binding Binding) : BodyNode;
 
-public sealed record ResponseSpec(string? Rows, KeySpec? Key, IReadOnlyDictionary<string, MapEntry> Map, IReadOnlyList<string> Unmapped);
+/// <summary><see cref="Outputs"/> is Custom API output parameter to entry, in file order; empty for virtual table messages.</summary>
+public sealed record ResponseSpec(string? Rows, KeySpec? Key, IReadOnlyDictionary<string, MapEntry> Map, IReadOnlyList<string> Unmapped, IReadOnlyDictionary<string, MapEntry> Outputs);
 
 public abstract record KeySpec;
 public sealed record PathKey(string Path) : KeySpec;
 public sealed record HeaderKey(string Header, string Pattern) : KeySpec;
 public sealed record CompositeKey(IReadOnlyDictionary<string, string> Parts) : KeySpec;
 
-/// <summary><see cref="Type"/> is null (string) or one of string, int, decimal, bool, datetime, date, guid, optionset:&lt;map&gt;.</summary>
+/// <summary>
+/// <see cref="Type"/> is null (string) or one of string, int, decimal, bool, datetime, date, guid, json, optionset:&lt;map&gt;.
+/// <c>json</c> serialises the matched JSON value to a string cell.
+/// </summary>
 public sealed record MapEntry(string Path, string? Type, bool Optional)
 {
-    public static readonly IReadOnlySet<string> Types = new HashSet<string> { "string", "int", "decimal", "bool", "datetime", "date", "guid" };
+    public const string JsonType = "json";
+    public static readonly IReadOnlySet<string> Types = new HashSet<string> { "string", "int", "decimal", "bool", "datetime", "date", "guid", JsonType };
+    /// <summary>Types an <c>outputs</c> entry may take: the Custom API parameter types (descriptor spec 6).</summary>
+    public static readonly IReadOnlySet<string> OutputTypes = new HashSet<string> { "string", "int", "decimal", "bool", "datetime", "guid" };
     public string? OptionSetName => Type != null && Type.StartsWith("optionset:", StringComparison.Ordinal) ? Type["optionset:".Length..] : null;
 }
 

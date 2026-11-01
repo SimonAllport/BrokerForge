@@ -36,7 +36,7 @@ public class SchemaRuleTests
     [Fact]
     public void Rule7_CreateColumnNeitherBoundNorUnmapped_Rejected()
     {
-        var yaml = Mutate(OrdersYaml("createOrder"), "unmapped: [ext_name, ext_status, ext_placed]", "unmapped: [ext_name, ext_status]");
+        var yaml = Mutate(OrdersYaml("createOrder"), "unmapped: [ext_name, ext_placed]", "unmapped: [ext_name]");
         var error = Assert.Single(Validate(yaml));
         Assert.Equal(7, error.Rule);
         Assert.Contains("ext_placed", error.Message);

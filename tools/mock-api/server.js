@@ -88,14 +88,18 @@ function merge(target, patch) {
   return target;
 }
 
+const STATES = ['open', 'shipped', 'cancelled'];
+
 function create(body, idemKey) {
   if (idemKey && idempotency.has(idemKey)) return idempotency.get(idemKey);
   if (!body.customer || !body.customer.ref) throw new HttpError(422, 'customer.ref is required');
+  const code = body.state && body.state.code != null ? body.state.code : 'open';
+  if (!STATES.includes(code)) throw new HttpError(422, `state.code must be one of ${STATES.join(', ')}`);
   const n = nextId++;
   const order = {
     id: `ord_${pad(n, 4)}`,
     reference: `REF-${pad(n, 4)}`,
-    state: { code: 'open' },
+    state: { code },
     customer: { ref: body.customer.ref },
     placedAt: new Date().toISOString(),
     lines: Array.isArray(body.lines) ? body.lines : [],

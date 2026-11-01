@@ -98,6 +98,11 @@ public static partial class DescriptorValidator
     private static void CheckSchema(OperationDescriptor d, SourceSchema schema, List<DescriptorError> errors)
     {
         void Rule7(string path, string message) => errors.Add(new(7, path, message));
+        if (d.CustomApi is { } api)
+        {
+            CheckCustomApiSchema(d, api, schema, Rule7);
+            return;
+        }
         if (d.Table == null)
             return;
         if (d.Table != schema.Table)
@@ -130,7 +135,16 @@ public static partial class DescriptorValidator
                 if (!Known(col))
                     Rule7(path, Unknown(col));
             if (binding is ColBinding cb)
+            {
                 bound.Add(cb.Column);
+                if (schema.Columns.TryGetValue(cb.Column, out var column))
+                {
+                    if (cb.OptionSet is { } setName && column.Type != "optionset")
+                        Rule7(path, $"`{cb.Column}` is a {column.Type} column in the schema, not an option set");
+                    else if (cb.OptionSet is { } name && d.Optionsets.TryGetValue(name, out var set))
+                        CompareOptions(set, column.Options!, $"optionsets.{name}", cb.Column, Rule7);
+                }
+            }
         }
 
         // Reads must account for every column; so must Create, whose body either sends a column or lists it as unmapped.
@@ -159,6 +173,27 @@ public static partial class DescriptorValidator
                 Rule7($"response.map.{col}", $"`{col}` is an option set column; map it with type optionset:<map>");
             }
         }
+    }
+
+    private static void CheckCustomApiSchema(OperationDescriptor d, string api, SourceSchema schema, Action<string, string> rule7)
+    {
+        if (!schema.CustomApis.TryGetValue(api, out var declared))
+        {
+            rule7("binds", $"Custom API `{api}` is not declared under customApis in the schema");
+            return;
+        }
+        foreach (var (path, binding) in Bindings(d.Request))
+            if (binding is ParamBinding p && !declared.Inputs.ContainsKey(p.Name))
+                rule7(path, $"parameter `{p.Name}` is not an input of {api} in the schema");
+        var outputs = d.Response?.Outputs ?? new Dictionary<string, MapEntry>();
+        foreach (var (name, entry) in outputs)
+            if (!declared.Outputs.TryGetValue(name, out var type))
+                rule7($"response.outputs.{name}", $"`{name}` is not an output of {api} in the schema");
+            else if ((entry.Type ?? "string") != type)
+                rule7($"response.outputs.{name}", $"`{name}` is {entry.Type ?? "string"} here but {type} in the schema");
+        var missing = declared.Outputs.Keys.Where(o => !outputs.ContainsKey(o)).ToList();
+        if (missing.Count > 0)
+            rule7("response.outputs", $"{string.Join(", ", missing.Select(o => $"`{o}`"))} declared in the schema but not mapped");
     }
 
     private static void CompareOptions(OptionSetMap set, IReadOnlyDictionary<string, int> options, string path, string col, Action<string, string> rule7)
@@ -227,7 +262,12 @@ public static partial class DescriptorValidator
             case PagingBinding p when !rm || location != Location.Query || !PagingBinding.Kinds.Contains(p.Kind):
                 Rule2($"`paging` must be one of {string.Join(", ", PagingBinding.Kinds)}, in the query of a RetrieveMultiple");
                 break;
+            case ParamBinding when d.CustomApi == null:
+                Rule2($"`param` is only allowed in a Custom API descriptor, not {d.Binds}");
+                break;
         }
+        if (binding is ColBinding { OptionSet: { } set } && !d.Optionsets.ContainsKey(set))
+            errors.Add(new(6, path, $"option set map `{set}` is not declared under optionsets"));
 
         if (binding.Modifiers.Format == "json" && !inTemplate)
             Rule2("`format: json` is only allowed on body template leaves");
@@ -263,6 +303,17 @@ public static partial class DescriptorValidator
             foreach (var (col, entry) in resp.Map)
                 if (entry.OptionSetName is { } set && !d.Optionsets.ContainsKey(set))
                     errors.Add(new(6, $"response.map.{col}", $"option set map `{set}` is not declared under optionsets"));
+
+        if (d.CustomApi != null && resp != null)
+        {
+            foreach (var (key, present) in new[] { ("rows", resp.Rows != null), ("key", resp.Key != null), ("map", resp.Map.Count > 0), ("unmapped", resp.Unmapped.Count > 0) })
+                if (present)
+                    errors.Add(new(6, $"response.{key}", $"a Custom API returns outputs, not response.{key}"));
+        }
+        else if (d.CustomApi == null && resp?.Outputs.Count > 0)
+        {
+            errors.Add(new(6, "response.outputs", $"response.outputs is only for Custom APIs, not {d.Binds}"));
+        }
 
         if (d.Binds != Messages.RetrieveMultiple)
         {

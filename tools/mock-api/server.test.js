@@ -138,6 +138,15 @@ test('create keeps a numeric totals.gross and defaults it to 0', async () => {
   assert.equal((await call('GET', `/v2/orders/${b.json.id}`)).json.totals.gross, 0);
 });
 
+test('create takes state.code and defaults it to open', async () => {
+  const a = await call('POST', '/v2/accounts/acc1/orders', { body: { customer: { ref: 'CUST-04' }, state: { code: 'shipped' } } });
+  assert.equal((await call('GET', `/v2/orders/${a.json.id}`)).json.state.code, 'shipped');
+  const b = await call('POST', '/v2/accounts/acc1/orders', { body: { customer: { ref: 'CUST-04' } } });
+  assert.equal((await call('GET', `/v2/orders/${b.json.id}`)).json.state.code, 'open');
+  const c = await call('POST', '/v2/accounts/acc1/orders', { body: { customer: { ref: 'CUST-04' }, state: { code: 'lost' } } });
+  assert.equal(c.status, 422);
+});
+
 test('location create', async () => {
   const r = await call('POST', '/v2/accounts/acc1/orders-location', { body: { customer: { ref: 'CUST-03' } } });
   assert.equal(r.status, 201);

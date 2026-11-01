@@ -277,15 +277,16 @@ public static partial class RequestRenderer
                     }
                     if (ctx.Record == null || !ctx.Record.TryGetValue(c.Column, out var cell) || cell.Value == null)
                         return NullV.I;
-                    // The Dataverse integer is not the source's value, and write descriptors carry no option set map yet.
+                    // The Dataverse integer is not the source's value: only a declared map can turn it back.
                     if (cell.Type == CellTypes.OptionSet)
-                        throw new UnsupportedQueryException($"Column {c.Column} is an option set; writing option set values to a source is not supported until phase 2 (operation {d.Operation}).", ctx.CorrelationId);
-                    return new TextV(cell.Value, cell.Type switch
-                    {
-                        CellTypes.Int or CellTypes.Decimal when JsonNumber().IsMatch(cell.Value) => Kind.Number,
-                        CellTypes.Bool => Kind.Bool,
-                        _ => Kind.String,
-                    });
+                        return c.OptionSet is { } setName
+                            ? new TextV(SourceOption(setName, c.Column, cell.Value), Kind.String)
+                            : throw new UnsupportedQueryException($"Column {c.Column} is an option set; bind it with `optionset: <map>` so the value can be mapped back to the source's (operation {d.Operation}).", ctx.CorrelationId);
+                    return Typed(cell);
+                case ParamBinding p:
+                    if (ctx.Inputs == null || !ctx.Inputs.TryGetValue(p.Name, out var input) || input.Value == null)
+                        return NullV.I;
+                    return Typed(input);
                 case IdBinding id:
                     if (id.Part != null)
                         throw new ConfigurationException($"{d.Source}: composite key parts are not supported until the key map (phase 5)");
@@ -315,6 +316,21 @@ public static partial class RequestRenderer
                 default:
                     throw new InvalidOperationException($"unhandled binding {binding.GetType().Name} at {path}");
             }
+        }
+
+        private static TextV Typed(Cell cell) => new(cell.Value, cell.Type switch
+        {
+            CellTypes.Int or CellTypes.Decimal when JsonNumber().IsMatch(cell.Value) => Kind.Number,
+            CellTypes.Bool => Kind.Bool,
+            _ => Kind.String,
+        });
+
+        private string SourceOption(string setName, string column, string optionValue)
+        {
+            foreach (var (sourceValue, option) in d.Optionsets[setName].Values)
+                if (option.ToString(CultureInfo.InvariantCulture) == optionValue)
+                    return sourceValue;
+            throw Validation($"column {column}: option value {optionValue} has no entry in option set {setName}");
         }
 
         private static V Scalar(string value, bool quoted)
@@ -365,6 +381,7 @@ public static partial class RequestRenderer
             ColBinding c => $"column {c.Column}",
             InstanceBinding i => $"instance value {i.Key}",
             ContextBinding c => $"context {c.Name}",
+            ParamBinding p => $"parameter {p.Name}",
             _ => binding.GetType().Name.Replace("Binding", "").ToLowerInvariant() + " value",
         };
     }

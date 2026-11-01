@@ -24,7 +24,11 @@ public sealed record ContextBinding(string Name, BindingModifiers M) : Binding(M
     public static readonly IReadOnlySet<string> Names = new HashSet<string> { "userObjectId", "correlationId", "environmentId", "async" };
 }
 
-public sealed record ColBinding(string Column, bool AlwaysSend, BindingModifiers M) : Binding(M);
+/// <summary><see cref="OptionSet"/> names the option set map that reverse-maps a Dataverse option value on writes; null refuses option set cells.</summary>
+public sealed record ColBinding(string Column, bool AlwaysSend, BindingModifiers M, string? OptionSet = null) : Binding(M);
+
+/// <summary>A Custom API input parameter, by name.</summary>
+public sealed record ParamBinding(string Name, BindingModifiers M) : Binding(M);
 
 /// <summary>The decoded external key; <see cref="Part"/> names a composite key part, null for the whole key.</summary>
 public sealed record IdBinding(string? Part, BindingModifiers M) : Binding(M);
