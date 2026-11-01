@@ -11,5 +11,9 @@
     <ProjectReference Include="..\..\src\BrokerForge.Schema\BrokerForge.Schema.csproj" />
     <ProjectReference Include="..\..\src\BrokerForge.Descriptors\BrokerForge.Descriptors.csproj" />
     <ProjectReference Include="..\SwaggerForge\SwaggerForge.csproj" />
+    <ProjectReference Include="..\..\src\BrokerForge.Generator\BrokerForge.Generator.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.13.1" />
   </ItemGroup>
 </Project>
