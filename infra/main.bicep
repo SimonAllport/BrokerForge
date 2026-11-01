@@ -1,4 +1,4 @@
-// BrokerForge dev environment (phase 1). Two passes from tools/dev/deploy.sh:
+// BrokerForge dev environment (phases 1-3). Two passes from tools/dev/deploy.sh:
 //   deployApps=false: identity, registry, Key Vault, monitoring (images and secrets do not exist yet)
 //   deployApps=true:  Container Apps environment, host and Orders mock
 targetScope = 'resourceGroup'
@@ -16,6 +16,13 @@ param hostAudience string = ''
 @description('Plug-in app registration ID and the one environment it may call for (D-09).')
 param pluginClientId string = ''
 param environmentId string = ''
+@description('BrokerForge Connect app registration (tools/dev/setup-connect-app.sh). Empty: no per-user sources.')
+param connectClientId string = ''
+@description('Tickets mock API app registration, the Entra resource of the Impersonate source.')
+param ticketsApiAppId string = ''
+@description('Entra object IDs the Tickets mock maps to its users alice and bob for Impersonate.')
+param ticketsAliceOid string = ''
+param ticketsBobOid string = ''
 
 var suffix = uniqueString(resourceGroup().id)
 
@@ -51,6 +58,15 @@ module vault 'keyVault.bicep' = {
   }
 }
 
+module storage 'storage.bicep' = {
+  name: 'storage'
+  params: {
+    location: location
+    name: replace('${prefix}st${take(suffix, 10)}', '-', '')
+    hostPrincipalId: identity.properties.principalId
+  }
+}
+
 module monitoring 'monitoring.bicep' = {
   name: 'monitoring'
   params: { location: location, prefix: prefix }
@@ -73,6 +89,13 @@ module apps 'containerApps.bicep' = if (deployApps) {
     hostAudience: hostAudience
     pluginClientId: pluginClientId
     environmentId: environmentId
+    credentialTableEndpoint: storage.outputs.tableEndpoint
+    keyRingBlobUri: storage.outputs.keyRingBlobUri
+    dataProtectionKeyUri: vault.outputs.dataProtectionKeyUri
+    connectClientId: connectClientId
+    ticketsApiAppId: ticketsApiAppId
+    ticketsAliceOid: ticketsAliceOid
+    ticketsBobOid: ticketsBobOid
   }
 }
 

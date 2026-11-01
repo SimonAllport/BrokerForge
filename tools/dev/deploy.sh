@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Phase 1: deploy the BrokerForge dev environment (infra/main.bicep) and wait for the host to be healthy.
-# Reads the app registration and environment IDs from ~/.brokerforge/spike-ids.env (phase 0) and writes
-# the deployed names to ~/.brokerforge/dev-ids.env. Generated secrets go straight into Key Vault and are
+# Deploy the BrokerForge dev environment (infra/main.bicep) and wait for the host to be healthy.
+# Reads the app registration and environment IDs from ~/.brokerforge/spike-ids.env (phase 0) and the phase 3
+# connect app IDs (tools/dev/setup-connect-app.sh) from ~/.brokerforge/dev-ids.env, and writes the deployed
+# names back to dev-ids.env, keeping the IDs it does not own. Generated secrets go straight into Key Vault and are
 # never printed or written to the repo.
 set -euo pipefail
 
@@ -13,9 +14,13 @@ LOCATION="${BF_LOCATION:-switzerlandnorth}"
 # shellcheck disable=SC1090
 source "$IDS"
 : "${HOST_APP:?} ${PLUGIN_APP:?} ${TENANT:?} ${ENVID:?}"
+# Phase 3 IDs from setup-connect-app.sh; empty until it has run, which leaves the per-user sources out.
+devid() { [ -f "$OUT" ] && sed -n "s/^$1=//p" "$OUT" | tail -1 || true; }
+CONNECT_APP="$(devid CONNECT_APP)" TICKETS_API_APP="$(devid TICKETS_API_APP)"
+TICKETS_ALICE_OID="$(devid TICKETS_ALICE_OID)" TICKETS_BOB_OID="$(devid TICKETS_BOB_OID)"
 
 az bicep version >/dev/null 2>&1 || az bicep install
-for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.KeyVault Microsoft.OperationalInsights Microsoft.Insights Microsoft.ManagedIdentity; do
+for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.KeyVault Microsoft.Storage Microsoft.OperationalInsights Microsoft.Insights Microsoft.ManagedIdentity; do
   az provider register --namespace "$ns" --wait -o none
 done
 
@@ -33,7 +38,7 @@ VAULT="$(sed -n 2p <<< "$base")"
 echo "== secrets in $VAULT (generated once, never printed)"
 secret_file="$(mktemp)"
 trap 'rm -f "$secret_file"' EXIT
-for name in orders-api-key inventory-api-key page-token-key; do
+for name in orders-api-key inventory-api-key page-token-key tickets-client-secret tickets-alice-password tickets-bob-password; do
   if az keyvault secret show --vault-name "$VAULT" -n "$name" --query id -o tsv >/dev/null 2>&1; then
     echo "   $name exists"
     continue
@@ -62,15 +67,13 @@ HOST_URL="$(az deployment group create -g "$RG" -n bf-apps -f "$ROOT/infra/main.
   -p deployApps=true deployerObjectId="$DEPLOYER" \
      hostImage="$SERVER/brokerforge-host:$TAG" mockImage="$SERVER/brokerforge-orders-mock:$TAG" \
      tenantId="$TENANT" hostAudience="$HOST_APP" pluginClientId="$PLUGIN_APP" environmentId="$ENVID" \
+     connectClientId="$CONNECT_APP" ticketsApiAppId="$TICKETS_API_APP" ticketsAliceOid="$TICKETS_ALICE_OID" ticketsBobOid="$TICKETS_BOB_OID" \
   --query properties.outputs.hostUrl.value -o tsv)"
 
-cat > "$OUT" <<IDS_EOF
-RG=$RG
-ACR=$ACR
-VAULT=$VAULT
-DEV_HOST_URL=$HOST_URL
-IMAGE_TAG=$TAG
-IDS_EOF
+keep="$(mktemp)"
+[ -f "$OUT" ] && grep -Ev '^(RG|ACR|VAULT|DEV_HOST_URL|IMAGE_TAG)=' "$OUT" > "$keep" || true
+{ printf 'RG=%s\nACR=%s\nVAULT=%s\nDEV_HOST_URL=%s\nIMAGE_TAG=%s\n' "$RG" "$ACR" "$VAULT" "$HOST_URL" "$TAG"; cat "$keep"; } > "$OUT"
+rm -f "$keep"
 
 echo "== waiting for $HOST_URL/healthz, and for host and mock to run image $TAG alone"
 # Healthy is not enough: the outgoing revision keeps answering until it is deactivated (phase 1 findings 5 and 8,
