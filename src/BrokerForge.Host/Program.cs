@@ -4,12 +4,15 @@ using Azure.Identity;
 using BrokerForge.Abstractions;
 using BrokerForge.Adapters.Rest;
 using BrokerForge.Auth;
+using BrokerForge.Auth.Credentials;
+using BrokerForge.Auth.PerUser;
 using BrokerForge.Host.Config;
 using BrokerForge.Host.Endpoints;
 using BrokerForge.Host.Execution;
 using BrokerForge.Host.Ingress;
 using BrokerForge.Host.Routing;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -67,6 +70,23 @@ builder.Services.AddSingleton<ISecretResolver>(sp => new SecretResolverRouter(
     builder.Configuration.GetValue("Secrets:AllowEnvironment", false)));
 builder.Services.AddSingleton<IAuthProvider>(sp => new StaticAuthProvider(sp.GetRequiredService<ISecretResolver>(), sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
 builder.Services.AddSingleton<IAuthProvider>(sp => new ServiceAccountAuthProvider(sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
+// Per-user modes (HLD 9.1, D-25, D-28). Each provider serves only its own mode; none can reach another identity.
+builder.Services.AddHttpClient("tokens", c => c.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+    .RemoveAllLoggers();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddDataProtection();
+builder.Services.AddSingleton<IUserCredentialStore>(sp => CredentialStores.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<HostConfigStore>(),
+    sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IDataProtectionProvider>()));
+builder.Services.AddSingleton(sp => new TokenEndpointClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("tokens"),
+    sp.GetRequiredService<ISecretResolver>(), sp.GetService<IConnectAppClient>(), sp.GetRequiredService<TimeProvider>()));
+foreach (var mode in new[] { AuthMode.OAuth, AuthMode.Impersonate })
+    builder.Services.AddSingleton<IAuthProvider>(sp => new DelegatedTokenAuthProvider(mode, sp.GetRequiredService<IUserCredentialStore>(),
+        sp.GetRequiredService<HostConfigStore>().OAuthResource, sp.GetRequiredService<TokenEndpointClient>(), sp.GetRequiredService<HostConfigStore>().ConnectUrl,
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources"), sp.GetRequiredService<ILoggerFactory>().CreateLogger("BrokerForge.Auth"),
+        sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<IAuthProvider>(sp => new SsoAuthProvider(sp.GetRequiredService<IUserCredentialStore>(),
+    sp.GetRequiredService<HostConfigStore>().ConnectUrl, sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
 builder.Services.AddSingleton<IBroker, RestBroker>();
 builder.Services.AddSingleton<HostConfigStore>();
 builder.Services.AddSingleton<CallerGuard>();
@@ -82,6 +102,7 @@ if (trustProblems.Count > 0)
 var store = app.Services.GetRequiredService<HostConfigStore>();
 app.Logger.LogInformation("Loaded descriptors: {Descriptors}", string.Join(", ", store.DescriptorNames));
 app.Services.GetRequiredService<PageTokenKey>();
+app.Services.GetRequiredService<IUserCredentialStore>();
 
 app.UseAuthentication();
 app.UseAuthorization();

@@ -51,6 +51,10 @@ public sealed class HostConfigStore
 
     public ServiceInstance? Instance(string name) => _instances.GetValueOrDefault(name);
 
+    /// <summary>Names of the instances in OAuth, Impersonate or SSO mode.</summary>
+    public IReadOnlyList<string> PerUserInstances =>
+        _instances.Values.Where(i => PerUserModes.Contains(i.Auth.Mode)).Select(i => i.Name).Order(StringComparer.Ordinal).ToList();
+
     public ResolvedMap? Map(string table) => _maps.GetValueOrDefault(table);
 
     public OperationDescriptor? Descriptor(string instance, string operation) => _descriptors.GetValueOrDefault((instance, operation));
