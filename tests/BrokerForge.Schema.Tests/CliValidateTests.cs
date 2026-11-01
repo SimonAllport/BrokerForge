@@ -46,6 +46,56 @@ public class CliValidateTests
         }
     }
 
+    /// <summary>A copy of the repo's descriptors and schemas to break one way per test.</summary>
+    private static (int Code, string Output) RunOnCopy(Action<string, string> change)
+    {
+        var root = SchemaParserTests.RepoRoot;
+        var temp = Directory.CreateTempSubdirectory("bf-validate-");
+        try
+        {
+            var descriptors = Path.Combine(temp.FullName, "descriptors");
+            var schemas = Path.Combine(temp.FullName, "schemas");
+            foreach (var file in Directory.GetFiles(Path.Combine(root, "descriptors"), "*.yaml", SearchOption.AllDirectories))
+            {
+                var target = Path.Combine(descriptors, Path.GetRelativePath(Path.Combine(root, "descriptors"), file));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target);
+            }
+            Directory.CreateDirectory(schemas);
+            foreach (var file in Directory.GetFiles(Path.Combine(root, "schemas"), "*.yaml"))
+                File.Copy(file, Path.Combine(schemas, Path.GetFileName(file)));
+            change(descriptors, schemas);
+            return Run(descriptors, "--schemas", schemas);
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    [Fact]
+    public void Cli_Validate_SameCustomApiInTwoInstances_ExitsOneNamingBoth()
+    {
+        var (code, output) = RunOnCopy((descriptors, schemas) =>
+        {
+            Directory.CreateDirectory(Path.Combine(descriptors, "OtherAPI"));
+            File.Copy(Path.Combine(descriptors, "InventoryAPI", "adjustStock.yaml"), Path.Combine(descriptors, "OtherAPI", "adjustStock.yaml"));
+            File.Copy(Path.Combine(schemas, "InventoryAPI.yaml"), Path.Combine(schemas, "OtherAPI.yaml"));
+        });
+        Assert.Equal(1, code);
+        Assert.Contains("ext_AdjustStock", output);
+        Assert.Contains("InventoryAPI", output);
+        Assert.Contains("OtherAPI", output);
+    }
+
+    [Fact]
+    public void Cli_Validate_SchemaApiWithNoDescriptor_ExitsOne()
+    {
+        var (code, output) = RunOnCopy((descriptors, _) => File.Delete(Path.Combine(descriptors, "InventoryAPI", "adjustStock.yaml")));
+        Assert.Equal(1, code);
+        Assert.Contains("InventoryAPI.yaml: rule 7 customApis.ext_AdjustStock: ", output);
+    }
+
     [Fact]
     public void Cli_Validate_MissingSchema_ExitsOne()
     {

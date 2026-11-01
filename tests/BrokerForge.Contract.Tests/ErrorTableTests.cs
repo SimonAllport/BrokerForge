@@ -61,7 +61,8 @@ public class ErrorTableTests(MockApiFixture mock) : HostTestBase(mock)
     [Fact]
     public async Task Timeout_504()
     {
-        var (status, _, error) = await Host.Execute(List("ext_order", 10, Where("ext_customerref", Ops.Eq, "__slow")));
+        using var host = new HostFactory(Mock.BaseUrl, timeoutSeconds: 3);
+        var (status, _, error) = await host.Execute(List("ext_order", 10, Where("ext_customerref", Ops.Eq, "__slow")));
         Assert.Equal(504, status);
         Assert.Equal("SourceTimeoutException", error!.Error);
     }

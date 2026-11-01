@@ -68,6 +68,8 @@ public static partial class SchemaParser
                         throw Fail(key, $"`{key}` describes a table; add `table` or remove it");
             }
 
+            // One source is generated under one publisher, so every name shares one prefix.
+            var prefix = table == null ? null : Prefix(table);
             var apis = new Dictionary<string, CustomApiSchema>();
             if (Get(root, "customApis") is { } apiNode)
                 foreach (var (k, v) in Mapping(apiNode, "customApis").Children)
@@ -76,6 +78,8 @@ public static partial class SchemaParser
                     var p = Join("customApis", name);
                     if (!UniqueNameRegex().IsMatch(name))
                         throw Fail(p, $"`{name}` is not a Custom API unique name with a prefix, such as ext_AdjustStock");
+                    prefix ??= Prefix(name);
+                    CheckPrefix(name, prefix, p);
                     apis[name] = ReadCustomApi(Mapping(v, p), p);
                 }
 
@@ -88,6 +92,7 @@ public static partial class SchemaParser
         {
             if (!LogicalNameRegex().IsMatch(name))
                 throw Fail(path, $"`{name}` is not a lower-case logical name with a prefix");
+            CheckPrefix(name, Prefix(table), path);
             if (name == table + "id")
                 throw Fail(path, $"`{name}` is the primary key, which is implicit");
             var m = Mapping(node, path);
@@ -153,6 +158,14 @@ public static partial class SchemaParser
                     outputs[name] = ParamType(Scalar(v, p), p);
                 }
             return new CustomApiSchema(RequiredScalar(m, path, "displayName"), inputs, outputs);
+        }
+
+        private static string Prefix(string name) => name[..(name.IndexOf('_') + 1)];
+
+        private void CheckPrefix(string name, string prefix, string path)
+        {
+            if (!name.StartsWith(prefix, StringComparison.Ordinal))
+                throw Fail(path, $"`{name}` must use the prefix {prefix}, like every other name in this schema");
         }
 
         private void CheckParamName(string name, string path)

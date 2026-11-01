@@ -75,6 +75,26 @@ internal sealed partial class YamlMap
         var reserved = value is "true" or "false" or "null" or "yes" or "no" or "on" or "off" or "~";
         if (PlainSafe().IsMatch(value) && !reserved && value.Trim() == value)
             return value;
-        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        return Quoted(value);
+    }
+
+    /// <summary>A YAML double-quoted scalar. Control characters, NEL, the line and paragraph separators and BOM are escaped, because YAML folds or refuses them raw.</summary>
+    private static string Quoted(string value)
+    {
+        var sb = new StringBuilder("\"");
+        foreach (var c in value)
+            switch (c)
+            {
+                case '\\': sb.Append("\\\\"); break;
+                case '"': sb.Append("\\\""); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                case '\t': sb.Append("\\t"); break;
+                case < ' ' or (>= '\u007f' and <= '\u009f') or '\u2028' or '\u2029' or '\ufeff':
+                    sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                    break;
+                default: sb.Append(c); break;
+            }
+        return sb.Append('"').ToString();
     }
 }

@@ -35,14 +35,18 @@ public sealed class HostFactory : WebApplicationFactory<Program>
 
     private static readonly RsaSecurityKey SigningKey = new(RSA.Create(2048)) { KeyId = "bf-test" };
     private readonly string _mockBaseUrl;
+    private readonly int _timeoutSeconds;
     private readonly string _descriptors;
     private readonly string _schemas;
 
     public ConcurrentQueue<string> Logs { get; } = new();
 
-    public HostFactory(string mockBaseUrl)
+    /// <param name="timeoutSeconds">The host's request budget. Generous by default so a cold first call is not a timeout;
+    /// the timeout test passes a short one under <see cref="MockApiFixture.SlowMs"/>.</param>
+    public HostFactory(string mockBaseUrl, int timeoutSeconds = 30)
     {
         _mockBaseUrl = mockBaseUrl;
+        _timeoutSeconds = timeoutSeconds;
         _descriptors = Path.Combine(Path.GetTempPath(), "bf-descriptors-" + Guid.NewGuid().ToString("N"));
         Copy(Path.Combine(MockApiFixture.RepoRoot, "descriptors"), _descriptors);
         Copy(Path.Combine(MockApiFixture.RepoRoot, "tests", "BrokerForge.Contract.Tests", "descriptors", "host"), _descriptors);
@@ -74,7 +78,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
             ["Trust:AllowedCallers:0:EnvironmentId"] = Environment1,
             ["Trust:AllowedCallers:1:ClientId"] = OtherApp,
             ["Trust:AllowedCallers:1:EnvironmentId"] = Environment2,
-            ["Host:TimeoutSeconds"] = "3",
+            ["Host:TimeoutSeconds"] = _timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Secrets:AllowEnvironment"] = "true",
             ["Host:PageTokenKeyRef"] = "env:BF_TEST_PAGE_TOKEN_KEY",
             ["Config:DescriptorsPath"] = _descriptors,
