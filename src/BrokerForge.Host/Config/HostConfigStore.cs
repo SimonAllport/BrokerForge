@@ -5,13 +5,16 @@ using BrokerForge.Descriptors.Model;
 using BrokerForge.Descriptors.Parsing;
 using BrokerForge.Descriptors.Validation;
 using BrokerForge.Keys;
+using BrokerForge.Schema;
 
 namespace BrokerForge.Host.Config;
 
 /// <summary>
-/// Phase 1 configuration (D-10): service instances and object maps from host configuration, descriptors
-/// from <c>Config:DescriptorsPath/&lt;instance&gt;/*.yaml</c>. Everything is parsed and validated at
-/// startup; any error stops the host, so a bad descriptor never reaches a request.
+/// Interim configuration (D-10, D-16): service instances and object maps from host configuration, descriptors
+/// from <c>Config:DescriptorsPath/&lt;instance&gt;/*.yaml</c> and table schemas from
+/// <c>Config:SchemasPath/&lt;instance&gt;.yaml</c>. Everything is parsed and validated at startup; any error
+/// stops the host, so a bad descriptor never reaches a request. The host reads a schema only for the
+/// Custom API parameters it declares: CRUD descriptors are checked against schemas by <c>bf validate</c> in CI.
 /// </summary>
 public sealed class HostConfigStore
 {
@@ -21,13 +24,19 @@ public sealed class HostConfigStore
     private readonly Dictionary<string, ServiceInstance> _instances = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ResolvedMap> _maps = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Instance, string Operation), OperationDescriptor> _descriptors = new();
+    private readonly Dictionary<string, SourceSchema> _schemas = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ResolvedCustomApi> _customApis = new(StringComparer.Ordinal);
 
     public sealed record ResolvedMap(ObjectMap Map, IKeyStrategy Keys);
+
+    /// <summary>An unbound Custom API: the instance and descriptor that serve it, and its declared parameters.</summary>
+    public sealed record ResolvedCustomApi(ServiceInstance Instance, OperationDescriptor Descriptor, CustomApiSchema Schema);
 
     public HostConfigStore(IConfiguration configuration)
     {
         var problems = new List<string>();
         LoadInstances(configuration.GetSection("Instances"), problems);
+        LoadSchemas(configuration["Config:SchemasPath"], problems);
         LoadDescriptors(configuration["Config:DescriptorsPath"], problems);
         LoadMaps(configuration.GetSection("ObjectMaps"), problems);
         if (problems.Count > 0)
@@ -41,6 +50,33 @@ public sealed class HostConfigStore
     public ResolvedMap? Map(string table) => _maps.GetValueOrDefault(table);
 
     public OperationDescriptor? Descriptor(string instance, string operation) => _descriptors.GetValueOrDefault((instance, operation));
+
+    public ResolvedCustomApi? CustomApi(string uniqueName) => _customApis.GetValueOrDefault(uniqueName);
+
+    private void LoadSchemas(string? root, List<string> problems)
+    {
+        if (string.IsNullOrWhiteSpace(root))
+            return;
+        if (!Directory.Exists(root))
+        {
+            problems.Add($"Config:SchemasPath `{root}` is not a directory");
+            return;
+        }
+        foreach (var instance in _instances.Keys)
+        {
+            var file = Path.Combine(root, instance + ".yaml");
+            if (!File.Exists(file))
+                continue;
+            try
+            {
+                _schemas[instance] = SchemaParser.Parse(File.ReadAllText(file), $"schemas/{instance}.yaml");
+            }
+            catch (SchemaException ex)
+            {
+                problems.Add(ex.Message);
+            }
+        }
+    }
 
     private void LoadInstances(IConfigurationSection section, List<string> problems)
     {
@@ -77,28 +113,53 @@ public sealed class HostConfigStore
             problems.Add($"Config:DescriptorsPath `{root}` is not a directory");
             return;
         }
+        var sources = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var instance in _instances.Values)
         {
             var dir = Path.Combine(root, instance.Name);
             if (!Directory.Exists(dir))
                 continue;
             var reserved = AuthReservedNames.For(instance);
+            var schema = _schemas.GetValueOrDefault(instance.Name);
             foreach (var file in Directory.GetFiles(dir, "*.yaml").Order(StringComparer.Ordinal))
             {
                 var source = $"{instance.Name}/{Path.GetFileName(file)}";
                 try
                 {
                     var d = DescriptorParser.Parse(File.ReadAllText(file), source);
-                    problems.AddRange(DescriptorValidator.Validate(d, reserved).Select(e => $"{source}: {e}"));
+                    problems.AddRange(DescriptorValidator.Validate(d, reserved, d.CustomApi != null ? schema : null).Select(e => $"{source}: {e}"));
                     if (!_descriptors.TryAdd((instance.Name, d.Operation), d))
                         problems.Add($"{source}: operation {d.Operation} is declared twice for {instance.Name}");
+                    if (d.CustomApi is { } api)
+                        AddCustomApi(instance, d, api, schema, source, sources, problems);
                 }
                 catch (DescriptorException ex)
                 {
                     problems.Add(ex.Message);
                 }
             }
+            foreach (var api in schema?.CustomApis.Keys ?? Enumerable.Empty<string>())
+                if (_customApis.GetValueOrDefault(api)?.Instance != instance)
+                    problems.Add($"schemas/{instance.Name}.yaml declares Custom API {api}, but no {instance.Name} descriptor binds it");
         }
+    }
+
+    private void AddCustomApi(ServiceInstance instance, OperationDescriptor d, string api, SourceSchema? schema, string source,
+        Dictionary<string, string> sources, List<string> problems)
+    {
+        // Custom API names are global in Dataverse, so one name must resolve to exactly one descriptor.
+        if (sources.TryGetValue(api, out var other))
+        {
+            problems.Add($"Custom API {api} is bound by both {other} and {source}");
+            return;
+        }
+        sources[api] = source;
+        if (schema?.CustomApis.GetValueOrDefault(api) is not { } declared)
+        {
+            problems.Add($"{source}: binds Custom API {api}, but schemas/{instance.Name}.yaml does not declare it, so its parameters are unknown");
+            return;
+        }
+        _customApis[api] = new ResolvedCustomApi(instance, d, declared);
     }
 
     private void LoadMaps(IConfigurationSection section, List<string> problems)

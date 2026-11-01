@@ -13,3 +13,10 @@ public sealed record OperationContext(
     IKeyStrategy Keys,
     IAuthenticatedChannel Channel,
     BindingContext Binding);
+
+/// <summary>Everything resolved for one unbound Custom API call (HLD D-18). There is no object map or key strategy.</summary>
+public sealed record CustomApiContext(
+    ServiceInstance Instance,
+    OperationDescriptor Descriptor,
+    IAuthenticatedChannel Channel,
+    BindingContext Binding);

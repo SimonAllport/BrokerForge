@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using BrokerForge.Abstractions;
 using BrokerForge.Contracts;
 using BrokerForge.Descriptors.Mapping;
+using BrokerForge.Descriptors.Model;
 using BrokerForge.Descriptors.Planning;
 using BrokerForge.Descriptors.Rendering;
 using BrokerForge.Host.Errors;
@@ -21,6 +22,8 @@ public static partial class ExecuteEndpoint
 {
     [GeneratedRegex("^[A-Za-z0-9-]{1,64}$")]
     private static partial Regex CorrelationIdFormat();
+
+    private static readonly HashSet<string> TableMessages = new() { Messages.Retrieve, Messages.RetrieveMultiple, Messages.Create, Messages.Update, Messages.Delete };
 
     public static void Map(WebApplication app) =>
         app.MapPost("/v1/execute", Handle).RequireAuthorization();
@@ -55,6 +58,15 @@ public static partial class ExecuteEndpoint
                 var rows = await LookUpByKey(lookup, router, secrets, tokenKey, Deadline.After(timeout), ct);
                 log.LogInformation("Completed {Message} on {Table} as a primary key lookup in {ElapsedMs} ms", request.Message, request.Table, watch.ElapsedMilliseconds);
                 return Results.Json(new CanonicalResponse { CorrelationId = correlationId, Rows = rows });
+            }
+            if (!TableMessages.Contains(request.Message ?? ""))
+            {
+                var (api, apiBroker) = await router.ResolveCustomApiAsync(request, ct);
+                log.LogInformation("Executing Custom API {Message} with {Operation} v{Version}", request.Message, api.Descriptor.Operation, api.Descriptor.Version);
+                var result = await Call(api.Descriptor, api.Binding, api.Channel, new OperationExecutor(apiBroker), secrets, Deadline.After(timeout), ct);
+                var outputs = ResponseMapper.MapOutputs(api.Descriptor, result, correlationId);
+                log.LogInformation("Completed Custom API {Message} in {ElapsedMs} ms", request.Message, watch.ElapsedMilliseconds);
+                return Results.Json(new CanonicalResponse { CorrelationId = correlationId, Outputs = outputs });
             }
             var (op, broker) = await router.ResolveAsync(request, ct);
             log.LogInformation("Executing {Message} on {Table} with {Operation} v{Version}", request.Message, request.Table, op.Descriptor.Operation, op.Descriptor.Version);
@@ -164,12 +176,14 @@ public static partial class ExecuteEndpoint
                 op.Binding.CorrelationId);
     }
 
-    private static async Task<BrokerResult> Call(OperationContext op, OperationExecutor executor, ISecretResolver secrets, Deadline deadline, CancellationToken ct)
+    private static Task<BrokerResult> Call(OperationContext op, OperationExecutor executor, ISecretResolver secrets, Deadline deadline, CancellationToken ct) =>
+        Call(op.Descriptor, op.Binding, op.Channel, executor, secrets, deadline, ct);
+
+    private static async Task<BrokerResult> Call(OperationDescriptor d, BindingContext binding, IAuthenticatedChannel channel, OperationExecutor executor, ISecretResolver secrets, Deadline deadline, CancellationToken ct)
     {
-        var d = op.Descriptor;
-        var request = await RequestRenderer.RenderAsync(d.Request, d, op.Binding, secrets, ct);
-        var result = await executor.ExecuteAsync(d, request, op.Channel, deadline, op.Binding.CorrelationId, ct);
-        ErrorMapper.ThrowIfError(d, result, op.Binding.CorrelationId, PagingCoordinator.Redact(request, op.Channel));
+        var request = await RequestRenderer.RenderAsync(d.Request, d, binding, secrets, ct);
+        var result = await executor.ExecuteAsync(d, request, channel, deadline, binding.CorrelationId, ct);
+        ErrorMapper.ThrowIfError(d, result, binding.CorrelationId, PagingCoordinator.Redact(request, channel));
         return result;
     }
 

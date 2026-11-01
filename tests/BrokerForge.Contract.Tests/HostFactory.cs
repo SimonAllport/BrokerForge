@@ -36,6 +36,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
     private static readonly RsaSecurityKey SigningKey = new(RSA.Create(2048)) { KeyId = "bf-test" };
     private readonly string _mockBaseUrl;
     private readonly string _descriptors;
+    private readonly string _schemas;
 
     public ConcurrentQueue<string> Logs { get; } = new();
 
@@ -45,6 +46,9 @@ public sealed class HostFactory : WebApplicationFactory<Program>
         _descriptors = Path.Combine(Path.GetTempPath(), "bf-descriptors-" + Guid.NewGuid().ToString("N"));
         Copy(Path.Combine(MockApiFixture.RepoRoot, "descriptors"), _descriptors);
         Copy(Path.Combine(MockApiFixture.RepoRoot, "tests", "BrokerForge.Contract.Tests", "descriptors", "host"), _descriptors);
+        _schemas = Path.Combine(Path.GetTempPath(), "bf-schemas-" + Guid.NewGuid().ToString("N"));
+        Copy(Path.Combine(MockApiFixture.RepoRoot, "schemas"), _schemas);
+        Copy(Path.Combine(MockApiFixture.RepoRoot, "tests", "BrokerForge.Contract.Tests", "schemas"), _schemas);
         System.Environment.SetEnvironmentVariable("BF_TEST_MOCK_KEY", MockApiFixture.ApiKey);
         System.Environment.SetEnvironmentVariable("BF_TEST_PARTNER_KEY", PartnerSecret);
         System.Environment.SetEnvironmentVariable("BF_TEST_PAGE_TOKEN_KEY", "bf-test-page-token-key-0123456789abcdef");
@@ -74,6 +78,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
             ["Secrets:AllowEnvironment"] = "true",
             ["Host:PageTokenKeyRef"] = "env:BF_TEST_PAGE_TOKEN_KEY",
             ["Config:DescriptorsPath"] = _descriptors,
+            ["Config:SchemasPath"] = _schemas,
         };
         void Instance(string name, params (string Key, string Value)[] extra)
         {
@@ -143,7 +148,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
         return (status, null, text.Length > 0 ? JsonSerializer.Deserialize<ErrorPayload>(text, Json) : null);
     }
 
-    public static CanonicalRequest Request(string table, string message, string instance = "OrdersAPI") => new()
+    public static CanonicalRequest Request(string? table, string message, string? instance = "OrdersAPI") => new()
     {
         CorrelationId = Guid.NewGuid().ToString(),
         EnvironmentId = Environment1,
@@ -157,6 +162,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
     {
         base.Dispose(disposing);
         try { Directory.Delete(_descriptors, recursive: true); } catch (IOException) { }
+        try { Directory.Delete(_schemas, recursive: true); } catch (IOException) { }
     }
 
     private sealed class CaptureLoggerProvider(ConcurrentQueue<string> sink) : ILoggerProvider, ISupportExternalScope

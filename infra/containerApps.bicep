@@ -98,6 +98,7 @@ resource host 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'Host__TimeoutSeconds', value: '90' }
             { name: 'Host__PageTokenKeyRef', value: 'kv:${secretUri}/page-token-key' }
             { name: 'Config__DescriptorsPath', value: '/app/descriptors' }
+            { name: 'Config__SchemasPath', value: '/app/schemas' }
             { name: '${orders}BrokerType', value: 'rest' }
             { name: '${orders}BaseUrl', value: 'https://${mock.properties.configuration.ingress.fqdn}' }
             { name: '${orders}Auth__Mode', value: 'Static' }

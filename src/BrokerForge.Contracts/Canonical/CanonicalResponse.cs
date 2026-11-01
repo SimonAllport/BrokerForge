@@ -11,7 +11,7 @@ namespace BrokerForge.Contracts
         [DataMember(Name = "cells", EmitDefaultValue = false)] public List<Cell> Cells { get; set; }
     }
 
-    /// <summary>RetrieveMultiple: Rows and Next. Retrieve: Record. Create: Id.</summary>
+    /// <summary>RetrieveMultiple: Rows and Next. Retrieve: Record. Create: Id. Custom API: Outputs.</summary>
     [DataContract]
     public sealed class CanonicalResponse
     {
@@ -21,6 +21,9 @@ namespace BrokerForge.Contracts
         [DataMember(Name = "next", EmitDefaultValue = false)] public string Next { get; set; }
         [DataMember(Name = "record", EmitDefaultValue = false)] public Row Record { get; set; }
         [DataMember(Name = "id", EmitDefaultValue = false)] public string Id { get; set; }
+
+        /// <summary>Custom API output parameters, one cell per output.</summary>
+        [DataMember(Name = "outputs", EmitDefaultValue = false)] public List<Cell> Outputs { get; set; }
     }
 
     /// <summary>Body of every non-200 reply. <see cref="Error"/> is the exception type name or the mapped kind.</summary>
