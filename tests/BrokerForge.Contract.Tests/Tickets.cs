@@ -108,6 +108,8 @@ public static class Tickets
         var s = new Dictionary<string, string?>
         {
             ["Connect:PublicBaseUrl"] = ConnectBase,
+            ["Connect:ClientId"] = "connect-test-client",
+            ["Connect:ClientSecretRef"] = "env:BF_TEST_CONNECT_SECRET",
             ["Credentials:InMemory"] = "true",
             ["Instances:TicketsAPI:BrokerType"] = "rest",
             ["Instances:TicketsAPI:BaseUrl"] = mockBase,
@@ -126,6 +128,7 @@ public static class Tickets
             ["ObjectMaps:ext_ticket:Operations:Create"] = "createTicket",
         };
         Environment.SetEnvironmentVariable("BF_TEST_TK_CLIENT_SECRET", ClientSecret);
+        Environment.SetEnvironmentVariable("BF_TEST_CONNECT_SECRET", "bf-test-connect-secret");
         foreach (var (k, v) in edits)
             if (v == null) s.Remove(k); else s[k] = v;
         return s;

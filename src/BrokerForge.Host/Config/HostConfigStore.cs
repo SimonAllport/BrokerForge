@@ -28,6 +28,7 @@ public sealed class HostConfigStore
     private readonly Dictionary<string, ResolvedCustomApi> _customApis = new(StringComparer.Ordinal);
     private readonly Dictionary<string, OAuthResource> _oauthResources = new(StringComparer.Ordinal);
     private string? _connectBaseUrl;
+    private string? _connectClientId;
 
     public sealed record ResolvedMap(ObjectMap Map, IKeyStrategy Keys);
 
@@ -39,6 +40,7 @@ public sealed class HostConfigStore
         var problems = new List<string>();
         LoadOAuthResources(configuration.GetSection("OAuthResources"), problems);
         _connectBaseUrl = configuration["Connect:PublicBaseUrl"]?.TrimEnd('/');
+        _connectClientId = configuration["Connect:ClientId"];
         LoadInstances(configuration.GetSection("Instances"), problems);
         LoadSchemas(configuration["Config:SchemasPath"], problems);
         LoadDescriptors(configuration["Config:DescriptorsPath"], problems);
@@ -68,6 +70,10 @@ public sealed class HostConfigStore
     /// <summary>The connect page for an instance (HLD D-26): the connectUrl of its ConnectionRequiredException.</summary>
     public string ConnectUrl(string instance) =>
         (_connectBaseUrl ?? throw new ConfigurationException("Connect:PublicBaseUrl is not set.")) + "/connect/" + Uri.EscapeDataString(instance);
+
+    /// <summary>The redirect URI every OAuth resource returns to (the connect page's callback).</summary>
+    public string ConnectCallbackUrl =>
+        (_connectBaseUrl ?? throw new ConfigurationException("Connect:PublicBaseUrl is not set.")) + "/connect/callback";
 
     private void LoadOAuthResources(IConfigurationSection section, List<string> problems)
     {
@@ -129,6 +135,8 @@ public sealed class HostConfigStore
         }
         if (_connectBaseUrl == null || !Uri.TryCreate(_connectBaseUrl, UriKind.Absolute, out var connect) || connect.Scheme is not ("https" or "http"))
             problems.Add($"Connect:PublicBaseUrl must be an absolute http(s) URL: {where} uses {mode}, whose ConnectionRequiredException carries the connect URL");
+        if (string.IsNullOrWhiteSpace(_connectClientId))
+            problems.Add($"Connect:ClientId is required: {where} uses {mode}, and its users sign in to the connect page with the BrokerForge Connect app");
 
         if (asyncContext == AsyncContext.ServiceIdentity && a.AsyncAuth == null)
             problems.Add($"{path}:AsyncAuth is required when AsyncContext is ServiceIdentity");

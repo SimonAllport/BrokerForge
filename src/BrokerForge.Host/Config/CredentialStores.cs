@@ -22,6 +22,8 @@ public static class CredentialStores
         {
             if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != "https")
                 throw new ConfigurationException("Credentials:TableEndpoint must be the storage account's https table endpoint.");
+            if (string.IsNullOrWhiteSpace(configuration["DataProtection:BlobUri"]) || string.IsNullOrWhiteSpace(configuration["DataProtection:KeyId"]))
+                throw new ConfigurationException("DataProtection:BlobUri and DataProtection:KeyId are required with Credentials:TableEndpoint: without persisted keys, stored credentials cannot be read after a restart.");
             return new TableUserCredentialStore(new TableClient(uri, configuration["Credentials:TableName"] ?? DefaultTable, credential), protection);
         }
         var perUser = config.PerUserInstances;

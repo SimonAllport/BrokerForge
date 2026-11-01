@@ -19,6 +19,7 @@ public class PerUserConfigTests : IDisposable
         {
             ["Config:DescriptorsPath"] = Path.Combine(_root.FullName, "descriptors"),
             ["Connect:PublicBaseUrl"] = "https://bf-host.example/",
+            ["Connect:ClientId"] = "connect-test-client",
             ["Instances:Tickets:BrokerType"] = "rest",
             ["Instances:Tickets:BaseUrl"] = "https://tickets.example",
             ["Instances:Tickets:Auth:Mode"] = mode,
@@ -95,6 +96,7 @@ public class PerUserConfigTests : IDisposable
     [InlineData("OAuth", "Instances:Tickets:Auth:AsyncContext", "ServiceIdentity", "Instances:Tickets:Auth:AsyncAuth")]
     [InlineData("OAuth", "Instances:Tickets:Auth:AsyncContext", "Sometimes", "Instances:Tickets:Auth:AsyncContext")]
     [InlineData("OAuth", "Connect:PublicBaseUrl", null, "Connect:PublicBaseUrl")]
+    [InlineData("Sso", "Connect:ClientId", null, "Connect:ClientId")]
     [InlineData("OAuth", "OAuthResources:Tickets:ClientId", null, "OAuthResources:Tickets:ClientId")]
     [InlineData("OAuth", "OAuthResources:Tickets:TokenUrl", "not a url", "OAuthResources:Tickets:TokenUrl")]
     [InlineData("OAuth", "OAuthResources:Tickets:Scopes:0", null, "OAuthResources:Tickets:Scopes")]
