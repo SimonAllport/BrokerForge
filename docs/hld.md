@@ -150,6 +150,8 @@ Config lives in Dataverse so it travels with the environment. The host reads it 
 
 Descriptors are versioned. A virtual table always calls the approved version; drafts run only in test environments.
 
+Until phase 2b these tables are not created: service instances, object maps and OAuth resources are host settings, and per-user connection status lives in the host credential store (D-16, D-30).
+
 ## 7. Contracts
 
 ### 7.1 Canonical request
@@ -231,7 +233,7 @@ Key-map consequences: a GUID not yet in the map returns not-found, even if the s
 | SSO | The user's stored credentials for that source | Host credential store, filled at connect |
 | OAuth | User's access token from the authorisation-code flow | Host token store, refreshed automatically |
 
-Plug-ins never receive the user's own access token, and the sandbox cannot prompt for or save credentials. Impersonate, SSO and OAuth therefore depend on what the user granted earlier on the connect page. A missing grant raises `ConnectionRequiredException` with the connect URL. This matches K2's Enforce Impersonation permanently on; there is no fallback to the service account.
+Plug-ins never receive the user's own access token, and the sandbox cannot prompt for or save credentials. Impersonate, SSO and OAuth therefore depend on what the user granted earlier on the connect page. The grant is keyed by the initiating user's Entra object ID (D-27) and stored encrypted in the host credential store (D-25); mode details are in D-28. A missing grant raises `ConnectionRequiredException` with the connect URL. This matches K2's Enforce Impersonation permanently on; there is no fallback to the service account.
 
 ### 9.2 Trust between hops
 
@@ -240,7 +242,7 @@ Plug-ins never receive the user's own access token, and the sandbox cannot promp
 
 ### 9.3 Async and workflow calls
 
-Async plug-ins and Power Automate calls may run with no interactive user. Each service instance's async context rule picks one: run as the host's service identity (K2's behaviour for workflow server events), or require a stored credential for the user who triggered the run.
+Async plug-ins and Power Automate calls may run with no interactive user. Each service instance's async context rule picks one: run as the host's service identity (K2's behaviour for workflow server events), or require a stored credential for the user who triggered the run. The rule is `Auth:AsyncContext`; the service identity is a separate `Auth:AsyncAuth` block used only for async calls, so it is never a fallback (D-29).
 
 ### 9.4 Authorisation
 
@@ -398,11 +400,20 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 | D-22 | Tooling projects: `src/BrokerForge.Schema`, `src/BrokerForge.Generator`, `tools/SwaggerForge` and one CLI, `tools/BrokerForge.Cli` (`bf validate`, `bf draft`, `bf generate`), all .NET 8 | One entry point for CI and developers; the schema model is shared by the validator, SwaggerForge and the generator |
 | D-23 | The second source is an Inventory API in the existing Node mock under `/inv/v1`: API key in the `api_key` query parameter, integer keys, offset paging with a total, and a stock adjustment action that becomes a Custom API | It exercises what Orders does not: query-parameter auth, reversible integer keys, offset paging and a Custom API |
 | D-24 | "No new code" for onboarding means the onboarding commit touches only `schemas/`, `descriptors/`, host settings in `infra/`, the secret list in `tools/dev/deploy.sh` and acceptance scripts; `git diff --stat` over `src/` is empty | Makes the phase 2 criterion checkable |
+| D-25 | Per-user credentials live in an Azure Table Storage table `bfusercredentials` (partition = service instance, row = user Entra object ID). Status, kind and timestamps are plain columns; tokens and SSO secrets are one `Payload` column encrypted with ASP.NET Core Data Protection (purpose `BrokerForge.UserCredential.v1`), whose key ring is a blob wrapped by a Key Vault key | One Key Vault secret per user and source meets vault throttling (about 4,000 operations per 10 seconds per vault) and scatters secrets beyond review. Data Protection also protects the connect cookie and OAuth state across replicas |
+| D-26 | The host serves the connect page at `{Connect:PublicBaseUrl}/connect/{instance}`; that URL is the `connectUrl` of every `ConnectionRequiredException`. Users sign in with Entra OpenID Connect through the "BrokerForge Connect" app registration, which authenticates with the host's managed identity as a federated credential (no client secret). Users reach the page from the error text; an in-app connect prompt is later work (section 15) | The page must know the user's Entra object ID, which is what the plug-in sends, and only Entra sign-in proves it |
+| D-27 | Credentials are keyed by the initiating user's Entra object ID (`InitiatingUserAzureActiveDirectoryObjectId`), not the impersonated `UserId`. A per-user call with no object ID throws `ConnectionRequiredException` | A Dataverse app user impersonating someone through `CallerObjectId` must not borrow that person's source credential |
+| D-28 | OAuth is authorisation code with PKCE (S256) against an OAuth resource in host settings (`OAuthResources:<name>`: AuthorizeUrl, TokenUrl, Scopes, ClientId, ClientSecretRef); tokens refresh with under 60 seconds left and rotated refresh tokens are saved. Impersonate is the same flow against Entra with the connect app and the source API's delegated scope; there is no on-behalf-of flow. SSO is a username and secret entered on the connect page, sent as Basic or an API key header (`Auth:SsoKind`) | The plug-in never holds the user's token (9.1), so every per-user grant is captured at connect time |
+| D-29 | `Auth:AsyncContext` is `TriggeringUser` (default) or `ServiceIdentity`. `ServiceIdentity` needs an explicit `Auth:AsyncAuth` block (ServiceAccount or Static) used only when `caller.async` is true; `TriggeringUser` with `AsyncAuth` fails at startup. `caller.async` is `context.Mode == 1` | Makes the K2 workflow behaviour an explicit, separately configured identity, never a fallback |
+| D-30 | `bf_userconnection` status lives in the credential store row and `bf_oauthresource` in host settings until phase 2b (D-16) | The phase 3 criteria do not need the tables; no Dataverse row ever holds a credential |
+| D-31 | The phase 3 source is a Tickets API in the Node mock under `/tk/v1`, owned per user (alice, bob), with its own OAuth server at `/tk/oauth/*`. It accepts a mock OAuth bearer, per-user Basic (SSO) or an Entra bearer (Impersonate). The mock's ingress becomes external in dev, because the browser must reach its sign-in page; every data path still needs a credential | Exercises all three per-user modes against one source |
+| D-32 | Live acceptance covers OAuth and Impersonate with two real Entra users; SSO is covered by contract tests | SSO has no platform behaviour to verify; OAuth and Entra token handling do |
+| D-33 | Phase 3 changes neither `BrokerForge.Contracts` nor the descriptor schema: `CallerContext` already carries `userObjectId` and `async`, `ErrorPayload` carries `connectUrl`, and credentials attach in the channel | Keeps the shared surfaces stable |
 
 ### Open questions
 
-- [ ] Where per-user tokens and SSO credentials live: host-side encrypted store or Key Vault per user.
-- [ ] How users reach the connect page from model-driven apps and canvas apps.
+- [x] Where per-user tokens and SSO credentials live: host-side encrypted store (D-25).
+- [x] How users reach the connect page from model-driven apps and canvas apps: through the URL in the error text for phase 3 (D-26); an in-app prompt is later work.
 - [ ] Host language: C# for parity with the plug-in, or a mix where adapters benefit.
 - [ ] Composite operations across brokers: in scope for v1 or later.
 - [ ] How to detect native-table references to key-map GUIDs before pruning.
