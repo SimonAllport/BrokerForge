@@ -1,4 +1,4 @@
-// Container Apps environment, the BrokerForge host (external) and the Orders mock (internal only).
+// Container Apps environment, the BrokerForge host (external) and the mock (Orders and Inventory APIs, internal only).
 param location string
 param prefix string
 param identityId string
@@ -47,7 +47,10 @@ resource mock 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: { external: false, targetPort: 8080, transport: 'http' }
       registries: registries
-      secrets: [ { name: 'mock-api-key', keyVaultUrl: '${secretUri}/orders-api-key', identity: identityId } ]
+      secrets: [
+        { name: 'mock-api-key', keyVaultUrl: '${secretUri}/orders-api-key', identity: identityId }
+        { name: 'inventory-api-key', keyVaultUrl: '${secretUri}/inventory-api-key', identity: identityId }
+      ]
     }
     template: {
       containers: [
@@ -58,6 +61,7 @@ resource mock 'Microsoft.App/containerApps@2024-03-01' = {
           env: [
             { name: 'PORT', value: '8080' }
             { name: 'MOCK_API_KEY', secretRef: 'mock-api-key' }
+            { name: 'MOCK_INVENTORY_KEY', secretRef: 'inventory-api-key' }
             { name: 'MOCK_SLOW_MS', value: '100000' }
           ]
         }

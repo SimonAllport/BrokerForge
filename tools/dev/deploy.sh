@@ -33,7 +33,7 @@ VAULT="$(sed -n 2p <<< "$base")"
 echo "== secrets in $VAULT (generated once, never printed)"
 secret_file="$(mktemp)"
 trap 'rm -f "$secret_file"' EXIT
-for name in orders-api-key page-token-key; do
+for name in orders-api-key inventory-api-key page-token-key; do
   if az keyvault secret show --vault-name "$VAULT" -n "$name" --query id -o tsv >/dev/null 2>&1; then
     echo "   $name exists"
     continue

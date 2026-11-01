@@ -1,14 +1,17 @@
 'use strict';
-// Orders mock API for the BrokerForge contract tests (descriptor spec 13 shapes).
-// Node built-ins only. Requires MOCK_API_KEY; every request must send it as X-Api-Key.
+// Orders mock API for the BrokerForge contract tests (descriptor spec 13 shapes), plus the Inventory API
+// under /inv/v1 (inventory.js). Node built-ins only. Requires MOCK_API_KEY; every Orders request must send
+// it as X-Api-Key. Inventory requests send MOCK_INVENTORY_KEY as the api_key query parameter instead.
 const http = require('node:http');
 const { seed, pad } = require('./data');
+const { inventory, resetInventory } = require('./inventory');
 
 const API_KEY = process.env.MOCK_API_KEY;
 if (!API_KEY) {
   console.error('MOCK_API_KEY is required');
   process.exit(2);
 }
+const INVENTORY_KEY = process.env.MOCK_INVENTORY_KEY;
 const SLOW_MS = Number(process.env.MOCK_SLOW_MS || 5000);
 const SORT_FIELDS = { reference: (o) => o.reference, placedAt: (o) => o.placedAt };
 
@@ -23,6 +26,7 @@ function reset() {
   idempotency = new Map();
   failed503 = false;
   lastEcho = undefined;
+  resetInventory();
 }
 reset();
 
@@ -208,6 +212,8 @@ async function route(req, res) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    const url = new URL(req.url, 'http://mock');
+    if (await inventory(req, res, url, INVENTORY_KEY, { send, readBody, parseJson, intParam, HttpError })) return;
     if (req.headers['x-api-key'] !== API_KEY) return send(res, 401, { error: { detail: 'missing or invalid api key' } });
     await route(req, res);
   } catch (e) {
