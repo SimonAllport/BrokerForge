@@ -136,7 +136,7 @@ public class GeneratorTests
         Assert.Equal("ext_AdjustStock", (string)api["uniquename"]!);
         Assert.Equal(0, (int)api["bindingtype"]!);
         Assert.False((bool)api["isfunction"]!);
-        Assert.Equal($"/plugintypes({FakeDataverse.CustomApiPluginTypeId})", (string)api["plugintypeid@odata.bind"]!);
+        Assert.Equal($"/plugintypes({FakeDataverse.CustomApiPluginTypeId})", (string)api["PluginTypeId@odata.bind"]!);
         Assert.Equal("BrokerForgeInventory", post.Solution);
         var inputs = api["CustomAPIRequestParameters"]!.AsArray().ToDictionary(p => (string)p!["uniquename"]!, p => ((int)p!["type"]!, (bool)p["isoptional"]!));
         Assert.Equal((7, false), inputs["ItemId"]);

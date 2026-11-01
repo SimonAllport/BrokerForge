@@ -95,7 +95,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
                 return Value(_customApis.Where(a => (string)a["uniquename"]! == name));
             case ("POST", "customapis"):
                 body!["customapiid"] = NewId();
-                body["_plugintypeid_value"] = ((string)body["plugintypeid@odata.bind"]!)["/plugintypes(".Length..^1];
+                body["_plugintypeid_value"] = ((string)body["PluginTypeId@odata.bind"]!)["/plugintypes(".Length..^1];
                 _customApis.Add(body);
                 return Status(HttpStatusCode.NoContent);
         }

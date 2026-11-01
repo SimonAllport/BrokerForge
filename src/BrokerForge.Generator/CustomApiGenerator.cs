@@ -33,7 +33,8 @@ public static class CustomApiGenerator
         ["isfunction"] = false,
         ["isprivate"] = false,
         ["allowedcustomprocessingsteptype"] = 0,
-        ["plugintypeid@odata.bind"] = $"/plugintypes({pluginTypeId})",
+        // The navigation property is PluginTypeId; Web API binding names are case-sensitive (phase 2 findings).
+        ["PluginTypeId@odata.bind"] = $"/plugintypes({pluginTypeId})",
         ["CustomAPIRequestParameters"] = new JsonArray(api.Inputs.Select(i => (JsonNode)new JsonObject
         {
             ["uniquename"] = i.Key, ["name"] = $"{uniqueName}.{i.Key}", ["displayname"] = i.Key, ["description"] = i.Key,
