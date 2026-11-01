@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Read this first, then `docs/hld.md` and `docs/descriptor-spec.md`.
 
-**Current state:** phase 1 built and verified live (`docs/findings/phase1.md`). Projects not in the layout below yet: SwaggerForge, `solution/`. Check `git ls-files` before assuming a project is there. Phase 1 config comes from host settings and `descriptors/` files (HLD D-10); `src/BrokerForge.Abstractions` holds the host-side shared interfaces (D-13).
+**Current state:** phases 1 and 2 built and verified live (`docs/findings/phase1.md`, `docs/findings/phase2.md`). Not in the layout below yet: `solution/`. Check `git ls-files` before assuming a project is there. Config still comes from host settings plus `descriptors/` and `schemas/` files (HLD D-10, D-16); the Dataverse config tables are phase 2b. `src/BrokerForge.Abstractions` holds the host-side shared interfaces (D-13). Phase 2 added `src/BrokerForge.Schema` (table schema files, spec 14), `src/BrokerForge.Generator`, `tools/SwaggerForge` and the `bf` CLI in `tools/BrokerForge.Cli` (D-22).
 
 ## What this is
 
@@ -85,11 +85,13 @@ brokerforge/
     BrokerForge.Adapters.Rest/  # net8.0: IBroker for REST
     BrokerForge.Keys/           # net8.0: key strategies (native GUID, reversible, key map)
   tools/
-    SwaggerForge/               # OpenAPI -> draft descriptors + table schema
-    mock-api/                   # Node Orders mock
+    SwaggerForge/               # OpenAPI -> draft descriptors + table schema (library; `bf draft`)
+    BrokerForge.Cli/            # `bf validate | draft | generate`
+    mock-api/                   # Node mock: Orders (/v2) and Inventory (/inv/v1)
   solution/                     # Dataverse solution source (pac)
   descriptors/
     OrdersAPI/                  # one YAML file per operation
+  schemas/                      # one table schema file per service instance (descriptor spec 14)
   infra/                        # Bicep
   tests/
     BrokerForge.Descriptors.Tests/
@@ -161,12 +163,16 @@ dotnet test tests/BrokerForge.Descriptors.Tests --filter "FullyQualifiedName~<Te
 cd tools/mock-api && npm test                   # MOCK_API_KEY=<any> npm start to run it
 tools/spike/sign-plugin.sh                      # Release build, strong name + Authenticode (osslsigncode) -> out/
 tools/dev/deploy.sh                             # Azure dev env (infra/main.bicep), images, Key Vault secrets
-tools/dev/setup-dataverse.sh                    # sign + register provider, bf_brokerdatasource, ext_order
-tools/dev/acceptance.sh                         # phase 1 done criteria through the Web API
+tools/dev/setup-dataverse.sh                    # sign + register core: assembly, both plug-in types, provider, bf_brokerdatasource, bf_HostUrl/bf_HostScope
+tools/dev/generate.sh OrdersAPI BrokerForgeOrders [--dry-run]   # bf generate: data source record, virtual table, columns, Custom APIs
+dotnet run --project tools/BrokerForge.Cli -- validate descriptors --schemas schemas   # what CI runs
+dotnet run --project tools/BrokerForge.Cli -- draft <openapi> --instance <Name> --prefix ext --table ext_x --out out
+tools/dev/acceptance.sh                         # Orders: phase 1 done criteria + option set writes, lines read back
+tools/dev/acceptance_inventory.sh               # Inventory: the phase 2 onboarding acceptance
 source tools/spike/dv.sh && dv GET ext_orders   # Web API call as the az CLI user
 ```
 
-The solution file is `BrokerForge.slnx` (.NET 10 SDK format). macOS notes: `net462` builds through `Microsoft.NETFramework.ReferenceAssemblies`; signing material lives in `~/.brokerforge/spike-signing/` (outside the repo), the app registration, environment and managed identity IDs in `~/.brokerforge/spike-ids.env` and dev IDs in `~/.brokerforge/dev-ids.env`. The dev apps scale to zero between sessions, so the first call after a pause takes about 25 seconds; `deploy.sh` sets the host back to one replica. Use `/usr/bin/python3` for the dev scripts (the python.org build has no CA certificates). Signing uses the PEM certificate and key (`cert.pem`, `cert.key`); signing from the PFX failed intermittently with a passphrase prompt. The scripts still retry the timestamp server. In zsh, never name a shell variable `path` (it is tied to `$PATH`).
+The solution file is `BrokerForge.slnx` (.NET 10 SDK format). macOS notes: `net462` builds through `Microsoft.NETFramework.ReferenceAssemblies`; signing material lives in `~/.brokerforge/spike-signing/` (outside the repo), the app registration, environment and managed identity IDs in `~/.brokerforge/spike-ids.env` and dev IDs in `~/.brokerforge/dev-ids.env`. The dev apps scale to zero between sessions, so the first call after a pause takes about 25 seconds; `deploy.sh` sets the host and mock back to one replica and waits until both run the new image alone. CI builds the plug-in unsigned (`-p:SignAssembly=false`); signed builds come only from `sign-plugin.sh`. Use `/usr/bin/python3` for the dev scripts (the python.org build has no CA certificates). Signing uses the PEM certificate and key (`cert.pem`, `cert.key`); signing from the PFX failed intermittently with a passphrase prompt. The scripts still retry the timestamp server. In zsh, never name a shell variable `path` (it is tied to `$PATH`).
 
 ## Working agreement
 
