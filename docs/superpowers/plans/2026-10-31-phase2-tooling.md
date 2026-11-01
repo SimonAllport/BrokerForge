@@ -6,7 +6,7 @@
 
 **Architecture:** A table schema file sits beside each source's descriptors and makes validator rule 7 and the generator possible. SwaggerForge turns OpenAPI 3 into draft schema and descriptors and reports what it could not determine instead of guessing. One CLI (`bf`) validates descriptors in CI and drives the generator, which creates tables, columns, data source records and Custom APIs through the Dataverse Web API. Custom APIs run end to end: descriptor `customapi:` binds, a second plug-in type, and a host endpoint path.
 
-**Tech Stack:** .NET 8 (tools, host, libraries), net462 / C# 7.3 (plug-in), netstandard2.0 (Contracts), YamlDotNet, Microsoft.OpenApi.Readers 1.6.22, Azure.Identity, Node (mock), GitHub Actions.
+**Tech Stack:** .NET 8 (tools, host, libraries), net462 / C# 7.3 (plug-in), netstandard2.0 (Contracts), YamlDotNet, Microsoft.OpenApi.Readers 1.6.30, Azure.Identity, Node (mock), GitHub Actions.
 
 **Spec:** `docs/hld.md` (5.3, 6, 7.1, 14, D-10, D-11), `docs/descriptor-spec.md` (2, 3, 6, 12, 13 Custom API), `CLAUDE.md` phase 2 criteria.
 

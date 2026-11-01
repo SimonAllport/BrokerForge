@@ -137,6 +137,15 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             ["Format"] = payload["Format"]?.DeepClone(),
             ["OptionSet"] = payload["OptionSet"]?.DeepClone(),
         });
+        // Live: the platform adds a derived <column>name attribute for every picklist (phase 2 findings).
+        if (type == "Picklist")
+            _attributes[table].Add(new JsonObject
+            {
+                ["LogicalName"] = ((string)payload["SchemaName"]!).ToLowerInvariant() + "name",
+                ["AttributeType"] = "Virtual",
+                ["IsCustomAttribute"] = true,
+                ["AttributeOf"] = ((string)payload["SchemaName"]!).ToLowerInvariant(),
+            });
     }
 
     /// <summary>Replaces one stored attribute's AttributeType, as if the column had been created differently.</summary>
@@ -159,6 +168,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             {
                 ["LogicalName"] = a["LogicalName"]?.DeepClone(), ["AttributeType"] = a["AttributeType"]?.DeepClone(),
                 ["IsCustomAttribute"] = a["IsCustomAttribute"]?.DeepClone(), ["ExternalName"] = a["ExternalName"]?.DeepClone(),
+                ["AttributeOf"] = a["AttributeOf"]?.DeepClone(),
             }));
         if (method == "GET" && rest.StartsWith("/Attributes/Microsoft.Dynamics.CRM."))
         {

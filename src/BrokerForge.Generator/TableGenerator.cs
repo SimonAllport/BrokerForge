@@ -21,8 +21,10 @@ public static class TableGenerator
             return null;
 
         var prefix = name[..(name.IndexOf('_') + 1)];
-        var attributes = (await client.ListAsync($"{entity}/Attributes?$select=LogicalName,AttributeType,IsCustomAttribute,ExternalName", ct))
-            .Where(a => (bool?)a["IsCustomAttribute"] == true && ((string)a["LogicalName"]!).StartsWith(prefix, StringComparison.Ordinal) && (string)a["LogicalName"]! != schema.PrimaryKey)
+        // AttributeOf marks attributes the platform derives from another column (ext_statusname for the ext_status picklist).
+        var attributes = (await client.ListAsync($"{entity}/Attributes?$select=LogicalName,AttributeType,IsCustomAttribute,ExternalName,AttributeOf", ct))
+            .Where(a => (bool?)a["IsCustomAttribute"] == true && ((string)a["LogicalName"]!).StartsWith(prefix, StringComparison.Ordinal)
+                && (string)a["LogicalName"]! != schema.PrimaryKey && string.IsNullOrEmpty((string?)a["AttributeOf"]))
             .ToList();
         async Task<Dictionary<string, JsonObject>> Cast(string type, string select) =>
             (await client.ListAsync($"{entity}/Attributes/Microsoft.Dynamics.CRM.{type}AttributeMetadata?{select}", ct)).ToDictionary(a => (string)a["LogicalName"]!);
