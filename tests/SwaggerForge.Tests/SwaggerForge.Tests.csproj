@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\tools\SwaggerForge\SwaggerForge.csproj" />
+    <ProjectReference Include="..\..\tools\BrokerForge.Cli\BrokerForge.Cli.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="fixtures\*.yaml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

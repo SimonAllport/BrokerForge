@@ -85,6 +85,30 @@ public class WireParityTests
     }
 
     [Fact]
+    public void Wire_InputsAndOutputs_DcjsStjParity()
+    {
+        var request = new CanonicalRequest
+        {
+            CorrelationId = "c1",
+            EnvironmentId = "e1",
+            Message = "ext_AdjustStock",
+            Caller = new CallerContext { UserObjectId = "u1" },
+            Inputs = new List<Cell> { new() { Col = "ItemId", Type = CellTypes.Int, Value = "7" }, new() { Col = "Reason", Type = CellTypes.String, Value = null } },
+        };
+        var dcjs = JsonNode.Parse(WriteDcjs(request));
+        var stj = JsonNode.Parse(JsonSerializer.Serialize(request, Stj));
+        Assert.True(JsonNode.DeepEquals(dcjs, stj), $"DCJS: {dcjs?.ToJsonString()}\nSTJ:  {stj?.ToJsonString()}");
+        Assert.Equal("7", stj!["inputs"]![0]!["value"]!.GetValue<string>());
+        Assert.Null(stj["serviceInstance"]);
+        Assert.Null(stj["table"]);
+
+        var response = new CanonicalResponse { CorrelationId = "c1", Outputs = new List<Cell> { new() { Col = "OnHand", Type = CellTypes.Int, Value = "12" } } };
+        var back = ReadDcjs<CanonicalResponse>(JsonSerializer.Serialize(response, Stj));
+        Assert.Equal("OnHand", back.Outputs.Single().Col);
+        Assert.Equal(JsonSerializer.Serialize(response, Stj), JsonSerializer.Serialize(back, Stj));
+    }
+
+    [Fact]
     public void EveryDataMemberName_IsCamelCaseOfProperty()
     {
         var types = typeof(CanonicalRequest).Assembly.GetTypes().Where(t => t.GetCustomAttribute<DataContractAttribute>() != null).ToList();

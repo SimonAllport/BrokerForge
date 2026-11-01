@@ -11,8 +11,11 @@ request:
   body:
     template:
       customer: { ref: { col: ext_customerref } }
+      state:    { code: { col: ext_status, optionset: orderStatus } }
       lines:    { col: ext_lines_json, format: json }
       totals:   { gross: { col: ext_total } }
+optionsets:
+  orderStatus: { open: 100000000, shipped: 100000001, cancelled: 100000002 }
 errors:
   404: NotFound
   422: { exception: Validation, message: $.error.detail }

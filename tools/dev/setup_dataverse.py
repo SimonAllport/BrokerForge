@@ -1,8 +1,10 @@
-"""Phase 1: register the BrokerForge provider and the ext_order virtual table in the dev environment.
+"""Register the BrokerForge core components in the dev environment: the signed plug-in assembly, both
+plug-in types, the bf_brokerdatasource table, the BrokerForge data provider and the bf_HostUrl and
+bf_HostScope environment variables (HLD D-20). Source tables, data source records and Custom APIs come
+from `bf generate` (tools/dev/generate.sh).
 
 Idempotent: every step looks for its component first. Follows the phase 0 metadata rules
-(docs/findings/phase0.md section 1) and reads back TableType, DataProviderId and DataSourceId,
-exiting non-zero on a mismatch. Uses the az CLI user's token; no secret is read or written.
+(docs/findings/phase0.md section 1). Uses the az CLI user's token; no secret is read or written.
 
 Usage: python3 setup_dataverse.py <signed plug-in dll>
 """
@@ -122,14 +124,39 @@ def set_primary_key_external_name(table, external):
     call("PUT", path, attr)
 
 
-def main(dll_path):
-    core, orders = "BrokerForgeCore", "BrokerForgeOrders"
+def ensure_plugin_type(asm_id, typename, friendly, solution):
+    step(f"plug-in type {typename}")
+    pt = first(f"plugintypes?$select=plugintypeid&$filter=typename eq '{typename}' and _pluginassemblyid_value eq {asm_id}")
+    if pt:
+        return pt["plugintypeid"]
+    _, body, _ = call("POST", "plugintypes", {"typename": typename, "name": typename, "friendlyname": friendly,
+                                              "pluginassemblyid@odata.bind": f"/pluginassemblies({asm_id})"}, solution)
+    return body["plugintypeid"]
 
-    step("publishers and solutions")
+
+def ensure_env_var(schema, display, value, solution):
+    """A string environment variable (type 100000000) with its current value set; the plug-in reads the value, else the default."""
+    d = first(f"environmentvariabledefinitions?$select=environmentvariabledefinitionid&$filter=schemaname eq '{schema}'")
+    if d:
+        def_id = d["environmentvariabledefinitionid"]
+    else:
+        _, body, _ = call("POST", "environmentvariabledefinitions", {"schemaname": schema, "displayname": display, "type": 100000000,
+                                                                     "defaultvalue": value}, solution)
+        def_id = body["environmentvariabledefinitionid"]
+    v = first(f"environmentvariablevalues?$select=environmentvariablevalueid,value&$filter=_environmentvariabledefinitionid_value eq {def_id}")
+    if not v:
+        call("POST", "environmentvariablevalues", {"schemaname": schema, "value": value,
+                                                   "EnvironmentVariableDefinitionId@odata.bind": f"/environmentvariabledefinitions({def_id})"}, solution)
+    elif v.get("value") != value:
+        call("PATCH", f"environmentvariablevalues({v['environmentvariablevalueid']})", {"value": value})
+
+
+def main(dll_path):
+    core = "BrokerForgeCore"
+
+    step("publisher and core solution")
     bf_publisher = ensure_publisher("brokerforge", "bf", 10001)
-    ext_publisher = ensure_publisher("brokerforgeext", "ext", 10000)
     ensure_solution(core, "BrokerForge Core", bf_publisher)
-    ensure_solution(orders, "BrokerForge Orders", ext_publisher)
 
     step(f"plug-in assembly {ASSEMBLY_VERSION}")
     content = base64.b64encode(open(dll_path, "rb").read()).decode()
@@ -144,14 +171,8 @@ def main(dll_path):
         asm_id = body["pluginassemblyid"]
     call("PATCH", f"pluginassemblies({asm_id})", {"managedidentityid@odata.bind": f"/managedidentities({SPIKE['MI']})"})
 
-    step("plug-in type BrokerForge.Plugin.ProviderPlugin")
-    pt = first(f"plugintypes?$select=plugintypeid&$filter=typename eq 'BrokerForge.Plugin.ProviderPlugin' and _pluginassemblyid_value eq {asm_id}")
-    if pt:
-        pt_id = pt["plugintypeid"]
-    else:
-        _, body, _ = call("POST", "plugintypes", {"typename": "BrokerForge.Plugin.ProviderPlugin", "name": "BrokerForge.Plugin.ProviderPlugin",
-                                                  "friendlyname": "BrokerForge provider", "pluginassemblyid@odata.bind": f"/pluginassemblies({asm_id})"}, core)
-        pt_id = body["plugintypeid"]
+    pt_id = ensure_plugin_type(asm_id, "BrokerForge.Plugin.ProviderPlugin", "BrokerForge provider", core)
+    api_pt_id = ensure_plugin_type(asm_id, "BrokerForge.Plugin.CustomApiPlugin", "BrokerForge Custom API handler", core)
 
     step("data source table bf_brokerdatasource")
     if not entity("bf_brokerdatasource"):
@@ -175,54 +196,15 @@ def main(dll_path):
         _, body, _ = call("POST", "entitydataproviders", dict(plugins, name="BrokerForge", datasourcelogicalname="bf_brokerdatasource"), core)
         dp_id = body["entitydataproviderid"]
 
-    step("data source record Orders host")
-    record = {"bf_name": "Orders host", "bf_hosturl": DEV["DEV_HOST_URL"], "bf_scope": f"api://{SPIKE['HOST_APP']}/.default", "bf_serviceinstance": "OrdersAPI"}
-    ds = first("bf_brokerdatasources?$select=bf_brokerdatasourceid&$filter=bf_name eq 'Orders host'")
-    if ds:
-        ds_id = ds["bf_brokerdatasourceid"]
-        call("PATCH", f"bf_brokerdatasources({ds_id})", record)
-    else:
-        _, body, _ = call("POST", "bf_brokerdatasources", record)
-        ds_id = body["bf_brokerdatasourceid"]
+    step("environment variables bf_HostUrl and bf_HostScope")
+    ensure_env_var("bf_HostUrl", "BrokerForge host URL", DEV["DEV_HOST_URL"], core)
+    ensure_env_var("bf_HostScope", "BrokerForge host token scope", f"api://{SPIKE['HOST_APP']}/.default", core)
+    call("POST", "PublishXml", {"ParameterXml": "<importexportxml><entities><entity>bf_brokerdatasource</entity></entities></importexportxml>"})
 
-    step("virtual table ext_order")
-    if not entity("ext_order"):
-        call("POST", "EntityDefinitions", dict(VIRTUAL_FLAGS, **{
-            "@odata.type": "Microsoft.Dynamics.CRM.EntityMetadata", "SchemaName": "ext_order",
-            "DisplayName": label("Order"), "DisplayCollectionName": label("Orders"),
-            "DataProviderId": dp_id, "DataSourceId": ds_id, "ExternalName": "order", "ExternalCollectionName": "orders",
-            "Attributes": [string_attr("ext_name", "Reference", 100, "ext_name", primary=True)]}), orders)
-    ensure_attribute("ext_order", {
-        "@odata.type": "Microsoft.Dynamics.CRM.PicklistAttributeMetadata", "SchemaName": "ext_status", "DisplayName": label("Status"),
-        "RequiredLevel": {"Value": "None"}, "ExternalName": "ext_status",
-        "OptionSet": {"@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata", "IsGlobal": False, "OptionSetType": "Picklist",
-                      "Options": [{"Value": 100000000, "Label": label("Open")}, {"Value": 100000001, "Label": label("Shipped")},
-                                  {"Value": 100000002, "Label": label("Cancelled")}]}}, orders)
-    ensure_attribute("ext_order", string_attr("ext_customerref", "Customer reference", 100, "ext_customerref"), orders)
-    ensure_attribute("ext_order", {
-        "@odata.type": "Microsoft.Dynamics.CRM.DateTimeAttributeMetadata", "SchemaName": "ext_placed", "DisplayName": label("Placed"),
-        "RequiredLevel": {"Value": "None"}, "Format": "DateAndTime", "ExternalName": "ext_placed"}, orders)
-    ensure_attribute("ext_order", {
-        "@odata.type": "Microsoft.Dynamics.CRM.MemoAttributeMetadata", "SchemaName": "ext_lines_json", "DisplayName": label("Lines (JSON)"),
-        "RequiredLevel": {"Value": "None"}, "MaxLength": 100000, "Format": "TextArea", "ExternalName": "ext_lines_json"}, orders)
-    # Decimal, not Money: Dataverse refuses Money columns on virtual tables ("Attribute data type: money is not valid for this entity").
-    ensure_attribute("ext_order", {
-        "@odata.type": "Microsoft.Dynamics.CRM.DecimalAttributeMetadata", "SchemaName": "ext_total", "DisplayName": label("Total"),
-        "RequiredLevel": {"Value": "None"}, "Precision": 2, "MinValue": 0, "MaxValue": 1000000000, "ExternalName": "ext_total"}, orders)
-    call("POST", "PublishXml", {"ParameterXml": "<importexportxml><entities><entity>ext_order</entity><entity>bf_brokerdatasource</entity></entities></importexportxml>"})
-
-    step("read back")
-    table = entity("ext_order")
-    checks = {"TableType": (table["TableType"], "Virtual"), "DataProviderId": (table["DataProviderId"], dp_id), "DataSourceId": (table["DataSourceId"], ds_id)}
-    for name, (actual, expected) in checks.items():
-        print(f"   {name}: {actual}")
-        if str(actual).lower() != str(expected).lower():
-            sys.exit(f"ext_order {name} is {actual}, expected {expected}")
-
-    values = dict(DEV, DEV_ASM=asm_id, DEV_PT=pt_id, DEV_DP=dp_id, DEV_DS=ds_id)
+    values = dict(DEV, DEV_ASM=asm_id, DEV_PT=pt_id, DEV_API_PT=api_pt_id, DEV_DP=dp_id)
     with open(DEV_PATH, "w") as f:
         f.writelines(f"{k}={v}\n" for k, v in values.items())
-    print(f"done: assembly {asm_id}, plug-in type {pt_id}, provider {dp_id}, data source {ds_id}")
+    print(f"done: assembly {asm_id}, plug-in types {pt_id} and {api_pt_id}, provider {dp_id}")
 
 
 if __name__ == "__main__":

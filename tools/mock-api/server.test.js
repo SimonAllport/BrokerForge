@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 
 const KEY = 'bf-test-dummy-key';
+const INV_KEY = 'bf-test-dummy-inventory-key';
 let child;
 let base;
 
@@ -36,7 +37,7 @@ async function call(method, p, { body, headers = {}, key = KEY } = {}) {
 }
 
 before(async () => {
-  const s = await start({ MOCK_API_KEY: KEY });
+  const s = await start({ MOCK_API_KEY: KEY, MOCK_INVENTORY_KEY: INV_KEY });
   child = s.proc;
   base = `http://127.0.0.1:${s.port}`;
 });
@@ -138,6 +139,15 @@ test('create keeps a numeric totals.gross and defaults it to 0', async () => {
   assert.equal((await call('GET', `/v2/orders/${b.json.id}`)).json.totals.gross, 0);
 });
 
+test('create takes state.code and defaults it to open', async () => {
+  const a = await call('POST', '/v2/accounts/acc1/orders', { body: { customer: { ref: 'CUST-04' }, state: { code: 'shipped' } } });
+  assert.equal((await call('GET', `/v2/orders/${a.json.id}`)).json.state.code, 'shipped');
+  const b = await call('POST', '/v2/accounts/acc1/orders', { body: { customer: { ref: 'CUST-04' } } });
+  assert.equal((await call('GET', `/v2/orders/${b.json.id}`)).json.state.code, 'open');
+  const c = await call('POST', '/v2/accounts/acc1/orders', { body: { customer: { ref: 'CUST-04' }, state: { code: 'lost' } } });
+  assert.equal(c.status, 422);
+});
+
 test('location create', async () => {
   const r = await call('POST', '/v2/accounts/acc1/orders-location', { body: { customer: { ref: 'CUST-03' } } });
   assert.equal(r.status, 201);
@@ -187,4 +197,75 @@ test('reset restores seed', async () => {
   await call('POST', '/__reset');
   assert.equal((await call('GET', '/v2/orders/ord_0002')).status, 200);
   assert.equal((await call('GET', '/v2/orders-all')).json.data.length, 120);
+});
+
+// ---- Inventory API (/inv/v1, api_key query parameter) ----
+
+const inv = (method, p, body) => call(method, `/inv/v1${p}${p.includes('?') ? '&' : '?'}api_key=${INV_KEY}`, { body, key: null });
+
+test('inventory requires api_key query', async () => {
+  assert.equal((await call('GET', '/inv/v1/items', { key: null })).status, 401);
+  assert.equal((await call('GET', '/inv/v1/items?api_key=wrong', { key: null })).status, 401);
+  // The Orders header key is not an inventory credential.
+  assert.equal((await call('GET', '/inv/v1/items')).status, 401);
+  assert.equal((await inv('GET', '/items')).status, 200);
+});
+
+test('inventory offset paging with total covers all items once', async () => {
+  const seen = new Set();
+  let offset = 0;
+  let total;
+  for (;;) {
+    const r = await inv('GET', `/items?limit=20&offset=${offset}`);
+    assert.equal(r.status, 200);
+    total = r.json.total;
+    for (const item of r.json.items) { assert.ok(!seen.has(item.id)); seen.add(item.id); }
+    offset += 20;
+    if (offset >= total) break;
+  }
+  assert.equal(total, 45);
+  assert.equal(seen.size, 45);
+  assert.equal((await inv('GET', '/items?limit=51')).status, 400);
+  const discontinued = await inv('GET', '/items?state=discontinued&limit=50');
+  assert.equal(discontinued.json.total, 9);
+  assert.ok(discontinued.json.items.every((x) => x.state === 'discontinued'));
+});
+
+test('inventory retrieve, create, update, delete', async () => {
+  const one = await inv('GET', '/items/7');
+  assert.deepEqual(Object.keys(one.json).sort(), ['id', 'name', 'onHand', 'price', 'sku', 'state', 'updatedAt']);
+  assert.equal(one.json.id, 7);
+  assert.equal((await inv('GET', '/items/999')).status, 404);
+
+  const created = await inv('POST', '/items', { name: 'Widget', sku: 'W-1', onHand: 3, price: 2.5, state: 'active' });
+  assert.equal(created.status, 201);
+  assert.equal(created.json.id, 46);
+  assert.equal((await inv('POST', '/items', { sku: 'no name' })).status, 422);
+  assert.equal((await inv('POST', '/items', { name: 'x', state: 'lost' })).status, 422);
+
+  assert.equal((await inv('PATCH', '/items/46', { price: 3.75, state: 'discontinued' })).status, 204);
+  const after = await inv('GET', '/items/46');
+  assert.equal(after.json.price, 3.75);
+  assert.equal(after.json.state, 'discontinued');
+  assert.equal(after.json.name, 'Widget');
+
+  assert.equal((await inv('DELETE', '/items/46')).status, 204);
+  assert.equal((await inv('GET', '/items/46')).status, 404);
+});
+
+test('inventory adjust returns onHand and adjustedAt', async () => {
+  const before = (await inv('GET', '/items/3')).json.onHand;
+  const r = await inv('POST', '/items/3/adjust', { delta: 5, reason: 'count' });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.onHand, before + 5);
+  assert.match(r.json.adjustedAt, /^\d{4}-\d\d-\d\dT/);
+  assert.equal((await inv('POST', '/items/3/adjust', { delta: -1000 })).status, 422);
+  assert.equal((await inv('POST', '/items/3/adjust', { reason: 'no delta' })).status, 422);
+  assert.equal((await inv('POST', '/items/999/adjust', { delta: 1 })).status, 404);
+});
+
+test('reset restores the inventory seed', async () => {
+  await inv('DELETE', '/items/1');
+  assert.equal((await call('POST', '/__reset')).status, 204);
+  assert.equal((await inv('GET', '/items/1')).status, 200);
 });

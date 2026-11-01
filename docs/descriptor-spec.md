@@ -26,7 +26,7 @@ sortStable: true                 # required for RetrieveMultiple, see 5
 
 Unknown keys anywhere are a validation error, not ignored.
 
-**Phase 1 scope.** The parser rejects `steps`, `hook`, `jsonata` map entries and `customapi:` binds with "not supported until phase 2", and `cache` with "not supported until phase 5". Custom APIs are delivered in phase 2 with the generator.
+**Scope.** The parser rejects `steps`, `hook` and `jsonata` map entries with "not supported until a later phase", and `cache` with "not supported until phase 5". `customapi:` binds are supported from phase 2 for unbound Custom APIs only (HLD D-19): an `id` binding in a Custom API descriptor is rejected.
 
 ## 2. `binds`
 
@@ -39,6 +39,8 @@ Unknown keys anywhere are a validation error, not ignored.
 | `Delete` | `id` | nothing |
 | `customapi:<UniqueName>` | Custom API input parameters | `response.outputs` |
 
+A Custom API descriptor has no `table` and no `paging`. Its unique name must be unique across every service instance the host loads; two descriptors binding the same name stop the host at startup. The parameters and their types come from the table schema file's `customApis` block (section 14); every `param` binding must name a declared input, every declared input must be sent by a `param` binding (an input nothing sends would be accepted and dropped), and every declared output must appear in `response.outputs`.
+
 ## 3. Value bindings
 
 Every value in path, query, headers or body is either a literal (YAML scalar) or a binding object with exactly one key from this table. No other sources exist.
@@ -50,7 +52,7 @@ Every value in path, query, headers or body is either a literal (YAML scalar) or
 | `secret` | `{ secret: partnerKey }` | Named Key Vault reference on the service instance, resolved in the host | headers, query only |
 | `context` | `{ context: userObjectId }` | `userObjectId`, `correlationId`, `environmentId`, `async` | all |
 | `col` | `{ col: ext_status }` | Record column value | Create, Update |
-| `id` | `{ id: true }` or `{ id: orderId }` | Decoded external key, or a named part of a composite key | Retrieve, Update, Delete, Custom API with bound id |
+| `id` | `{ id: true }` or `{ id: orderId }` | Decoded external key, or a named part of a composite key | Retrieve, Update, Delete (entity-bound Custom APIs later, D-19) |
 | `filter` | `{ filter: ext_status, ops: [eq, in] }` | Value from the query filter on that column | RetrieveMultiple query and path |
 | `sort` | `{ sort: { ext_name: name, createdon: created }, descFormat: "-{field}" }` | Source sort field for the requested column. `descFormat` renders a descending sort; without it a descending sort is `UnsupportedQueryException` | RetrieveMultiple query |
 | `param` | `{ param: Reason }` | Custom API input parameter | Custom API |
@@ -61,6 +63,7 @@ Binding modifiers (optional, on the same object):
 
 - `required: true` — missing value is `UnsupportedQueryException` (for filters) or a validation error at call time (for others). Default: required for `id`, `col` on Create where the column is required, `param` where the Custom API parameter is required.
 - `omitIfNull: true` — drop the query parameter or header when the value is null. Default true for query and headers.
+- `optionset: <mapName>` (on `col` only) — reverse-maps the Dataverse option value through the descriptor's option set map and sends the source value. A value with no mapping is a validation error naming the column. An option set column bound without this modifier is still refused.
 - `format` — `iso8601`, `date`, `epochSeconds`, `epochMillis`, `lower`, `upper`, `csv` (for `in` arrays), `json` (body template leaves only: parses a JSON string column into a nested value).
 
 `secret` is never allowed in body or path, so secrets cannot be echoed back by a source that reflects input.
@@ -150,12 +153,14 @@ response:
     SubmittedAt: $.submittedAt
 ```
 
+`outputs` entries take the same forms as `map` entries (a path, or `{ path, type, optional }`), with `type` limited to the Custom API parameter types: `string`, `int`, `decimal`, `bool`, `datetime`, `guid`. A missing output path is `MappingException` naming the output unless `optional: true`.
+
 Rules:
 
 - `rows` matching nothing returns an empty set only when the path exists and is an empty array. A missing path is `MappingException`. Retrieve and RetrieveMultiple both require `rows`.
 - Within a row, JSON `null` maps to null. A map path that matches nothing is `MappingException` unless the entry has `optional: true`, which maps it to null.
 - Every column in the table's generated schema must appear in `map` or be explicitly listed under `response.unmapped: [ ... ]`. Silent gaps are a validation error.
-- `type` coerces: `string`, `int`, `decimal`, `bool`, `datetime`, `date`, `guid`, `optionset:<mapName>`. Coercion failure is `MappingException` naming column and path. `money` is refused: virtual tables cannot have Money columns, so amounts use `decimal`.
+- `type` coerces: `string`, `int`, `decimal`, `bool`, `datetime`, `date`, `guid`, `optionset:<mapName>`, `json`. `json` serialises the matched JSON value (object, array or scalar) to a compact JSON string, for memo columns that hold a nested structure. Coercion failure is `MappingException` naming column and path. `money` is refused: virtual tables cannot have Money columns, so amounts use `decimal`.
 - Composite keys: `key: { accountId: $.accountId, orderId: $.id }`. The object map's key strategy must be `keymap` or reversible if it fits.
 - Create must return a key. If the source returns 201 with a `Location` header only, use `key: { header: Location, pattern: "/orders/(?<id>[^/]+)$" }`.
 
@@ -273,7 +278,7 @@ The validator rejects a descriptor when any of these hold:
 4. A reserved header or query parameter declared.
 5. GET or DELETE with a body.
 6. RetrieveMultiple without `paging`, Retrieve/RetrieveMultiple without `response.rows`, or Retrieve/RetrieveMultiple/Create without `response.key`.
-7. A table column neither mapped nor listed in `response.unmapped` (from phase 2, when the table schema exists).
+7. With the table schema (section 14): a table column neither mapped nor listed in `response.unmapped` on Retrieve and RetrieveMultiple; a mapped, bound, filtered or sorted column that is not in the schema; an option set map that does not cover exactly the schema column's options; a Custom API `param` or output not declared in the schema.
 8. `errors.default` other than `Fail`.
 9. `retry` without `idempotent: true`, or Create retry without an idempotency key binding.
 10. A `hook` without `reason`.
@@ -399,3 +404,34 @@ errors:
 ```
 
 The Custom API `ext_SubmitOrder` is generated with inputs `OrderId` (string, required), `Reason` (string, optional), `NotifyCustomer` (bool, required) and outputs `SubmittedAt` (datetime), `Status` (string).
+
+## 14. Table schema files
+
+Each service instance has one schema file, `schemas/<ServiceInstance>.yaml`, describing the virtual table and the Custom APIs its descriptors bind (HLD D-17). The validator (rule 7), the host (Custom API parameter checks) and the generator read it. SwaggerForge drafts it.
+
+```yaml
+table: ext_item                 # logical name; the prefix comes from here
+displayName: Item
+displayCollectionName: Items
+externalName: item
+primaryName: ext_name           # string column used as the primary name
+columns:
+  ext_name:   { type: string, maxLength: 100, displayName: Name }
+  ext_onhand: { type: int, displayName: On hand }
+  ext_price:  { type: decimal, precision: 2, displayName: Price }
+  ext_state:  { type: optionset, options: { active: 100000000, discontinued: 100000001 }, displayName: State }
+customApis:
+  ext_AdjustStock:
+    displayName: Adjust stock
+    inputs:  { ItemId: { type: int, required: true }, Delta: { type: int, required: true }, Reason: { type: string } }
+    outputs: { OnHand: int, AdjustedAt: datetime }
+```
+
+Rules:
+
+- Unknown keys are an error, as in descriptors.
+- Column types: `string` (needs `maxLength`), `memo`, `int`, `decimal` (needs `precision`), `bool`, `datetime`, `date`, `optionset` (needs `options`). `money` is refused (HLD D-15). The primary key column `<table>id` is implicit and is not listed.
+- `primaryName` must name a `string` column.
+- Option values are integers; the option labels match the source values used in the descriptors' option set maps.
+- Custom API parameter and output types: `string`, `int`, `decimal`, `bool`, `datetime`, `guid`. Inputs default to `required: false`.
+- `customApis` and `table` are both optional, but a file must declare at least one of them.

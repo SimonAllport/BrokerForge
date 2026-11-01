@@ -1,4 +1,4 @@
-// Container Apps environment, the BrokerForge host (external) and the Orders mock (internal only).
+// Container Apps environment, the BrokerForge host (external) and the mock (Orders and Inventory APIs, internal only).
 param location string
 param prefix string
 param identityId string
@@ -47,7 +47,10 @@ resource mock 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: { external: false, targetPort: 8080, transport: 'http' }
       registries: registries
-      secrets: [ { name: 'mock-api-key', keyVaultUrl: '${secretUri}/orders-api-key', identity: identityId } ]
+      secrets: [
+        { name: 'mock-api-key', keyVaultUrl: '${secretUri}/orders-api-key', identity: identityId }
+        { name: 'inventory-api-key', keyVaultUrl: '${secretUri}/inventory-api-key', identity: identityId }
+      ]
     }
     template: {
       containers: [
@@ -58,6 +61,7 @@ resource mock 'Microsoft.App/containerApps@2024-03-01' = {
           env: [
             { name: 'PORT', value: '8080' }
             { name: 'MOCK_API_KEY', secretRef: 'mock-api-key' }
+            { name: 'MOCK_INVENTORY_KEY', secretRef: 'inventory-api-key' }
             { name: 'MOCK_SLOW_MS', value: '100000' }
           ]
         }
@@ -69,6 +73,8 @@ resource mock 'Microsoft.App/containerApps@2024-03-01' = {
 
 var orders = 'Instances__OrdersAPI__'
 var map = 'ObjectMaps__ext_order__'
+var inventory = 'Instances__InventoryAPI__'
+var itemMap = 'ObjectMaps__ext_item__'
 
 // minReplicas 1: phase 0 measured a 23.5 s cold start (HLD 15).
 resource host 'Microsoft.App/containerApps@2024-03-01' = {
@@ -98,6 +104,7 @@ resource host 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'Host__TimeoutSeconds', value: '90' }
             { name: 'Host__PageTokenKeyRef', value: 'kv:${secretUri}/page-token-key' }
             { name: 'Config__DescriptorsPath', value: '/app/descriptors' }
+            { name: 'Config__SchemasPath', value: '/app/schemas' }
             { name: '${orders}BrokerType', value: 'rest' }
             { name: '${orders}BaseUrl', value: 'https://${mock.properties.configuration.ingress.fqdn}' }
             { name: '${orders}Auth__Mode', value: 'Static' }
@@ -113,6 +120,20 @@ resource host 'Microsoft.App/containerApps@2024-03-01' = {
             { name: '${map}Operations__Create', value: 'createOrder' }
             { name: '${map}Operations__Update', value: 'updateOrder' }
             { name: '${map}Operations__Delete', value: 'deleteOrder' }
+            { name: '${inventory}BrokerType', value: 'rest' }
+            { name: '${inventory}BaseUrl', value: 'https://${mock.properties.configuration.ingress.fqdn}' }
+            { name: '${inventory}Auth__Mode', value: 'Static' }
+            { name: '${inventory}Auth__StaticKind', value: 'apiKeyQuery' }
+            { name: '${inventory}Auth__QueryParam', value: 'api_key' }
+            { name: '${inventory}Auth__SecretRef', value: 'kv:${secretUri}/inventory-api-key' }
+            { name: '${itemMap}ServiceInstance', value: 'InventoryAPI' }
+            { name: '${itemMap}KeyStrategy', value: 'reversible' }
+            { name: '${itemMap}KeyKind', value: 'Int32' }
+            { name: '${itemMap}Operations__RetrieveMultiple', value: 'listItems' }
+            { name: '${itemMap}Operations__Retrieve', value: 'getItem' }
+            { name: '${itemMap}Operations__Create', value: 'createItem' }
+            { name: '${itemMap}Operations__Update', value: 'updateItem' }
+            { name: '${itemMap}Operations__Delete', value: 'deleteItem' }
           ]
           probes: [
             { type: 'Readiness', httpGet: { path: '/healthz', port: 8080 }, periodSeconds: 10 }

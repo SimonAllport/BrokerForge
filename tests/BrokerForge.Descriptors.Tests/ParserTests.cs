@@ -86,18 +86,16 @@ public class ParserTests
     }
 
     [Theory]
-    [InlineData("steps", "steps: []\n", "phase 2")]
-    [InlineData("hook", "hook: { pre: X, reason: y }\n", "phase 2")]
+    [InlineData("steps", "steps: []\n", "a later phase")]
+    [InlineData("hook", "hook: { pre: X, reason: y }\n", "a later phase")]
     [InlineData("cache", "cache: { ttl: 60s }\n", "phase 5")]
-    [InlineData("jsonata", null, "phase 2")]
-    [InlineData("customapi:X", null, "phase 2")]
+    [InlineData("jsonata", null, "a later phase")]
     public void Parse_DeferredFeature_ThrowsNotSupportedUntilPhase(string feature, string? topLevel, string phase)
     {
         var yaml = OrdersYaml("listOrders");
         yaml = feature switch
         {
             "jsonata" => Mutate(yaml, "ext_name:        $.reference", "ext_name:        { jsonata: \"reference\" }"),
-            "customapi:X" => Mutate(yaml, "binds: RetrieveMultiple", "binds: customapi:X"),
             _ => yaml + topLevel,
         };
         var ex = Assert.Throws<DescriptorException>(() => DescriptorParser.Parse(yaml, "d"));
@@ -124,7 +122,7 @@ public class ParserTests
     [Fact]
     public void Parse_RawBody_PlaceholdersBecomeBindings()
     {
-        var yaml = Mutate(OrdersYaml("updateOrder"), "    template:\n      customer: { ref: { col: ext_customerref } }\n      lines:    { col: ext_lines_json, format: json }\n      totals:   { gross: { col: ext_total } }\n",
+        var yaml = Mutate(OrdersYaml("updateOrder"), "    template:\n      customer: { ref: { col: ext_customerref } }\n      state:    { code: { col: ext_status, optionset: orderStatus } }\n      lines:    { col: ext_lines_json, format: json }\n      totals:   { gross: { col: ext_total } }\n",
             "    contentType: text/xml\n    raw: \"<o><c>{{ col.ext_customerref }}</c><id>{{ context.correlationId }}</id></o>\"\n");
         var body = DescriptorParser.Parse(yaml, "d").Request.Body!;
         Assert.Equal("text/xml", body.ContentType);

@@ -1,4 +1,5 @@
-"""Phase 1 acceptance: the CLAUDE.md "done when" criteria, through the Dataverse Web API as the az CLI user.
+"""Orders acceptance: the CLAUDE.md phase 1 "done when" criteria plus the phase 2 descriptor features
+(8: option set writes, 9: ext_lines_json read back), through the Dataverse Web API as the az CLI user.
 
 Exits non-zero on the first failed assertion. Each line prints the Dataverse request ID of the call;
 error assertions also print the BrokerForge correlation ID from the message.
@@ -84,20 +85,24 @@ def main():
     expected_total = int(first["ext_name"].split("-")[1]) * 10.5
     check(2, body.get("ext_total") == expected_total, f"retrieve returns decimal ext_total {body.get('ext_total')} (expected {expected_total})", h)
 
-    # 3. Create, then read it back.
-    status, body, h = call("POST", "ext_orders", {"ext_customerref": "CUST-ACCEPT", "ext_lines_json": '[{"sku":"A","qty":2}]', "ext_total": 12.5}, name="create")
+    # 3. Create, then read it back. The option set is written as the source value (phase 2, D-21).
+    status, body, h = call("POST", "ext_orders", {"ext_customerref": "CUST-ACCEPT", "ext_lines_json": '[{"sku":"A","qty":2}]', "ext_total": 12.5,
+                                                 "ext_status": 100000001}, name="create")
     entity_id = re.search(r"\(([0-9a-f-]{36})\)", h.get("OData-EntityId", "") or "")
     check(3, status == 204 and entity_id is not None, f"create returns 204 with OData-EntityId {h.get('OData-EntityId')}", h)
     new_id = entity_id.group(1)
-    status, body, h = call("GET", f"ext_orders({new_id})?$select=ext_name,ext_customerref,ext_total", name="retrieve")
+    status, body, h = call("GET", f"ext_orders({new_id})?$select=ext_name,ext_customerref,ext_total,ext_status,ext_lines_json", name="retrieve")
     check(3, status == 200 and body.get("ext_customerref") == "CUST-ACCEPT" and body.get("ext_total") == 12.5,
           f"created order reads back as {body.get('ext_name')} / {body.get('ext_customerref')} / {body.get('ext_total')}", h)
+    check(8, body.get("ext_status") == 100000001, f"option set written on create reads back as {body.get('ext_status')} (shipped)", h)
+    check(9, body.get("ext_lines_json") == '[{"sku":"A","qty":2}]', f"ext_lines_json reads back as {body.get('ext_lines_json')}", h)
 
-    # 4. Update one column.
-    status, body, h = call("PATCH", f"ext_orders({new_id})", {"ext_customerref": "CUST-UPDATED"}, name="update")
+    # 4. Update a column and the option set.
+    status, body, h = call("PATCH", f"ext_orders({new_id})", {"ext_customerref": "CUST-UPDATED", "ext_status": 100000002}, name="update")
     check(4, status == 204, f"update returns HTTP {status}", h)
-    status, body, h = call("GET", f"ext_orders({new_id})?$select=ext_customerref", name="retrieve")
+    status, body, h = call("GET", f"ext_orders({new_id})?$select=ext_customerref,ext_status", name="retrieve")
     check(4, body.get("ext_customerref") == "CUST-UPDATED", f"after update ext_customerref is {body.get('ext_customerref')}", h)
+    check(8, body.get("ext_status") == 100000002, f"option set written on update reads back as {body.get('ext_status')} (cancelled)", h)
 
     # 5. Delete, then the record is gone.
     status, body, h = call("DELETE", f"ext_orders({new_id})", name="delete")
@@ -130,7 +135,7 @@ def main():
         values = sorted(values)
         p95 = values[min(len(values) - 1, int(round(0.95 * (len(values) - 1))))]
         print(f"  {name:22} n={len(values):2}  median {statistics.median(values):7.0f}  p95 {p95:7.0f}  max {values[-1]:7.0f}")
-    print("\nall phase 1 acceptance assertions passed")
+    print("\nall Orders acceptance assertions passed")
 
 
 if __name__ == "__main__":

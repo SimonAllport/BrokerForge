@@ -10,7 +10,7 @@ namespace BrokerForge.Descriptors.Parsing;
 
 /// <summary>
 /// Strict descriptor parser (descriptor spec 1-8). Walks the YAML representation model so every
-/// error names the YAML path. Unknown keys are errors; features outside phase 1 are rejected by name.
+/// error names the YAML path. Unknown keys are errors; features not yet delivered are rejected by name.
 /// Structural rules that need the whole descriptor are in <see cref="Validation.DescriptorValidator"/>.
 /// </summary>
 public static partial class DescriptorParser
@@ -26,7 +26,7 @@ public static partial class DescriptorParser
             ["filter"] = new[] { "ops" },
             ["sort"] = new[] { "descFormat" },
             ["paging"] = new[] { "max" },
-            ["col"] = new[] { "alwaysSend" },
+            ["col"] = new[] { "alwaysSend", "optionset" },
         };
         private static readonly HashSet<string> Methods = new() { "GET", "POST", "PUT", "PATCH", "DELETE" };
         private static readonly HashSet<string> OpNames = new() { Ops.Eq, Ops.Ne, Ops.Gt, Ops.Ge, Ops.Lt, Ops.Le, Ops.In, Ops.Like };
@@ -37,6 +37,14 @@ public static partial class DescriptorParser
 
         [GeneratedRegex(@"^[a-z][A-Za-z0-9]*$")]
         private static partial Regex CamelCaseRegex();
+
+        [GeneratedRegex(@"^[a-z][a-z0-9]*_[A-Za-z][A-Za-z0-9_]*$")]
+        private static partial Regex UniqueNameRegex();
+
+        [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9_]*$")]
+        private static partial Regex ParamNameRegex();
+
+        private bool _customApi;
 
         private DescriptorException Fail(string path, string message) => new(source, path, message);
 
@@ -57,7 +65,7 @@ public static partial class DescriptorParser
                 throw Fail("", "a descriptor file holds exactly one YAML document");
 
             var root = Mapping(stream.Documents[0].RootNode, "");
-            foreach (var (key, phase) in new[] { ("steps", "phase 2"), ("hook", "phase 2"), ("cache", "phase 5") })
+            foreach (var (key, phase) in new[] { ("steps", "a later phase"), ("hook", "a later phase"), ("cache", "phase 5") })
                 if (Get(root, key) != null)
                     throw Fail(key, $"`{key}` is not supported until {phase}");
             OnlyKeys(root, "", "operation", "version", "binds", "table", "request", "response", "paging", "errors", "retry", "optionsets", "filters", "sortStable");
@@ -69,10 +77,19 @@ public static partial class DescriptorParser
             if (version < 1)
                 throw Fail("version", "version must be 1 or more");
             var binds = RequiredScalar(root, "", "binds");
-            if (binds.StartsWith("customapi:", StringComparison.Ordinal))
-                throw Fail("binds", "Custom API operations (`customapi:`) are not supported until phase 2");
-            if (!CrudMessages.Contains(binds))
-                throw Fail("binds", $"binds must be one of {string.Join(", ", CrudMessages)}; got `{binds}`");
+            if (binds.StartsWith(OperationDescriptor.CustomApiPrefix, StringComparison.Ordinal))
+            {
+                var unique = binds[OperationDescriptor.CustomApiPrefix.Length..];
+                if (!UniqueNameRegex().IsMatch(unique))
+                    throw Fail("binds", $"`{unique}` is not a Custom API unique name with a publisher prefix, such as ext_SubmitOrder");
+                if (Get(root, "table") != null)
+                    throw Fail("table", "a Custom API descriptor has no table; unbound Custom APIs only (HLD D-19)");
+                _customApi = true;
+            }
+            else if (!CrudMessages.Contains(binds))
+            {
+                throw Fail("binds", $"binds must be one of {string.Join(", ", CrudMessages)} or customapi:<UniqueName>; got `{binds}`");
+            }
 
             return new OperationDescriptor(
                 operation,
@@ -190,10 +207,10 @@ public static partial class DescriptorParser
                     ? $"a binding needs exactly one source key ({string.Join(", ", SourceKeys.Take(10))}); found none"
                     : $"a binding needs exactly one source key; found {string.Join(", ", sources)}");
             var src = sources[0];
-            if (src == "param")
-                throw Fail(path, "`param` bindings (Custom APIs) are not supported until phase 2");
             if (src == "step")
-                throw Fail(path, "`step` bindings are not supported until phase 2");
+                throw Fail(path, "`step` bindings are not supported until a later phase");
+            if (src == "id" && _customApi)
+                throw Fail(path, "`id` is not available in a Custom API descriptor: only unbound Custom APIs are supported (HLD D-19)");
 
             var allowed = ModifierKeys.Append(src).Concat(SourceExtras.GetValueOrDefault(src, Array.Empty<string>())).ToArray();
             OnlyKeys(m, path, allowed);
@@ -218,7 +235,13 @@ public static partial class DescriptorParser
                 case "context": return new ContextBinding(Scalar(value, vp), mods);
                 case "computed": return new ComputedBinding(Scalar(value, vp), mods);
                 case "col":
-                    return new ColBinding(Scalar(value, vp), Get(m, "alwaysSend") is { } a && Bool(a, Join(path, "alwaysSend")), mods);
+                    return new ColBinding(Scalar(value, vp), Get(m, "alwaysSend") is { } a && Bool(a, Join(path, "alwaysSend")), mods,
+                        Get(m, "optionset") is { } os ? Scalar(os, Join(path, "optionset")) : null);
+                case "param":
+                    var param = Scalar(value, vp);
+                    if (!ParamNameRegex().IsMatch(param))
+                        throw Fail(vp, $"`{param}` is not a valid Custom API parameter name");
+                    return new ParamBinding(param, mods);
                 case "id":
                     var id = Scalar(value, vp);
                     return new IdBinding(id == "true" ? null : id, mods);
@@ -245,9 +268,7 @@ public static partial class DescriptorParser
 
         private ResponseSpec ReadResponse(YamlMappingNode m, string path)
         {
-            if (Get(m, "outputs") != null)
-                throw Fail(Join(path, "outputs"), "`outputs` (Custom APIs) is not supported until phase 2");
-            OnlyKeys(m, path, "rows", "key", "map", "unmapped");
+            OnlyKeys(m, path, "rows", "key", "map", "unmapped", "outputs");
             var rows = OptionalScalar(m, "rows");
             if (rows != null)
                 CheckJsonPath(rows, Join(path, "rows"));
@@ -281,39 +302,47 @@ public static partial class DescriptorParser
                 }
             }
 
-            var map = new Dictionary<string, MapEntry>();
-            if (Get(m, "map") is { } mapNode)
-            {
-                var mp = Join(path, "map");
-                foreach (var (k, v) in Mapping(mapNode, mp).Children)
-                {
-                    var col = Scalar(k, mp);
-                    var ep = Join(mp, col);
-                    if (v is YamlScalarNode)
-                    {
-                        map[col] = new MapEntry(CheckJsonPath(Scalar(v, ep), ep), null, false);
-                        continue;
-                    }
-                    var em = Mapping(v, ep);
-                    if (Get(em, "jsonata") != null)
-                        throw Fail(ep, "`jsonata` transforms are not supported until phase 2");
-                    OnlyKeys(em, ep, "path", "type", "optional");
-                    var type = OptionalScalar(em, "type");
-                    if (type == "money")
-                        throw Fail(Join(ep, "type"), "type money is not available: virtual tables cannot have Money columns (HLD 15); map amounts with type decimal");
-                    if (type != null && !MapEntry.Types.Contains(type) && !type.StartsWith("optionset:", StringComparison.Ordinal))
-                        throw Fail(Join(ep, "type"), $"type must be one of {string.Join(", ", MapEntry.Types)} or optionset:<map>; got `{type}`");
-                    map[col] = new MapEntry(
-                        CheckJsonPath(RequiredScalar(em, ep, "path"), Join(ep, "path")),
-                        type,
-                        Get(em, "optional") is { } opt && Bool(opt, Join(ep, "optional")));
-                }
-            }
-
             var unmapped = Get(m, "unmapped") is { } u
                 ? Sequence(u, Join(path, "unmapped")).Select((n, i) => Scalar(n, $"{path}.unmapped[{i}]")).ToList()
                 : new List<string>();
-            return new ResponseSpec(rows, key, map, unmapped);
+            return new ResponseSpec(rows, key, ReadEntries(m, path, "map", outputs: false), unmapped, ReadEntries(m, path, "outputs", outputs: true));
+        }
+
+        /// <summary><c>response.map</c> (column to entry) or <c>response.outputs</c> (output parameter to entry).</summary>
+        private Dictionary<string, MapEntry> ReadEntries(YamlMappingNode m, string path, string key, bool outputs)
+        {
+            var entries = new Dictionary<string, MapEntry>();
+            if (Get(m, key) is not { } node)
+                return entries;
+            var mp = Join(path, key);
+            foreach (var (k, v) in Mapping(node, mp).Children)
+            {
+                var name = Scalar(k, mp);
+                var ep = Join(mp, name);
+                if (outputs && !ParamNameRegex().IsMatch(name))
+                    throw Fail(ep, $"`{name}` is not a valid Custom API parameter name");
+                if (v is YamlScalarNode)
+                {
+                    entries[name] = new MapEntry(CheckJsonPath(Scalar(v, ep), ep), null, false);
+                    continue;
+                }
+                var em = Mapping(v, ep);
+                if (Get(em, "jsonata") != null)
+                    throw Fail(ep, "`jsonata` transforms are not supported until a later phase");
+                OnlyKeys(em, ep, "path", "type", "optional");
+                var type = OptionalScalar(em, "type");
+                if (type == "money")
+                    throw Fail(Join(ep, "type"), "type money is not available: virtual tables cannot have Money columns (HLD 15); map amounts with type decimal");
+                if (outputs && type != null && !MapEntry.OutputTypes.Contains(type))
+                    throw Fail(Join(ep, "type"), $"an output's type must be one of {string.Join(", ", MapEntry.OutputTypes)}; got `{type}`");
+                if (type != null && !MapEntry.Types.Contains(type) && !type.StartsWith("optionset:", StringComparison.Ordinal))
+                    throw Fail(Join(ep, "type"), $"type must be one of {string.Join(", ", MapEntry.Types)} or optionset:<map>; got `{type}`");
+                entries[name] = new MapEntry(
+                    CheckJsonPath(RequiredScalar(em, ep, "path"), Join(ep, "path")),
+                    type,
+                    Get(em, "optional") is { } opt && Bool(opt, Join(ep, "optional")));
+            }
+            return entries;
         }
 
         private PagingSpec ReadPaging(YamlMappingNode m, string path)

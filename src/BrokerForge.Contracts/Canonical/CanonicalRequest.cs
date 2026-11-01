@@ -12,8 +12,10 @@ namespace BrokerForge.Contracts
     {
         [DataMember(Name = "correlationId", EmitDefaultValue = false)] public string CorrelationId { get; set; }
         [DataMember(Name = "environmentId", EmitDefaultValue = false)] public string EnvironmentId { get; set; }
+        /// <summary>Null for an unbound Custom API: the host finds the instance from the descriptor that binds it (D-18).</summary>
         [DataMember(Name = "serviceInstance", EmitDefaultValue = false)] public string ServiceInstance { get; set; }
         [DataMember(Name = "table", EmitDefaultValue = false)] public string Table { get; set; }
+        /// <summary>A virtual table message, or the Custom API unique name.</summary>
         [DataMember(Name = "message", EmitDefaultValue = false)] public string Message { get; set; }
         [DataMember(Name = "caller", EmitDefaultValue = false)] public CallerContext Caller { get; set; }
         [DataMember(Name = "query", EmitDefaultValue = false)] public CanonicalQuery Query { get; set; }
@@ -21,6 +23,9 @@ namespace BrokerForge.Contracts
         [DataMember(Name = "id", EmitDefaultValue = false)] public string Id { get; set; }
         /// <summary>Create: all supplied columns. Update: changed columns only.</summary>
         [DataMember(Name = "record", EmitDefaultValue = false)] public List<Cell> Record { get; set; }
+
+        /// <summary>Custom API input parameters, one cell per parameter with the name in <see cref="Cell.Col"/> (D-18).</summary>
+        [DataMember(Name = "inputs", EmitDefaultValue = false)] public List<Cell> Inputs { get; set; }
     }
 
     [DataContract]

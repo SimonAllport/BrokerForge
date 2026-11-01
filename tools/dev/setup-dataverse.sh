@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Phase 1: sign the plug-in and register the provider and ext_order virtual table (see setup_dataverse.py).
+# Sign the plug-in and register the BrokerForge core components (see setup_dataverse.py). Source tables
+# and Custom APIs come from tools/dev/generate.sh.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # The timestamp server is occasionally unreachable; retry before giving up.

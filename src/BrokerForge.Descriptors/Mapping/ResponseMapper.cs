@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -16,6 +17,9 @@ namespace BrokerForge.Descriptors.Mapping;
 public static class ResponseMapper
 {
     private static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(250);
+
+    // `json` cells are read by people in a memo column, so keep them compact and unescaped.
+    private static readonly JsonSerializerOptions JsonCell = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public static IReadOnlyList<MappedRow> MapRows(OperationDescriptor d, BrokerResult r, KeyKind keyKind, string correlationId)
     {
@@ -50,6 +54,17 @@ public static class ResponseMapper
                 throw Fail($"row {i} at {rowsPath} is not an object");
             return new MappedRow(ReadKey(response.Key, row, keyKind, Fail), MapCells(d, response, row, Fail));
         }).ToList();
+    }
+
+    /// <summary>A Custom API's output cells (descriptor spec 6), in declaration order. A missing output is a <see cref="MappingException"/> unless optional.</summary>
+    public static List<Cell> MapOutputs(OperationDescriptor d, BrokerResult r, string correlationId)
+    {
+        MappingException Fail(string message) => new($"{message} (operation {d.Operation}).", correlationId);
+        var outputs = d.Response?.Outputs ?? new Dictionary<string, MapEntry>();
+        if (outputs.Count == 0)
+            return new List<Cell>();
+        var root = Json.Parse(r.Body, Fail);
+        return outputs.Select(o => Entry(d, $"output {o.Key}", o.Key, o.Value, root, "the source response", Fail)).ToList();
     }
 
     /// <summary>The scalar at a JSONPath in a response body (paging next-cursor and totals), or null when missing or JSON null.</summary>
@@ -118,27 +133,29 @@ public static class ResponseMapper
 
     private static List<Cell> MapCells(OperationDescriptor d, ResponseSpec response, JsonNode row, Func<string, MappingException> fail)
     {
-        var cells = new List<Cell>(response.Map.Count);
-        foreach (var (col, entry) in response.Map)
-        {
-            var matches = Json.Select(row, entry.Path);
-            if (matches.Count == 0 && !entry.Optional)
-                throw fail($"column {col}: path {entry.Path} is missing from the source row (mark it optional: true if the source omits it)");
-            if (matches.Count > 1)
-                throw fail($"column {col}: path {entry.Path} matched {matches.Count} values; expected one");
-            var node = matches.Count == 0 ? null : matches[0];
-            cells.Add(Coerce(d, col, entry, node, fail));
-        }
-        return cells;
+        return response.Map.Select(m => Entry(d, $"column {m.Key}", m.Key, m.Value, row, "the source row", fail)).ToList();
     }
 
-    private static Cell Coerce(OperationDescriptor d, string col, MapEntry entry, JsonNode? node, Func<string, MappingException> fail)
+    /// <summary>One map or outputs entry. <paramref name="what"/> names it in errors ("column ext_x", "output X").</summary>
+    private static Cell Entry(OperationDescriptor d, string what, string name, MapEntry entry, JsonNode? root, string where, Func<string, MappingException> fail)
+    {
+        var matches = Json.Select(root, entry.Path);
+        if (matches.Count == 0 && !entry.Optional)
+            throw fail($"{what}: path {entry.Path} is missing from {where} (mark it optional: true if the source omits it)");
+        if (matches.Count > 1)
+            throw fail($"{what}: path {entry.Path} matched {matches.Count} values; expected one");
+        return Coerce(d, what, name, entry, matches.Count == 0 ? null : matches[0], fail);
+    }
+
+    private static Cell Coerce(OperationDescriptor d, string what, string col, MapEntry entry, JsonNode? node, Func<string, MappingException> fail)
     {
         var setName = entry.OptionSetName;
+        if (entry.Type == MapEntry.JsonType)
+            return new Cell { Col = col, Type = CellTypes.String, Value = node?.ToJsonString(JsonCell) };
         var cellType = setName != null ? CellTypes.OptionSet : entry.Type ?? CellTypes.String;
         if (node == null)
             return new Cell { Col = col, Type = cellType, Value = null };
-        MappingException Bad(string expected) => fail($"column {col}: value at {entry.Path} is not {expected}");
+        MappingException Bad(string expected) => fail($"{what}: value at {entry.Path} is not {expected}");
 
         if (node is not JsonValue)
             throw Bad("a scalar");
@@ -160,7 +177,7 @@ public static class ResponseMapper
                 : throw Bad("a date"),
             CellTypes.Guid => Guid.TryParse(text, out var g) ? g.ToString("D") : throw Bad("a GUID"),
             CellTypes.OptionSet => OptionValue(d, setName!, text, col, entry, fail),
-            _ => throw fail($"column {col}: unknown type {entry.Type}"),
+            _ => throw fail($"{what}: unknown type {entry.Type}"),
         };
         return new Cell { Col = col, Type = cellType, Value = value };
     }

@@ -33,7 +33,7 @@ VAULT="$(sed -n 2p <<< "$base")"
 echo "== secrets in $VAULT (generated once, never printed)"
 secret_file="$(mktemp)"
 trap 'rm -f "$secret_file"' EXIT
-for name in orders-api-key page-token-key; do
+for name in orders-api-key inventory-api-key page-token-key; do
   if az keyvault secret show --vault-name "$VAULT" -n "$name" --query id -o tsv >/dev/null 2>&1; then
     echo "   $name exists"
     continue
@@ -72,12 +72,14 @@ DEV_HOST_URL=$HOST_URL
 IMAGE_TAG=$TAG
 IDS_EOF
 
-echo "== waiting for $HOST_URL/healthz on image $TAG alone"
-# Healthy is not enough: the outgoing revision keeps answering until it is deactivated (phase 1 findings 5 and 8).
+echo "== waiting for $HOST_URL/healthz, and for host and mock to run image $TAG alone"
+# Healthy is not enough: the outgoing revision keeps answering until it is deactivated (phase 1 findings 5 and 8,
+# phase 2 finding 6 for the mock).
+active() { az containerapp revision list -g "$RG" -n "$1" --query "[?properties.active].properties.template.containers[0].image" -o tsv | sort -u; }
 for attempt in $(seq 1 30); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "$HOST_URL/healthz" || true)"
-  images="$(az containerapp revision list -g "$RG" -n bf-dev-host --query "[?properties.active].properties.template.containers[0].image" -o tsv | sort -u)"
-  if [ "$code" = 200 ] && [ "$images" = "$SERVER/brokerforge-host:$TAG" ]; then
+  if [ "$code" = 200 ] && [ "$(active bf-dev-host)" = "$SERVER/brokerforge-host:$TAG" ] \
+     && [ "$(active bf-dev-orders-mock)" = "$SERVER/brokerforge-orders-mock:$TAG" ]; then
     echo "healthy: $HOST_URL (ids in $OUT)"
     exit 0
   fi

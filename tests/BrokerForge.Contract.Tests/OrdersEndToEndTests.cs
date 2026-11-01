@@ -128,15 +128,45 @@ public class OrdersEndToEndTests(MockApiFixture mock) : HostTestBase(mock)
     {
         var update = HostFactory.Request("ext_order", Messages.Update);
         update.Id = Id("ord_0002");
-        update.Record = new() { Cell("ext_customerref", "CUST-99"), Cell("ext_status", "100000001", CellTypes.OptionSet) };
+        update.Record = new() { Cell("ext_customerref", "CUST-99"), Cell("ext_placed", "2026-01-01T00:00:00.0000000Z", CellTypes.DateTime) };
         var (status, _, error) = await Host.Execute(update);
         Assert.Equal(400, status);
         Assert.Equal("Validation", error!.Error);
-        Assert.Contains("ext_status", error.Message);
+        Assert.Contains("ext_placed", error.Message);
 
         var get = HostFactory.Request("ext_order", Messages.Retrieve);
         get.Id = update.Id;
         Assert.Equal("CUST-02", Value((await Host.Execute(get)).Response!.Record, "ext_customerref"));
+    }
+
+    [Fact]
+    public async Task Update_OptionSet_WrittenAsSourceValue()
+    {
+        var update = HostFactory.Request("ext_order", Messages.Update);
+        update.Id = Id("ord_0002");
+        update.Record = new() { Cell("ext_status", "100000002", CellTypes.OptionSet) };
+        Assert.Equal(200, (await Host.Execute(update)).Status);
+
+        var get = HostFactory.Request("ext_order", Messages.Retrieve);
+        get.Id = update.Id;
+        var record = (await Host.Execute(get)).Response!.Record;
+        Assert.Equal("100000002", Value(record, "ext_status"));
+        Assert.Equal("""[{"sku":"SKU-02","qty":3}]""", Value(record, "ext_lines_json"));
+    }
+
+    [Fact]
+    public async Task Create_OptionSetAndLines_ReadBack()
+    {
+        var create = HostFactory.Request("ext_order", Messages.Create);
+        create.Record = new() { Cell("ext_customerref", "CUST-78"), Cell("ext_status", "100000001", CellTypes.OptionSet), Cell("ext_lines_json", """[{"sku":"A","qty":2}]""") };
+        var (status, created, _) = await Host.Execute(create);
+        Assert.Equal(200, status);
+
+        var get = HostFactory.Request("ext_order", Messages.Retrieve);
+        get.Id = created!.Id;
+        var record = (await Host.Execute(get)).Response!.Record;
+        Assert.Equal("100000001", Value(record, "ext_status"));
+        Assert.Equal("""[{"sku":"A","qty":2}]""", Value(record, "ext_lines_json"));
     }
 
     [Fact]

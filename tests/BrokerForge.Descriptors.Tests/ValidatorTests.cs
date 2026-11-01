@@ -196,7 +196,7 @@ public class ValidatorTests
     [Fact]
     public void Rule12_SecretInRawBody_Rejected()
     {
-        var yaml = Mutate(OrdersYaml("updateOrder"), "    template:\n      customer: { ref: { col: ext_customerref } }\n      lines:    { col: ext_lines_json, format: json }\n      totals:   { gross: { col: ext_total } }\n",
+        var yaml = Mutate(OrdersYaml("updateOrder"), "    template:\n      customer: { ref: { col: ext_customerref } }\n      state:    { code: { col: ext_status, optionset: orderStatus } }\n      lines:    { col: ext_lines_json, format: json }\n      totals:   { gross: { col: ext_total } }\n",
             "    contentType: text/xml\n    raw: \"<k>{{ secret.partnerKey }}</k>\"\n");
         AssertRule(12, Validate(yaml), "request.body.raw");
     }

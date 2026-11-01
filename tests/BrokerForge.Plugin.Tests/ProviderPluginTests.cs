@@ -33,11 +33,12 @@ public class ProviderPluginTests
         protected override object Invoke(MethodInfo? method, object?[]? args) => _handler(method!, args!);
     }
 
-    /// <summary>Answers every POST with one status and body, and counts the calls.</summary>
-    private sealed class StubHost : IDisposable
+    /// <summary>Answers every POST with one status and body, counts the calls and keeps the last request body.</summary>
+    internal sealed class StubHost : IDisposable
     {
         private readonly HttpListener _listener = new();
         public int Calls;
+        public string? LastBody;
         public string Url { get; }
 
         public StubHost(int status, string body)
@@ -53,6 +54,8 @@ public class ProviderPluginTests
                     HttpListenerContext ctx;
                     try { ctx = await _listener.GetContextAsync(); }
                     catch (Exception) { return; }
+                    using (var reader = new StreamReader(ctx.Request.InputStream))
+                        LastBody = await reader.ReadToEndAsync();
                     Interlocked.Increment(ref Calls);
                     ctx.Response.StatusCode = status;
                     var bytes = Encoding.UTF8.GetBytes(body);
@@ -74,7 +77,7 @@ public class ProviderPluginTests
         public void Dispose() => _listener.Close();
     }
 
-    private static IManagedIdentityService Identity(Exception? fails = null) =>
+    internal static IManagedIdentityService Identity(Exception? fails = null) =>
         Fake<IManagedIdentityService>.With((_, _) => fails != null ? throw fails : "test-token");
 
     private static IServiceProvider Services(string hostUrl, string message, ParameterCollection inputs)

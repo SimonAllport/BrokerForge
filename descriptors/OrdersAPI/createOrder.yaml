@@ -12,12 +12,15 @@ request:
   body:
     template:
       customer: { ref: { col: ext_customerref } }
+      state:    { code: { col: ext_status, optionset: orderStatus } }
       lines:    { col: ext_lines_json, format: json }
       totals:   { gross: { col: ext_total } }
       placedBy: { context: userObjectId }
 response:
   key: $.id
-  unmapped: [ext_name, ext_status, ext_placed]
+  unmapped: [ext_name, ext_placed]
+optionsets:
+  orderStatus: { open: 100000000, shipped: 100000001, cancelled: 100000002 }
 errors:
   409: Conflict
   422: { exception: Validation, message: $.error.detail }
