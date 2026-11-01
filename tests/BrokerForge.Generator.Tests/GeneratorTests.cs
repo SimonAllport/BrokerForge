@@ -157,6 +157,44 @@ public class GeneratorTests
         Assert.Contains("Reason", ex.Message);
     }
 
+    [Theory]
+    [InlineData("bindingtype", 1, "bindingtype")]
+    [InlineData("isfunction", true, "isfunction")]
+    public async Task Generate_CustomApiShapeChanged_Refuses(string key, object value, string named)
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        fake.SetCustomApi("ext_AdjustStock", key, JsonValue.Create(value)!);
+        var before = fake.Writes.Count();
+        var ex = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema()));
+        Assert.Contains("ext_AdjustStock", ex.Message);
+        Assert.Contains(named, ex.Message);
+        Assert.Equal(before, fake.Writes.Count());
+    }
+
+    [Fact]
+    public async Task Generate_PlatformDroppedProvider_RerunSaysDeleteByHand()
+    {
+        var fake = new FakeDataverse { DropProviderOnCreate = true };
+        var first = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema()));
+        Assert.Contains("delete ext_item by hand", first.Message);
+        var again = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema()));
+        Assert.Contains("DataProviderId", again.Message);
+        Assert.Contains("delete ext_item by hand", again.Message);
+    }
+
+    [Fact]
+    public async Task Generate_QuoteInInstanceName_EscapedInFilters()
+    {
+        var fake = new FakeDataverse();
+        var options = Options with { Instance = "Inventory'API" };
+        await Run(fake, Schema(), options);
+        Assert.Contains(fake.Requests, r => r.Method == "GET" && r.Path.Contains("bf_serviceinstance eq 'Inventory''API'"));
+        var before = fake.Writes.Count();
+        await Run(fake, Schema(), options);
+        Assert.Equal(before, fake.Writes.Count());
+    }
+
     [Fact]
     public async Task Generate_PlatformDroppedProvider_Fails()
     {

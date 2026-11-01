@@ -12,4 +12,7 @@
     <ProjectReference Include="..\..\src\BrokerForge.Schema\BrokerForge.Schema.csproj" />
     <ProjectReference Include="..\..\src\BrokerForge.Descriptors\BrokerForge.Descriptors.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SwaggerForge.Tests" />
+  </ItemGroup>
 </Project>

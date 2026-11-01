@@ -37,6 +37,9 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             d["bf_serviceinstance"] = instance;
     }
 
+    public void SetCustomApi(string uniqueName, string key, JsonNode value) =>
+        _customApis.Single(a => (string)a["uniquename"]! == uniqueName)[key] = value;
+
     public void RemoveAttribute(string table, string logical) => _attributes[table].RemoveAll(a => (string)a["LogicalName"]! == logical);
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -56,7 +59,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
 
     private static HttpResponseMessage Status(HttpStatusCode status) => new(status);
 
-    [GeneratedRegex(@"eq '([^']+)'")]
+    [GeneratedRegex(@"eq '((?:[^']|'')+)'")]
     private static partial Regex Quoted();
 
     [GeneratedRegex(@"^EntityDefinitions\(LogicalName='([^']+)'\)(.*)$")]
@@ -64,7 +67,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
 
     private HttpResponseMessage Route(string method, string path, JsonObject? body)
     {
-        var name = Quoted().Match(path) is { Success: true } q ? q.Groups[1].Value : null;
+        var name = Quoted().Match(path) is { Success: true } q ? q.Groups[1].Value.Replace("''", "'") : null;
         switch (method, path)
         {
             case ("GET", _) when path.StartsWith("entitydataproviders?"):

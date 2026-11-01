@@ -18,6 +18,9 @@ public sealed class DataverseClient(HttpClient http, Func<CancellationToken, Tas
 
     public bool DryRun => dryRun;
 
+    /// <summary>An OData string literal for a $filter: quotes doubled, then percent-encoded so &amp;, # and + survive the query string.</summary>
+    public static string Literal(string value) => "'" + Uri.EscapeDataString(value.Replace("'", "''")) + "'";
+
     /// <summary>"METHOD path" for each write made (or planned, in a dry run).</summary>
     public IReadOnlyList<string> Writes => _writes;
 

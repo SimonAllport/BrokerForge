@@ -83,6 +83,30 @@ public class SchemaParserTests
     }
 
     [Fact]
+    public void SchemaParser_ColumnPrefixDiffersFromTable_Refused()
+    {
+        var ex = Assert.Throws<SchemaException>(() => SchemaParser.Parse(OrdersSchemaYaml.Replace("ext_customerref:", "abc_customerref:"), "OrdersAPI.yaml"));
+        Assert.Equal("columns.abc_customerref", ex.YamlPath);
+        Assert.Contains("prefix ext_", ex.Message);
+    }
+
+    [Fact]
+    public void SchemaParser_CustomApiPrefixDiffersFromTable_Refused()
+    {
+        var ex = Assert.Throws<SchemaException>(() => SchemaParser.Parse(OrdersSchemaYaml + "customApis:\n  abc_Submit: { displayName: Submit }\n", "OrdersAPI.yaml"));
+        Assert.Equal("customApis.abc_Submit", ex.YamlPath);
+        Assert.Contains("prefix ext_", ex.Message);
+    }
+
+    [Fact]
+    public void SchemaParser_CustomApiPrefixesDiffer_Refused()
+    {
+        var ex = Assert.Throws<SchemaException>(() => SchemaParser.Parse("customApis:\n  ext_A: { displayName: A }\n  abc_B: { displayName: B }\n", "s.yaml"));
+        Assert.Equal("customApis.abc_B", ex.YamlPath);
+        Assert.Contains("prefix ext_", ex.Message);
+    }
+
+    [Fact]
     public void SchemaParser_CustomApiParamType_Checked()
     {
         var ex = Assert.Throws<SchemaException>(() => SchemaParser.Parse("customApis:\n  ext_X:\n    displayName: X\n    inputs: { A: { type: optionset } }\n", "s.yaml"));

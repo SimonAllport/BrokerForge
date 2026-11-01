@@ -11,13 +11,15 @@ public static class CustomApiGenerator
     public static async Task<ExistingCustomApi?> ReadAsync(DataverseClient client, string uniqueName, CancellationToken ct)
     {
         var rows = await client.ListAsync(
-            $"customapis?$select=customapiid,uniquename,_plugintypeid_value&$filter=uniquename eq '{uniqueName}'" +
+            $"customapis?$select=customapiid,uniquename,bindingtype,isfunction,_plugintypeid_value&$filter=uniquename eq {DataverseClient.Literal(uniqueName)}" +
             "&$expand=CustomAPIRequestParameters($select=uniquename,type,isoptional),CustomAPIResponseProperties($select=uniquename,type)", ct);
         if (rows.Count == 0)
             return null;
         var api = rows[0];
         return new ExistingCustomApi(
             (string?)api["_plugintypeid_value"] ?? "(none)",
+            (int?)api["bindingtype"] ?? -1,
+            (bool?)api["isfunction"] ?? false,
             api["CustomAPIRequestParameters"]!.AsArray().ToDictionary(p => (string)p!["uniquename"]!, p => ((int)p!["type"]!, (bool)p["isoptional"]!)),
             api["CustomAPIResponseProperties"]!.AsArray().ToDictionary(p => (string)p!["uniquename"]!, p => (int)p!["type"]!));
     }

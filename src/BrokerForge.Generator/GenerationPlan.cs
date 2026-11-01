@@ -22,7 +22,7 @@ public sealed record ExistingColumn(string LogicalName, string Type, string? Ext
 
 public sealed record ExistingTable(string? TableType, string? DataProviderId, string? DataSourceId, string? ExternalName, IReadOnlyList<ExistingColumn> Columns);
 
-public sealed record ExistingCustomApi(string PluginTypeId, IReadOnlyDictionary<string, (int Type, bool Optional)> Inputs, IReadOnlyDictionary<string, int> Outputs);
+public sealed record ExistingCustomApi(string PluginTypeId, int BindingType, bool IsFunction, IReadOnlyDictionary<string, (int Type, bool Optional)> Inputs, IReadOnlyDictionary<string, int> Outputs);
 
 /// <summary>
 /// Compares the schema with what exists. The generator only adds: a changed column, a column the schema no
@@ -52,9 +52,9 @@ public static class GenerationPlan
             else
             {
                 if (table.TableType != "Virtual")
-                    differences.Add($"{name} exists as a {table.TableType ?? "(unknown)"} table, not a virtual table");
+                    differences.Add($"{name} exists as a {table.TableType ?? "(unknown)"} table, not a virtual table; {DeleteByHand(name)}");
                 if (!SameId(table.DataProviderId, providerId))
-                    differences.Add($"{name} DataProviderId is {table.DataProviderId ?? "(none)"}, not the BrokerForge provider {providerId}");
+                    differences.Add($"{name} DataProviderId is {table.DataProviderId ?? "(none)"}, not the BrokerForge provider {providerId}; {DeleteByHand(name)}");
                 if (dataSourceId == null)
                     differences.Add($"{name} exists and uses data source {table.DataSourceId ?? "(none)"}, but no bf_brokerdatasource record has bf_serviceinstance = {instance}; creating one would leave the table pointing elsewhere");
                 else if (!SameId(table.DataSourceId, dataSourceId))
@@ -86,6 +86,11 @@ public static class GenerationPlan
             }
             if (customApiPluginTypeId != null && !SameId(actual.PluginTypeId, customApiPluginTypeId))
                 differences.Add($"Custom API {api} runs plug-in type {actual.PluginTypeId}, not BrokerForge.Plugin.CustomApiPlugin {customApiPluginTypeId}");
+            // The generator creates unbound actions only (HLD D-19).
+            if (actual.BindingType != 0)
+                differences.Add($"Custom API {api} has bindingtype {actual.BindingType} in Dataverse; the schema's APIs are unbound (0)");
+            if (actual.IsFunction)
+                differences.Add($"Custom API {api} has isfunction true in Dataverse; the schema's APIs are actions (false)");
             var wantedInputs = declared.Inputs.ToDictionary(i => i.Key, i => (ParamTypeCodes[i.Value.Type], !i.Value.Required));
             differences.AddRange(CompareSets($"Custom API {api} input", wantedInputs, actual.Inputs, v => $"type {v.Item1}{(v.Item2 ? ", optional" : ", required")}"));
             var wantedOutputs = declared.Outputs.ToDictionary(o => o.Key, o => ParamTypeCodes[o.Value]);
@@ -122,6 +127,10 @@ public static class GenerationPlan
         foreach (var name in actual.Keys.Where(n => !wanted.ContainsKey(n)))
             yield return $"{what} {name} is in Dataverse but not in the schema";
     }
+
+    /// <summary>The generator never deletes or re-points a table, so a table the platform created wrongly has to go by hand.</summary>
+    public static string DeleteByHand(string table) =>
+        $"delete {table} by hand (Power Apps, or DELETE EntityDefinitions(LogicalName='{table}')) and run generate again";
 
     public static bool SameId(string? a, string? b) => a != null && b != null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 }

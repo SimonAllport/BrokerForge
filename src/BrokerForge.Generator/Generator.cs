@@ -16,14 +16,14 @@ public static class Generator
     public static async Task<GenerationResult> RunAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, CancellationToken ct)
     {
         // ---- read ----
-        var provider = (await client.ListAsync($"entitydataproviders?$select=entitydataproviderid&$filter=name eq '{ProviderName}'", ct)).FirstOrDefault();
+        var provider = (await client.ListAsync($"entitydataproviders?$select=entitydataproviderid&$filter=name eq {DataverseClient.Literal(ProviderName)}", ct)).FirstOrDefault();
         var refusals = new List<string>();
         if (provider == null)
             refusals.Add($"the {ProviderName} data provider is not registered; run {Setup} (core) first");
         string? pluginTypeId = null;
         if (schema.CustomApis.Count > 0)
         {
-            pluginTypeId = (string?)(await client.ListAsync($"plugintypes?$select=plugintypeid&$filter=typename eq '{CustomApiGenerator.PluginTypeName}'", ct)).FirstOrDefault()?["plugintypeid"];
+            pluginTypeId = (string?)(await client.ListAsync($"plugintypes?$select=plugintypeid&$filter=typename eq {DataverseClient.Literal(CustomApiGenerator.PluginTypeName)}", ct)).FirstOrDefault()?["plugintypeid"];
             if (pluginTypeId == null)
                 refusals.Add($"plug-in type {CustomApiGenerator.PluginTypeName} is not registered; run {Setup} (core) first");
         }
@@ -31,15 +31,16 @@ public static class Generator
             throw new GenerationRefusedException(refusals);
         var providerId = (string)provider!["entitydataproviderid"]!;
 
-        var publisher = (await client.ListAsync($"publishers?$select=publisherid,customizationprefix&$filter=uniquename eq '{o.Publisher}'", ct)).FirstOrDefault();
-        var solution = (await client.ListAsync($"solutions?$select=solutionid&$filter=uniquename eq '{o.Solution}'", ct)).FirstOrDefault();
+        var publisher = (await client.ListAsync($"publishers?$select=publisherid,customizationprefix&$filter=uniquename eq {DataverseClient.Literal(o.Publisher)}", ct)).FirstOrDefault();
+        var solution = (await client.ListAsync($"solutions?$select=solutionid&$filter=uniquename eq {DataverseClient.Literal(o.Solution)}", ct)).FirstOrDefault();
         var dataSource = schema.Table == null ? null
-            : (await client.ListAsync($"bf_brokerdatasources?$select=bf_brokerdatasourceid,bf_hosturl,bf_scope&$filter=bf_serviceinstance eq '{o.Instance}'", ct)).FirstOrDefault();
+            : (await client.ListAsync($"bf_brokerdatasources?$select=bf_brokerdatasourceid,bf_hosturl,bf_scope&$filter=bf_serviceinstance eq {DataverseClient.Literal(o.Instance)}", ct)).FirstOrDefault();
         var table = schema.Table == null ? null : await TableGenerator.ReadAsync(client, schema, ct);
         var apis = new Dictionary<string, ExistingCustomApi?>();
         foreach (var api in schema.CustomApis.Keys)
             apis[api] = await CustomApiGenerator.ReadAsync(client, api, ct);
 
+        // The schema parser holds every table, column and Custom API name to one prefix, so one name gives it.
         var prefix = (schema.Table ?? schema.CustomApis.Keys.First()).Split('_')[0];
         var plan = GenerationPlan.Compare(schema, table, apis, providerId, (string?)dataSource?["bf_brokerdatasourceid"], pluginTypeId, o.Instance);
         var differences = plan.Differences.ToList();
@@ -57,7 +58,7 @@ public static class Generator
         if (solution == null)
         {
             var publisherId = (string?)publisher?["publisherid"]
-                ?? (string?)(await ListAfterWrite(client, $"publishers?$select=publisherid&$filter=uniquename eq '{o.Publisher}'", ct))?["publisherid"] ?? "(new publisher)";
+                ?? (string?)(await ListAfterWrite(client, $"publishers?$select=publisherid&$filter=uniquename eq {DataverseClient.Literal(o.Publisher)}", ct))?["publisherid"] ?? "(new publisher)";
             await client.WriteAsync(HttpMethod.Post, "solutions", new JsonObject
             {
                 ["uniquename"] = o.Solution, ["friendlyname"] = o.Solution, ["version"] = "1.0.0.0", ["publisherid@odata.bind"] = $"/publishers({publisherId})",
@@ -119,7 +120,7 @@ public static class Generator
         if ((string?)table?["TableType"] != "Virtual")
             problems.Add($"{schema.Table} TableType is {(string?)table?["TableType"] ?? "(missing)"} after create, not Virtual (HLD 15)");
         if (!GenerationPlan.SameId((string?)table?["DataProviderId"], providerId))
-            problems.Add($"{schema.Table} DataProviderId is {(string?)table?["DataProviderId"] ?? "(none)"} after create: the platform dropped the provider (HLD 15)");
+            problems.Add($"{schema.Table} DataProviderId is {(string?)table?["DataProviderId"] ?? "(none)"} after create: the platform dropped the provider (HLD 15); {GenerationPlan.DeleteByHand(schema.Table!)}");
         if (!GenerationPlan.SameId((string?)table?["DataSourceId"], dataSourceId))
             problems.Add($"{schema.Table} DataSourceId is {(string?)table?["DataSourceId"] ?? "(none)"} after create, expected {dataSourceId} (HLD 15)");
         if (problems.Count > 0)

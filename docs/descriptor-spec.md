@@ -432,6 +432,7 @@ Rules:
 - Unknown keys are an error, as in descriptors.
 - Column types: `string` (needs `maxLength`), `memo`, `int`, `decimal` (needs `precision`), `bool`, `datetime`, `date`, `optionset` (needs `options`). `money` is refused (HLD D-15). The primary key column `<table>id` is implicit and is not listed.
 - `primaryName` must name a `string` column.
+- Every column and Custom API name uses the same prefix as the table (with no table, as the first Custom API). The generator creates a source under one publisher, so one prefix covers it.
 - Option values are integers; the option labels match the source values used in the descriptors' option set maps.
 - Custom API parameter and output types: `string`, `int`, `decimal`, `bool`, `datetime`, `guid`. Inputs default to `required: false`.
 - `customApis` and `table` are both optional, but a file must declare at least one of them.
