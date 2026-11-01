@@ -37,6 +37,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
     private readonly string _mockBaseUrl;
     private readonly int _timeoutSeconds;
     private readonly IReadOnlyDictionary<string, string?> _extra;
+    private readonly Action<IServiceCollection>? _services;
     private readonly string _descriptors;
     private readonly string _schemas;
 
@@ -45,8 +46,10 @@ public sealed class HostFactory : WebApplicationFactory<Program>
     /// <param name="timeoutSeconds">The host's request budget. Generous by default so a cold first call is not a timeout;
     /// the timeout test passes a short one under <see cref="MockApiFixture.SlowMs"/>.</param>
     /// <param name="extra">Settings added after the defaults; a null value removes a default.</param>
-    public HostFactory(string mockBaseUrl, int timeoutSeconds = 30, IReadOnlyDictionary<string, string?>? extra = null)
+    /// <param name="services">Service replacements applied after the host's own registrations.</param>
+    public HostFactory(string mockBaseUrl, int timeoutSeconds = 30, IReadOnlyDictionary<string, string?>? extra = null, Action<IServiceCollection>? services = null)
     {
+        _services = services;
         _mockBaseUrl = mockBaseUrl;
         _timeoutSeconds = timeoutSeconds;
         _extra = extra ?? new Dictionary<string, string?>();
@@ -121,12 +124,15 @@ public sealed class HostFactory : WebApplicationFactory<Program>
         builder.ConfigureAppConfiguration(c => c.AddInMemoryCollection(settings));
         builder.ConfigureLogging(l => l.AddProvider(new CaptureLoggerProvider(Logs)));
         builder.ConfigureTestServices(services =>
+        {
             services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, o =>
             {
                 var config = new OpenIdConnectConfiguration { Issuer = Issuer };
                 config.SigningKeys.Add(SigningKey);
                 o.ConfigurationManager = new StaticConfigurationManager<OpenIdConnectConfiguration>(config);
-            }));
+            });
+            _services?.Invoke(services);
+        });
     }
 
     public static string Issuer => $"https://login.microsoftonline.com/{Tenant}/v2.0";

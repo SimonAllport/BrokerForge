@@ -117,9 +117,11 @@ public sealed class RequestRouter(HostConfigStore config, IEnumerable<IAuthProvi
     {
         var broker = _brokers.GetValueOrDefault(instance.BrokerType)
             ?? throw new ConfigurationException($"No adapter is registered for broker type {instance.BrokerType}.");
-        var provider = _providers.GetValueOrDefault(instance.Auth.Mode)
-            ?? throw new ConfigurationException($"No authentication provider is registered for mode {instance.Auth.Mode}.");
-        return (broker, await provider.AuthenticateAsync(instance, request.Caller ?? new CallerContext(), correlationId, ct));
+        var caller = request.Caller ?? new CallerContext();
+        var effective = AuthSelector.Select(instance, caller);
+        var provider = _providers.GetValueOrDefault(effective.Auth.Mode)
+            ?? throw new ConfigurationException($"No authentication provider is registered for mode {effective.Auth.Mode}.");
+        return (broker, await provider.AuthenticateAsync(effective, caller, correlationId, ct));
     }
 
     private static ExternalKey? DecodeId(CanonicalRequest request, IKeyStrategy keys)

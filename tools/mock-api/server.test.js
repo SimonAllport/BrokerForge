@@ -418,3 +418,12 @@ test('entra: expired, unknown oid or wrong key is 401', async () => {
   const other = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   assert.equal((await tk('GET', '/tk/v1/tickets', { auth: 'Bearer ' + entraToken({ oid: ENTRA.aliceOid }, other.privateKey) })).status, 401);
 });
+
+test('tickets: /__tk/stats counts data requests, including refused ones', async () => {
+  const stats = async () => (await call('GET', '/__tk/stats')).json.dataRequests;
+  assert.equal(await stats(), 0);
+  await tk('GET', '/tk/v1/tickets');
+  await tk('GET', '/tk/v1/tickets', { auth: basic('alice', TK.alice) });
+  assert.equal(await stats(), 2);
+  assert.equal((await call('GET', '/__tk/stats', { key: null })).status, 401);
+});

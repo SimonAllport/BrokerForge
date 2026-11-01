@@ -30,7 +30,9 @@ let nextTicket;
 let codes; // code -> { user, redirectUri, challenge, scope, expires }
 let accessTokens; // token -> { user, expires }
 let refreshTokens; // token -> { user, scope }
+let dataRequests; // every /tk/v1 request, refused or not, so tests can prove nothing reached the source
 function resetTickets() {
+  dataRequests = 0;
   tickets = [];
   for (let i = 1; i <= 12; i++) {
     tickets.push({
@@ -193,6 +195,7 @@ async function ticketsRoute(req, res, url, { send, readBody, parseJson, intParam
     return true;
   }
 
+  dataRequests++;
   const user = await caller(req);
   if (!user) { send(res, 401, { error: 'unauthorized' }, { 'www-authenticate': 'Bearer' }); return true; }
 
@@ -230,4 +233,4 @@ async function ticketsRoute(req, res, url, { send, readBody, parseJson, intParam
   throw new HttpError(404, `no route for ${m} ${p}`);
 }
 
-module.exports = { tickets: ticketsRoute, resetTickets };
+module.exports = { tickets: ticketsRoute, resetTickets, ticketStats: () => ({ dataRequests }) };

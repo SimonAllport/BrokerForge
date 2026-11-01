@@ -6,7 +6,7 @@
 const http = require('node:http');
 const { seed, pad } = require('./data');
 const { inventory, resetInventory } = require('./inventory');
-const { tickets, resetTickets } = require('./tickets');
+const { tickets, resetTickets, ticketStats } = require('./tickets');
 
 const API_KEY = process.env.MOCK_API_KEY;
 if (!API_KEY) {
@@ -132,6 +132,7 @@ async function route(req, res) {
   let match;
 
   if (m === 'POST' && p === '/__reset') { reset(); return send(res, 204); }
+  if (m === 'GET' && p === '/__tk/stats') return send(res, 200, ticketStats());
 
   if (p.startsWith('/v2/echo/')) {
     const headers = { ...req.headers };
