@@ -65,6 +65,7 @@ public class CustomApiTests(MockApiFixture mock) : HostTestBase(mock)
         Assert.Equal("Validation", error!.Error);
         Assert.Contains("Count", error.Message);
         Assert.Contains("int", error.Message);
+        Assert.DoesNotContain(value, error.Message);
     }
 
     [Fact]

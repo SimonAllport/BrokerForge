@@ -71,7 +71,8 @@ namespace BrokerForge.Plugin.Translation
                 default:
                     throw new MappingException(string.Format("Output {0} has type {1}, which a Custom API output cannot take.", cell.Col, cell.Type ?? "(none)"), correlationId);
             }
-            throw new MappingException(string.Format("Output {0} value `{1}` is not a valid {2}.", cell.Col, cell.Value, cell.Type), correlationId);
+            // The value is not echoed: an output may be sensitive (CLAUDE.md principle 4).
+            throw new MappingException(string.Format("Output {0} is not a valid {1}.", cell.Col, cell.Type), correlationId);
         }
     }
 }

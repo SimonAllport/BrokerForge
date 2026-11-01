@@ -74,4 +74,14 @@ public class SchemaRuleTests
         var yaml = Mutate(OrdersYaml("deleteOrder"), "table: ext_order", "table: ext_shipment");
         Assert.Contains(Validate(yaml), e => e.Rule == 7 && e.YamlPath == "table");
     }
+
+    [Fact]
+    public void Rule7_CustomApiInputNeverSent_Rejected()
+    {
+        var schema = SchemaParser.Parse("customApis:\n  ext_SubmitOrder:\n    displayName: S\n    inputs: { OrderId: { type: string, required: true }, Reason: { type: string }, NotifyCustomer: { type: bool }, Extra: { type: string } }\n    outputs: { SubmittedAt: datetime, Status: string }\n", "s.yaml");
+        var errors = DescriptorValidator.Validate(DescriptorParser.Parse(CustomApiFeatureTests.SubmitOrder, "t"), NoAuthNames, schema);
+        var error = Assert.Single(errors);
+        Assert.Equal(7, error.Rule);
+        Assert.Contains("Extra", error.Message);
+    }
 }

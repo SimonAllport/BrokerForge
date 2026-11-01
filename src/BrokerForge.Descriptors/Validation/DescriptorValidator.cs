@@ -182,9 +182,18 @@ public static partial class DescriptorValidator
             rule7("binds", $"Custom API `{api}` is not declared under customApis in the schema");
             return;
         }
+        var sent = new HashSet<string>();
         foreach (var (path, binding) in Bindings(d.Request))
-            if (binding is ParamBinding p && !declared.Inputs.ContainsKey(p.Name))
-                rule7(path, $"parameter `{p.Name}` is not an input of {api} in the schema");
+            if (binding is ParamBinding p)
+            {
+                sent.Add(p.Name);
+                if (!declared.Inputs.ContainsKey(p.Name))
+                    rule7(path, $"parameter `{p.Name}` is not an input of {api} in the schema");
+            }
+        // An input the request never sends would be accepted and dropped while the call reports success.
+        var unsent = declared.Inputs.Keys.Where(i => !sent.Contains(i)).ToList();
+        if (unsent.Count > 0)
+            rule7("request", $"input(s) {string.Join(", ", unsent.Select(i => $"`{i}`"))} of {api} are declared in the schema but no `param` binding sends them");
         var outputs = d.Response?.Outputs ?? new Dictionary<string, MapEntry>();
         foreach (var (name, entry) in outputs)
             if (!declared.Outputs.TryGetValue(name, out var type))

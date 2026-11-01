@@ -159,4 +159,15 @@ public class DrafterTests
         Assert.Equal("ext_name", schema.PrimaryName);
         Assert.Equal(new PathKey("$.id"), Descriptor(r, "getWidget").Response!.Key);
     }
+
+    [Fact]
+    public void Draft_AwkwardPropertyNames_BracketPathOrSkippedWithNote()
+    {
+        var r = Orders(t => t.Replace("        id: { type: string }\n        reference:", "        id: { type: string }\n        unit-price: { type: number }\n        café: { type: string }\n        reference:"));
+        var list = Descriptor(r, "listOrders");
+        Assert.Equal("$['unit-price']", list.Response!.Map["ext_unitprice"].Path);
+        Assert.DoesNotContain(list.Response.Map.Keys, k => k.Contains('é'));
+        Assert.Contains(r.Notes, n => n.Contains("café"));
+        Assert.Empty(r.Skipped);
+    }
 }

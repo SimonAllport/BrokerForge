@@ -89,7 +89,8 @@ public sealed class RequestRouter(HostConfigStore config, IEnumerable<IAuthProvi
             if (!schema.Inputs.TryGetValue(cell.Col, out var declared))
                 throw Invalid($"Custom API {api} has no input {cell.Col}.");
             if (cell.Value != null && (cell.Type != declared.Type || !Parses(declared.Type, cell.Value)))
-                throw Invalid($"Input {cell.Col} of {api} must be {declared.Type}; got {cell.Type ?? "(no type)"} `{cell.Value}`.");
+                // The value is not echoed: an input may be sensitive, and this message reaches logs (CLAUDE.md principle 4).
+                throw Invalid($"Input {cell.Col} of {api} must be {declared.Type}; got {(cell.Type == declared.Type ? "a value that is not a valid " + declared.Type : cell.Type ?? "no type")}.");
         }
         foreach (var (param, declared) in schema.Inputs)
             if (declared.Required && inputs.GetValueOrDefault(param)?.Value == null)

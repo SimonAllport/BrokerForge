@@ -24,9 +24,28 @@ internal static class Heuristics
     public static string Pascal(string name) =>
         string.Concat(Words(name).Select(w => char.ToUpperInvariant(w[0]) + w[1..]));
 
-    /// <summary>The column logical name: prefix, underscore, then the letters and digits of the source name, lower case.</summary>
+    /// <summary>The column logical name: prefix, underscore, then the ASCII letters and digits of the source name, lower case.</summary>
     public static string Column(string prefix, string name) =>
-        prefix + "_" + new string(name.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+        prefix + "_" + new string(name.Where(char.IsAsciiLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+    /// <summary>A name Dataverse can carry: ASCII letters, digits and separators only, with at least one letter.</summary>
+    public static bool Representable(string name) =>
+        name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or ' ' or '.') && name.Any(char.IsAsciiLetter);
+
+    /// <summary>A JSONPath member step: <c>.name</c> for identifiers, otherwise <c>['name']</c> (RFC 9535 escaping).</summary>
+    public static string Step(string name) =>
+        name.Length > 0 && (char.IsAsciiLetter(name[0]) || name[0] == '_') && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_')
+            ? "." + name
+            : "['" + name.Replace("\\", "\\\\").Replace("'", "\\'") + "']";
+
+    /// <summary>A Custom API parameter name, or an unsupported-shape refusal when the source name cannot become one.</summary>
+    public static string ParamName(string name, string where)
+    {
+        var pascal = Pascal(name);
+        return pascal.Length > 0 && char.IsAsciiLetter(pascal[0]) && pascal.All(char.IsAsciiLetterOrDigit)
+            ? pascal
+            : throw new UnsupportedShapeException($"{where} `{name}` cannot become a Custom API parameter name");
+    }
 
     private static List<string> Words(string name)
     {

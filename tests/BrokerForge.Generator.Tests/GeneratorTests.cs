@@ -167,6 +167,19 @@ public class GeneratorTests
     }
 
     [Fact]
+    public async Task Generate_TableExistsButNoDataSourceRecord_Refuses()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        fake.RenameDataSources("Renamed");
+        var before = fake.Writes.Count();
+        var ex = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema()));
+        Assert.Contains("bf_serviceinstance", ex.Message);
+        Assert.Contains("InventoryAPI", ex.Message);
+        Assert.Equal(before, fake.Writes.Count());
+    }
+
+    [Fact]
     public async Task Generate_DryRun_NoWrites()
     {
         var fake = new FakeDataverse();

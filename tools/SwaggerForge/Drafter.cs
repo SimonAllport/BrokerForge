@@ -137,6 +137,11 @@ public static class Drafter
             var fields = new List<Field>();
             void Add(string property, OpenApiSchema s, string sourcePath, string display, bool required, string? parent)
             {
+                if (!Heuristics.Representable(property) || (parent != null && !Heuristics.Representable(parent)))
+                {
+                    _notes.Add($"Property {sourcePath} has characters a Dataverse column name cannot hold; it is not drafted.");
+                    return;
+                }
                 var column = Heuristics.Column(o.Prefix, parent + property);
                 if (fields.Any(f => f.Column == column))
                 {
@@ -174,7 +179,7 @@ public static class Drafter
                 var required = item.Required.Contains(name);
                 if (Heuristics.IsScalar(s) || s.Type == "array")
                 {
-                    Add(name, s, $"$.{name}", Heuristics.Humanise(name), required, null);
+                    Add(name, s, "$" + Heuristics.Step(name), Heuristics.Humanise(name), required, null);
                     continue;
                 }
                 if (s.Type != "object")
@@ -185,7 +190,7 @@ public static class Drafter
                 foreach (var (childName, child) in s.Properties)
                 {
                     if (Heuristics.IsScalar(child) || child.Type == "array")
-                        Add(childName, child, $"$.{name}.{childName}", $"{Heuristics.Humanise(name)} {Heuristics.Humanise(childName).ToLowerInvariant()}",
+                        Add(childName, child, "$" + Heuristics.Step(name) + Heuristics.Step(childName), $"{Heuristics.Humanise(name)} {Heuristics.Humanise(childName).ToLowerInvariant()}",
                             required && s.Required.Contains(childName), name);
                     else
                         _notes.Add($"Property $.{name}.{childName} is nested more than one level; it is not drafted.");
@@ -303,7 +308,7 @@ public static class Drafter
                 return ("$[*]", s.Items, null);
             var arrays = s.Properties?.Where(p => p.Value.Type == "array" && p.Value.Items != null).ToList() ?? new();
             if (s.Type == "object" && arrays.Count == 1)
-                return ($"$.{arrays[0].Key}[*]", arrays[0].Value.Items, arrays[0].Key);
+                return ("$" + Heuristics.Step(arrays[0].Key) + "[*]", arrays[0].Value.Items, arrays[0].Key);
             throw new UnsupportedShapeException("the list response is not an array or an object with exactly one array property");
         }
 
@@ -320,8 +325,8 @@ public static class Drafter
 
             var cursorField = response.Properties?.Where(p => p.Key != container)
                 .SelectMany(p => p.Value.Type == "object"
-                    ? p.Value.Properties.Select(c => (Path: $"$.{p.Key}.{c.Key}", Name: c.Key, Schema: c.Value))
-                    : new[] { (Path: $"$.{p.Key}", Name: p.Key, Schema: p.Value) })
+                    ? p.Value.Properties.Select(c => (Path: "$" + Heuristics.Step(p.Key) + Heuristics.Step(c.Key), Name: c.Key, Schema: c.Value))
+                    : new[] { (Path: "$" + Heuristics.Step(p.Key), Name: p.Key, Schema: p.Value) })
                 .FirstOrDefault(f => f.Schema.Type == "string" && f.Name.Contains("cursor", StringComparison.OrdinalIgnoreCase));
             var total = response.Properties?.TryGetValue("total", out var t) == true && t.Type == "integer";
 
@@ -472,7 +477,7 @@ public static class Drafter
             {
                 if (s == null || !Heuristics.IsScalar(s))
                     throw new UnsupportedShapeException($"{where} is not a scalar, so it cannot be a Custom API parameter");
-                var declared = inputs.Map(Heuristics.Pascal(param)).Add("type", Heuristics.ParamType(s));
+                var declared = inputs.Map(Heuristics.ParamName(param, where)).Add("type", Heuristics.ParamType(s));
                 if (required)
                     declared.Add("required", true);
             }
@@ -485,11 +490,11 @@ public static class Drafter
                 {
                     case ParameterLocation.Path:
                         Input(p.Name, p.Schema, true, $"path parameter {p.Name}");
-                        pathParams.Map(p.Name).Add("param", Heuristics.Pascal(p.Name));
+                        pathParams.Map(p.Name).Add("param", Heuristics.ParamName(p.Name, "path parameter"));
                         break;
                     case ParameterLocation.Query:
                         Input(p.Name, p.Schema, p.Required, $"query parameter {p.Name}");
-                        query.Map(p.Name).Add("param", Heuristics.Pascal(p.Name));
+                        query.Map(p.Name).Add("param", Heuristics.ParamName(p.Name, "query parameter"));
                         break;
                     default:
                         throw new UnsupportedShapeException($"{p.In} parameter {p.Name} has no binding in a Custom API draft");
@@ -507,7 +512,7 @@ public static class Drafter
                 foreach (var (prop, s) in body.Properties)
                 {
                     Input(prop, s, body.Required.Contains(prop), $"body property {prop}");
-                    template.Map(prop).Add("param", Heuristics.Pascal(prop));
+                    template.Map(prop).Add("param", Heuristics.ParamName(prop, "body property"));
                 }
                 request.Map("body").Add("template", template);
             }
@@ -522,14 +527,14 @@ public static class Drafter
                     continue;
                 }
                 var type = Heuristics.ParamType(s);
-                var output = Heuristics.Pascal(prop);
+                var output = Heuristics.ParamName(prop, "response property");
                 declaredOutputs.Add(output, type);
                 var required = responseSchema.Required.Contains(prop);
                 if (type == "string" && required)
-                    outputs.Add(output, $"$.{prop}");
+                    outputs.Add(output, "$" + Heuristics.Step(prop));
                 else
                 {
-                    var entry = outputs.Map(output).Add("path", $"$.{prop}");
+                    var entry = outputs.Map(output).Add("path", "$" + Heuristics.Step(prop));
                     if (type != "string")
                         entry.Add("type", type);
                     if (!required)

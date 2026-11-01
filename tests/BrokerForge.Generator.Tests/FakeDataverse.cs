@@ -31,6 +31,12 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
 
     private string NewId() => $"00000000-0000-0000-0000-{++_ids:D12}";
 
+    public void RenameDataSources(string instance)
+    {
+        foreach (var d in _dataSources)
+            d["bf_serviceinstance"] = instance;
+    }
+
     public void RemoveAttribute(string table, string logical) => _attributes[table].RemoveAll(a => (string)a["LogicalName"]! == logical);
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)

@@ -150,6 +150,7 @@ public class CustomApiPluginTests
         var ex = Assert.Throws<MappingException>(() =>
             ParameterTranslator.SetOutputs(new ParameterCollection(), new List<Cell> { new() { Col = "OnHand", Type = type, Value = value } }, "corr-1"));
         Assert.Contains("OnHand", ex.Message);
+        Assert.DoesNotContain(value, ex.Message);
     }
 
     [Fact]

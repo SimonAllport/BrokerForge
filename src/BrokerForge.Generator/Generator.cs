@@ -41,7 +41,7 @@ public static class Generator
             apis[api] = await CustomApiGenerator.ReadAsync(client, api, ct);
 
         var prefix = (schema.Table ?? schema.CustomApis.Keys.First()).Split('_')[0];
-        var plan = GenerationPlan.Compare(schema, table, apis, providerId, (string?)dataSource?["bf_brokerdatasourceid"], pluginTypeId);
+        var plan = GenerationPlan.Compare(schema, table, apis, providerId, (string?)dataSource?["bf_brokerdatasourceid"], pluginTypeId, o.Instance);
         var differences = plan.Differences.ToList();
         if (publisher != null && (string?)publisher["customizationprefix"] is { } existingPrefix && existingPrefix != prefix)
             differences.Add($"publisher {o.Publisher} has prefix {existingPrefix}, but the schema uses {prefix}");

@@ -44,7 +44,17 @@ public static class DraftCommand
             return 1;
         }
 
-        var draft = Drafter.Draft(document, new DraftOptions(instance, prefix, table));
+        DraftResult draft;
+        try
+        {
+            draft = Drafter.Draft(document, new DraftOptions(instance, prefix, table));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Descriptors.Parsing.DescriptorException or Schema.SchemaException)
+        {
+            // A draft that fails its own validation is a SwaggerForge bug: report it, write nothing.
+            output.WriteLine($"{args[0]}: SwaggerForge produced a draft that does not validate, so nothing was written: {ex.Message}");
+            return 1;
+        }
         if (draft.SchemaYaml.Length == 0)
         {
             output.WriteLine($"{args[0]}: nothing could be drafted; see the skipped operations below.");

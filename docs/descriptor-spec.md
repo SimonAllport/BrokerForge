@@ -39,7 +39,7 @@ Unknown keys anywhere are a validation error, not ignored.
 | `Delete` | `id` | nothing |
 | `customapi:<UniqueName>` | Custom API input parameters | `response.outputs` |
 
-A Custom API descriptor has no `table` and no `paging`. Its unique name must be unique across every service instance the host loads; two descriptors binding the same name stop the host at startup. The parameters and their types come from the table schema file's `customApis` block (section 14); every `param` binding must name a declared input, and every declared output must appear in `response.outputs`.
+A Custom API descriptor has no `table` and no `paging`. Its unique name must be unique across every service instance the host loads; two descriptors binding the same name stop the host at startup. The parameters and their types come from the table schema file's `customApis` block (section 14); every `param` binding must name a declared input, every declared input must be sent by a `param` binding (an input nothing sends would be accepted and dropped), and every declared output must appear in `response.outputs`.
 
 ## 3. Value bindings
 

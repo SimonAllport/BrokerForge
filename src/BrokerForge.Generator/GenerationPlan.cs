@@ -39,7 +39,7 @@ public static class GenerationPlan
     public sealed record Result(IReadOnlyList<string> Differences, IReadOnlyList<string> ColumnsToAdd, IReadOnlyList<string> ApisToAdd);
 
     public static Result Compare(SourceSchema schema, ExistingTable? table, IReadOnlyDictionary<string, ExistingCustomApi?> apis,
-        string providerId, string? dataSourceId, string? customApiPluginTypeId)
+        string providerId, string? dataSourceId, string? customApiPluginTypeId, string instance)
     {
         var differences = new List<string>();
         var add = new List<string>();
@@ -55,7 +55,9 @@ public static class GenerationPlan
                     differences.Add($"{name} exists as a {table.TableType ?? "(unknown)"} table, not a virtual table");
                 if (!SameId(table.DataProviderId, providerId))
                     differences.Add($"{name} DataProviderId is {table.DataProviderId ?? "(none)"}, not the BrokerForge provider {providerId}");
-                if (dataSourceId != null && !SameId(table.DataSourceId, dataSourceId))
+                if (dataSourceId == null)
+                    differences.Add($"{name} exists and uses data source {table.DataSourceId ?? "(none)"}, but no bf_brokerdatasource record has bf_serviceinstance = {instance}; creating one would leave the table pointing elsewhere");
+                else if (!SameId(table.DataSourceId, dataSourceId))
                     differences.Add($"{name} DataSourceId is {table.DataSourceId ?? "(none)"}, not the {schema.Table} data source record {dataSourceId}");
                 if (table.ExternalName != schema.ExternalName)
                     differences.Add($"{name} ExternalName is {table.ExternalName ?? "(none)"}, the schema says {schema.ExternalName}");
