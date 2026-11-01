@@ -18,7 +18,7 @@ namespace BrokerForge.Host.Config;
 /// </summary>
 public sealed class HostConfigStore
 {
-    private static readonly HashSet<AuthMode> Phase1Modes = new() { AuthMode.Static, AuthMode.ServiceAccount };
+    private static readonly HashSet<AuthMode> PerUserModes = new() { AuthMode.OAuth, AuthMode.Impersonate, AuthMode.Sso };
     private static readonly HashSet<string> CrudMessages = new() { Messages.Retrieve, Messages.RetrieveMultiple, Messages.Create, Messages.Update, Messages.Delete };
 
     private readonly Dictionary<string, ServiceInstance> _instances = new(StringComparer.Ordinal);
@@ -26,6 +26,8 @@ public sealed class HostConfigStore
     private readonly Dictionary<(string Instance, string Operation), OperationDescriptor> _descriptors = new();
     private readonly Dictionary<string, SourceSchema> _schemas = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ResolvedCustomApi> _customApis = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, OAuthResource> _oauthResources = new(StringComparer.Ordinal);
+    private string? _connectBaseUrl;
 
     public sealed record ResolvedMap(ObjectMap Map, IKeyStrategy Keys);
 
@@ -35,6 +37,8 @@ public sealed class HostConfigStore
     public HostConfigStore(IConfiguration configuration)
     {
         var problems = new List<string>();
+        LoadOAuthResources(configuration.GetSection("OAuthResources"), problems);
+        _connectBaseUrl = configuration["Connect:PublicBaseUrl"]?.TrimEnd('/');
         LoadInstances(configuration.GetSection("Instances"), problems);
         LoadSchemas(configuration["Config:SchemasPath"], problems);
         LoadDescriptors(configuration["Config:DescriptorsPath"], problems);
@@ -52,6 +56,96 @@ public sealed class HostConfigStore
     public OperationDescriptor? Descriptor(string instance, string operation) => _descriptors.GetValueOrDefault((instance, operation));
 
     public ResolvedCustomApi? CustomApi(string uniqueName) => _customApis.GetValueOrDefault(uniqueName);
+
+    /// <summary>A resource an instance names; startup has already checked every name exists.</summary>
+    public OAuthResource OAuthResource(string name) =>
+        _oauthResources.GetValueOrDefault(name) ?? throw new ConfigurationException($"OAuthResources:{name} is not configured.");
+
+    /// <summary>The connect page for an instance (HLD D-26): the connectUrl of its ConnectionRequiredException.</summary>
+    public string ConnectUrl(string instance) =>
+        (_connectBaseUrl ?? throw new ConfigurationException("Connect:PublicBaseUrl is not set.")) + "/connect/" + Uri.EscapeDataString(instance);
+
+    private void LoadOAuthResources(IConfigurationSection section, List<string> problems)
+    {
+        foreach (var s in section.GetChildren())
+        {
+            var o = s.Get<OAuthResourceOptions>() ?? new OAuthResourceOptions();
+            var where = $"OAuthResources:{s.Key}";
+            foreach (var (name, value) in new[] { ("AuthorizeUrl", o.AuthorizeUrl), ("TokenUrl", o.TokenUrl) })
+                if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http"))
+                    problems.Add($"{where}:{name} must be an absolute http(s) URL");
+            if (o.Scopes.Count == 0 || o.Scopes.Any(string.IsNullOrWhiteSpace))
+                problems.Add($"{where}:Scopes needs at least one scope");
+            if (o.UsesConnectApp)
+            {
+                if (o.ClientId != null)
+                    problems.Add($"{where}:ClientId must be absent: UsesConnectApp takes the client from Connect settings");
+                if (o.ClientSecretRef != null)
+                    problems.Add($"{where}:ClientSecretRef must be absent: UsesConnectApp takes the client from Connect settings");
+            }
+            else if (string.IsNullOrWhiteSpace(o.ClientId))
+                problems.Add($"{where}:ClientId is required");
+            if (o.ClientSecretRef != null)
+                try { SecretRef.Parse(o.ClientSecretRef); }
+                catch (FormatException ex) { problems.Add($"{where}: {ex.Message}"); }
+            _oauthResources[s.Key] = new OAuthResource(s.Key, o.AuthorizeUrl, o.TokenUrl, o.Scopes, o.ClientId, o.ClientSecretRef, o.UsesConnectApp);
+        }
+    }
+
+    /// <summary>The per-user settings of one instance (D-28, D-29); <paramref name="where"/> is its Instances:&lt;name&gt; path.</summary>
+    private AuthConfig? PerUserAuth(AuthMode mode, AuthOptions a, string where, List<string> problems)
+    {
+        var path = where + ":Auth";
+        if (!Enum.TryParse<AsyncContext>(a.AsyncContext ?? nameof(AsyncContext.TriggeringUser), out var asyncContext))
+            problems.Add($"{path}:AsyncContext must be TriggeringUser or ServiceIdentity");
+        var perUser = PerUserModes.Contains(mode);
+        if (!perUser)
+        {
+            if (a.AsyncAuth != null || a.AsyncContext != null)
+                problems.Add($"{path}:AsyncContext and AsyncAuth are only for per-user modes; {mode} already runs as one identity");
+            return null;
+        }
+
+        switch (mode)
+        {
+            case AuthMode.OAuth or AuthMode.Impersonate:
+                if (a.OAuthResource == null || !_oauthResources.TryGetValue(a.OAuthResource, out var resource))
+                    problems.Add($"{path}:OAuthResource must name an entry in OAuthResources");
+                else if (resource.UsesConnectApp != (mode == AuthMode.Impersonate))
+                    problems.Add(mode == AuthMode.Impersonate
+                        ? $"{path}:OAuthResource {resource.Name} must set UsesConnectApp: Impersonate is the Entra flow through the connect app"
+                        : $"{path}:OAuthResource {resource.Name} uses the connect app, which is for Impersonate; OAuth needs the source's own client");
+                break;
+            case AuthMode.Sso:
+                if (a.SsoKind is not ("basic" or "apiKeyHeader"))
+                    problems.Add($"{path}:SsoKind must be basic or apiKeyHeader");
+                else if (a.SsoKind == "apiKeyHeader" && string.IsNullOrWhiteSpace(a.HeaderName))
+                    problems.Add($"{path}:HeaderName is required for SsoKind apiKeyHeader");
+                break;
+        }
+        if (_connectBaseUrl == null || !Uri.TryCreate(_connectBaseUrl, UriKind.Absolute, out var connect) || connect.Scheme is not ("https" or "http"))
+            problems.Add($"Connect:PublicBaseUrl must be an absolute http(s) URL: {where} uses {mode}, whose ConnectionRequiredException carries the connect URL");
+
+        if (asyncContext == AsyncContext.ServiceIdentity && a.AsyncAuth == null)
+            problems.Add($"{path}:AsyncAuth is required when AsyncContext is ServiceIdentity");
+        if (asyncContext == AsyncContext.TriggeringUser && a.AsyncAuth != null)
+            problems.Add($"{path}:AsyncAuth is set but AsyncContext is TriggeringUser; set AsyncContext to ServiceIdentity or remove AsyncAuth");
+        if (a.AsyncAuth == null || asyncContext != AsyncContext.ServiceIdentity)
+            return null;
+        var asyncPath = path + ":AsyncAuth";
+        if (!Enum.TryParse<AuthMode>(a.AsyncAuth.Mode, out var asyncMode) || asyncMode is not (AuthMode.ServiceAccount or AuthMode.Static))
+        {
+            problems.Add($"{asyncPath}:Mode must be ServiceAccount or Static");
+            return null;
+        }
+        if (a.AsyncAuth.AsyncAuth != null || a.AsyncAuth.AsyncContext != null)
+            problems.Add($"{asyncPath} cannot have its own AsyncContext or AsyncAuth");
+        if (a.AsyncAuth.SecretRef != null)
+            try { SecretRef.Parse(a.AsyncAuth.SecretRef); }
+            catch (FormatException ex) { problems.Add($"{asyncPath}: {ex.Message}"); }
+        var x = a.AsyncAuth;
+        return new AuthConfig(asyncMode, x.StaticKind, x.HeaderName, x.QueryParam, x.Username, x.SecretRef, x.Scope);
+    }
 
     private void LoadSchemas(string? root, List<string> problems)
     {
@@ -93,15 +187,16 @@ public sealed class HostConfigStore
                 problems.Add($"{where}:Auth:Mode must be one of {string.Join(", ", Enum.GetNames<AuthMode>())}");
                 continue;
             }
-            if (!Phase1Modes.Contains(mode))
-                problems.Add($"{where}:Auth:Mode {mode} is not supported until phase 3");
+            var asyncAuth = PerUserAuth(mode, o.Auth, where, problems);
             foreach (var reference in o.Secrets.Values.Append(o.Auth.SecretRef).Where(r => r != null))
                 try { SecretRef.Parse(reference!); }
                 catch (FormatException ex) { problems.Add($"{where}: {ex.Message}"); }
 
             _instances[s.Key] = new ServiceInstance(
                 s.Key, o.BrokerType, o.BaseUrl.TrimEnd('/'),
-                new AuthConfig(mode, o.Auth.StaticKind, o.Auth.HeaderName, o.Auth.QueryParam, o.Auth.Username, o.Auth.SecretRef, o.Auth.Scope),
+                new AuthConfig(mode, o.Auth.StaticKind, o.Auth.HeaderName, o.Auth.QueryParam, o.Auth.Username, o.Auth.SecretRef, o.Auth.Scope,
+                    o.Auth.OAuthResource, o.Auth.SsoKind,
+                    Enum.TryParse<AsyncContext>(o.Auth.AsyncContext, out var ac) ? ac : AsyncContext.TriggeringUser, asyncAuth),
                 o.Config, o.Secrets);
         }
     }
@@ -222,6 +317,20 @@ public sealed class HostConfigStore
         public string? Username { get; set; }
         public string? SecretRef { get; set; }
         public string? Scope { get; set; }
+        public string? OAuthResource { get; set; }
+        public string? SsoKind { get; set; }
+        public string? AsyncContext { get; set; }
+        public AuthOptions? AsyncAuth { get; set; }
+    }
+
+    private sealed class OAuthResourceOptions
+    {
+        public string AuthorizeUrl { get; set; } = "";
+        public string TokenUrl { get; set; } = "";
+        public List<string> Scopes { get; set; } = new();
+        public string? ClientId { get; set; }
+        public string? ClientSecretRef { get; set; }
+        public bool UsesConnectApp { get; set; }
     }
 
     private sealed class ObjectMapOptions
