@@ -75,7 +75,7 @@ namespace BrokerForge.Plugin
             }
         }
 
-        private static string UserObjectId(IPluginExecutionContext context)
+        internal static string UserObjectId(IPluginExecutionContext context)
         {
             var id = (context as IPluginExecutionContext2)?.InitiatingUserAzureActiveDirectoryObjectId ?? Guid.Empty;
             return id == Guid.Empty ? null : id.ToString();

@@ -12,5 +12,6 @@
     <Compile Include="..\..\src\BrokerForge.Plugin\Translation\*.cs" LinkBase="Plugin" />
     <Compile Include="..\..\src\BrokerForge.Plugin\Transport\*.cs" LinkBase="Plugin" />
     <Compile Include="..\..\src\BrokerForge.Plugin\ProviderPlugin.cs" LinkBase="Plugin" />
+    <Compile Include="..\..\src\BrokerForge.Plugin\CustomApiPlugin.cs" LinkBase="Plugin" />
   </ItemGroup>
 </Project>
