@@ -427,3 +427,16 @@ test('tickets: /__tk/stats counts data requests, including refused ones', async 
   assert.equal(await stats(), 2);
   assert.equal((await call('GET', '/__tk/stats', { key: null })).status, 401);
 });
+
+test('MOCK_APIS=tickets serves only the Tickets API, even with valid keys', async () => {
+  const s = await start({ MOCK_API_KEY: KEY, MOCK_INVENTORY_KEY: INV_KEY, MOCK_APIS: 'tickets', MOCK_TK_CLIENT_SECRET: TK.secret, MOCK_TK_REDIRECT_URIS: TK.redirect });
+  try {
+    const at = (p, headers) => fetch(`http://127.0.0.1:${s.port}${p}`, { method: p === '/__reset' ? 'POST' : 'GET', headers });
+    assert.equal((await at('/v2/orders', { 'x-api-key': KEY })).status, 404);
+    assert.equal((await at(`/inv/v1/items?api_key=${INV_KEY}`)).status, 404);
+    assert.equal((await at('/__reset', { 'x-api-key': KEY })).status, 404);
+    assert.equal((await at('/tk/v1/tickets')).status, 401);
+  } finally {
+    s.proc.kill();
+  }
+});

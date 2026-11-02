@@ -75,14 +75,15 @@ keep="$(mktemp)"
 { printf 'RG=%s\nACR=%s\nVAULT=%s\nDEV_HOST_URL=%s\nIMAGE_TAG=%s\n' "$RG" "$ACR" "$VAULT" "$HOST_URL" "$TAG"; cat "$keep"; } > "$OUT"
 rm -f "$keep"
 
-echo "== waiting for $HOST_URL/healthz, and for host and mock to run image $TAG alone"
+echo "== waiting for $HOST_URL/healthz, and for the host and mocks to run image $TAG alone"
 # Healthy is not enough: the outgoing revision keeps answering until it is deactivated (phase 1 findings 5 and 8,
 # phase 2 finding 6 for the mock).
 active() { az containerapp revision list -g "$RG" -n "$1" --query "[?properties.active].properties.template.containers[0].image" -o tsv | sort -u; }
 for attempt in $(seq 1 30); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "$HOST_URL/healthz" || true)"
   if [ "$code" = 200 ] && [ "$(active bf-dev-host)" = "$SERVER/brokerforge-host:$TAG" ] \
-     && [ "$(active bf-dev-orders-mock)" = "$SERVER/brokerforge-orders-mock:$TAG" ]; then
+     && [ "$(active bf-dev-orders-mock)" = "$SERVER/brokerforge-orders-mock:$TAG" ] \
+     && { [ -z "$CONNECT_APP" ] || [ "$(active bf-dev-tickets-mock)" = "$SERVER/brokerforge-orders-mock:$TAG" ]; }; then
     echo "healthy: $HOST_URL (ids in $OUT)"
     exit 0
   fi

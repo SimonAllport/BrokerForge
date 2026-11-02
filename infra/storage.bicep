@@ -42,9 +42,10 @@ var roles = {
   blobContributor: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 }
 
+// Scoped to the one table and the one container: the host needs nothing else in the account.
 resource tableRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: account
-  name: guid(account.id, hostPrincipalId, 'table')
+  scope: credentials
+  name: guid(credentials.id, hostPrincipalId, 'table')
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.tableContributor)
     principalId: hostPrincipalId

@@ -15,6 +15,9 @@ if (!API_KEY) {
 }
 const INVENTORY_KEY = process.env.MOCK_INVENTORY_KEY;
 const SLOW_MS = Number(process.env.MOCK_SLOW_MS || 5000);
+// Which APIs this process serves (default all). The dev environment runs the Tickets API alone on an external
+// app, because the browser must reach its sign-in page, and Orders and Inventory on an internal one.
+const APIS = new Set((process.env.MOCK_APIS || 'orders,inventory,tickets').split(',').map((a) => a.trim()));
 const SORT_FIELDS = { reference: (o) => o.reference, placedAt: (o) => o.placedAt };
 
 let orders;
@@ -217,8 +220,9 @@ async function route(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://mock');
-    if (await inventory(req, res, url, INVENTORY_KEY, { send, readBody, parseJson, intParam, HttpError })) return;
-    if (await tickets(req, res, url, { send, readBody, parseJson, intParam, HttpError })) return;
+    if (APIS.has('inventory') && await inventory(req, res, url, INVENTORY_KEY, { send, readBody, parseJson, intParam, HttpError })) return;
+    if (APIS.has('tickets') && await tickets(req, res, url, { send, readBody, parseJson, intParam, HttpError })) return;
+    if (!APIS.has('orders')) return send(res, 404, { error: { detail: `no route for ${req.method} ${url.pathname}` } });
     if (req.headers['x-api-key'] !== API_KEY) return send(res, 401, { error: { detail: 'missing or invalid api key' } });
     await route(req, res);
   } catch (e) {

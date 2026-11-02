@@ -1,5 +1,6 @@
-// Container Apps environment, the BrokerForge host and the mock (Orders, Inventory and Tickets APIs). Both are
-// external: the browser must reach the Tickets sign-in page (HLD D-31); every mock data path needs a credential.
+// Container Apps environment, the BrokerForge host and two mocks from one image. The Orders and Inventory mock is
+// internal; the Tickets mock is external, because the browser must reach its sign-in page (HLD D-31), and serves
+// the Tickets API alone (MOCK_APIS), so nothing else of the mock is reachable from outside.
 param location string
 param prefix string
 param identityId string
@@ -45,14 +46,49 @@ var registries = [ { server: registryServer, identity: identityId } ]
 var secretUri = '${vaultUri}secrets'
 // Container Apps names are fixed, so the public URLs are known before the apps exist.
 var hostUrl = 'https://${prefix}-host.${environment.properties.defaultDomain}'
-var mockUrl = 'https://${prefix}-orders-mock.${environment.properties.defaultDomain}'
+var ticketsUrl = 'https://${prefix}-tickets-mock.${environment.properties.defaultDomain}'
 var perUser = !empty(connectClientId)
 var login = az.environment().authentication.loginEndpoint
 var entraUsers = join(filter([ empty(ticketsAliceOid) ? '' : '${ticketsAliceOid}:alice', empty(ticketsBobOid) ? '' : '${ticketsBobOid}:bob' ], u => !empty(u)), ',')
 
-// In-memory state: one replica so creates and deletes are seen by every call.
+// In-memory state: one replica each, so creates and deletes are seen by every call.
 resource mock 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${prefix}-orders-mock'
+  location: location
+  identity: identities
+  properties: {
+    managedEnvironmentId: environment.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: { external: false, targetPort: 8080, transport: 'http' }
+      registries: registries
+      secrets: [
+        { name: 'mock-api-key', keyVaultUrl: '${secretUri}/orders-api-key', identity: identityId }
+        { name: 'inventory-api-key', keyVaultUrl: '${secretUri}/inventory-api-key', identity: identityId }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'mock'
+          image: mockImage
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+          env: [
+            { name: 'PORT', value: '8080' }
+            { name: 'MOCK_APIS', value: 'orders,inventory' }
+            { name: 'MOCK_API_KEY', secretRef: 'mock-api-key' }
+            { name: 'MOCK_INVENTORY_KEY', secretRef: 'inventory-api-key' }
+            { name: 'MOCK_SLOW_MS', value: '100000' }
+          ]
+        }
+      ]
+      scale: { minReplicas: 1, maxReplicas: 1 }
+    }
+  }
+}
+
+resource ticketsMock 'Microsoft.App/containerApps@2024-03-01' = if (perUser) {
+  name: '${prefix}-tickets-mock'
   location: location
   identity: identities
   properties: {
@@ -62,8 +98,8 @@ resource mock 'Microsoft.App/containerApps@2024-03-01' = {
       ingress: { external: true, targetPort: 8080, transport: 'http' }
       registries: registries
       secrets: [
+        // The mock refuses to start without an API key; MOCK_APIS keeps the Orders routes it guards switched off.
         { name: 'mock-api-key', keyVaultUrl: '${secretUri}/orders-api-key', identity: identityId }
-        { name: 'inventory-api-key', keyVaultUrl: '${secretUri}/inventory-api-key', identity: identityId }
         { name: 'tickets-client-secret', keyVaultUrl: '${secretUri}/tickets-client-secret', identity: identityId }
         { name: 'tickets-alice-password', keyVaultUrl: '${secretUri}/tickets-alice-password', identity: identityId }
         { name: 'tickets-bob-password', keyVaultUrl: '${secretUri}/tickets-bob-password', identity: identityId }
@@ -77,9 +113,8 @@ resource mock 'Microsoft.App/containerApps@2024-03-01' = {
           resources: { cpu: json('0.25'), memory: '0.5Gi' }
           env: [
             { name: 'PORT', value: '8080' }
+            { name: 'MOCK_APIS', value: 'tickets' }
             { name: 'MOCK_API_KEY', secretRef: 'mock-api-key' }
-            { name: 'MOCK_INVENTORY_KEY', secretRef: 'inventory-api-key' }
-            { name: 'MOCK_SLOW_MS', value: '100000' }
             { name: 'MOCK_TK_CLIENT_SECRET', secretRef: 'tickets-client-secret' }
             { name: 'MOCK_TK_ALICE_PASSWORD', secretRef: 'tickets-alice-password' }
             { name: 'MOCK_TK_BOB_PASSWORD', secretRef: 'tickets-bob-password' }
@@ -112,8 +147,8 @@ var perUserEnv = [
   { name: 'Credentials__TableEndpoint', value: credentialTableEndpoint }
   { name: 'DataProtection__BlobUri', value: keyRingBlobUri }
   { name: 'DataProtection__KeyId', value: dataProtectionKeyUri }
-  { name: 'OAuthResources__Tickets__AuthorizeUrl', value: '${mockUrl}/tk/oauth/authorize' }
-  { name: 'OAuthResources__Tickets__TokenUrl', value: '${mockUrl}/tk/oauth/token' }
+  { name: 'OAuthResources__Tickets__AuthorizeUrl', value: '${ticketsUrl}/tk/oauth/authorize' }
+  { name: 'OAuthResources__Tickets__TokenUrl', value: '${ticketsUrl}/tk/oauth/token' }
   { name: 'OAuthResources__Tickets__Scopes__0', value: 'tickets.read' }
   { name: 'OAuthResources__Tickets__ClientId', value: 'bf-tickets' }
   { name: 'OAuthResources__Tickets__ClientSecretRef', value: 'kv:${secretUri}/tickets-client-secret' }
@@ -123,7 +158,7 @@ var perUserEnv = [
   { name: 'OAuthResources__Entra__Scopes__1', value: 'offline_access' }
   { name: 'OAuthResources__Entra__UsesConnectApp', value: 'true' }
   { name: '${tickets}BrokerType', value: 'rest' }
-  { name: '${tickets}BaseUrl', value: mockUrl }
+  { name: '${tickets}BaseUrl', value: ticketsUrl }
   { name: '${tickets}Auth__Mode', value: 'OAuth' }
   { name: '${tickets}Auth__OAuthResource', value: 'Tickets' }
   { name: '${ticketMap}ServiceInstance', value: 'TicketsAPI' }
@@ -133,7 +168,7 @@ var perUserEnv = [
   { name: '${ticketMap}Operations__Retrieve', value: 'getTicket' }
   { name: '${ticketMap}Operations__Create', value: 'createTicket' }
   { name: '${entraTickets}BrokerType', value: 'rest' }
-  { name: '${entraTickets}BaseUrl', value: mockUrl }
+  { name: '${entraTickets}BaseUrl', value: ticketsUrl }
   { name: '${entraTickets}Auth__Mode', value: 'Impersonate' }
   { name: '${entraTickets}Auth__OAuthResource', value: 'Entra' }
   { name: '${entraTicketMap}ServiceInstance', value: 'TicketsEntraAPI' }
