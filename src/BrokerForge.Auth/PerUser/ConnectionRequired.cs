@@ -13,5 +13,5 @@ internal static class ConnectionRequired
     public static string User(ServiceInstance instance, CallerContext caller, string correlationId, Func<string, string> connectUrl) =>
         Guid.TryParse(caller.UserObjectId, out var oid)
             ? oid.ToString("D")
-            : throw Because(instance, "the caller has no Entra object ID, so no per-user credential can be found", correlationId, connectUrl);
+            : throw Because(instance, "the caller has no Entra object ID (an impersonated call sends none), so no per-user credential can be used", correlationId, connectUrl);
 }

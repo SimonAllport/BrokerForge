@@ -75,8 +75,17 @@ namespace BrokerForge.Plugin
             }
         }
 
+        /// <summary>
+        /// The initiating user's Entra object ID, or null when the call is impersonated (HLD D-27). Under
+        /// CallerObjectId the platform reports the impersonated user as the initiating user (phase 3 findings 10),
+        /// so the ID is sent only when the authenticated user is that same user. Null makes per-user modes fail
+        /// with ConnectionRequiredException; service account modes do not use it.
+        /// </summary>
         internal static string UserObjectId(IPluginExecutionContext context)
         {
+            var authenticated = (context as IPluginExecutionContext3)?.AuthenticatedUserId ?? Guid.Empty;
+            if (authenticated == Guid.Empty || authenticated != context.InitiatingUserId)
+                return null;
             var id = (context as IPluginExecutionContext2)?.InitiatingUserAzureActiveDirectoryObjectId ?? Guid.Empty;
             return id == Guid.Empty ? null : id.ToString();
         }
