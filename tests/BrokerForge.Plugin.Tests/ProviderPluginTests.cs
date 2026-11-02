@@ -176,7 +176,7 @@ public class ProviderPluginTests
 
     private static readonly Guid Simon = Guid.Parse("11111111-0000-0000-0000-000000000001");
     private static readonly Guid TestMe = Guid.Parse("22222222-0000-0000-0000-000000000002");
-    private static readonly Guid TestMeOid = Guid.Parse("20304250-004f-4652-9c9c-d828fb41441e");
+    private static readonly Guid TestMeOid = Guid.Parse("b0b00000-0000-0000-0000-000000000002");
 
     private static IPluginExecutionContext Caller(Guid authenticated, Guid initiating) =>
         Fake<IPluginExecutionContext6>.WithProperties(new Dictionary<string, object>

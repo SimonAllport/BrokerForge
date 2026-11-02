@@ -5,7 +5,7 @@ Plan: `docs/superpowers/plans/2026-11-01-phase3-per-user-security.md`. Decisions
 The async signal was verified separately on 1 November (`docs/findings/phase3-spike.md`).
 
 Two Entra users took part. User A is Simon (`50b98b16-…`), System Administrator; the mock maps him to `alice`.
-User B is Test Me (`testme@cloudfish.solutions`, `20304250-…`) with Basic User and the "BrokerForge Tickets user"
+User B is a second dev-tenant user (`20304250-…`) with Basic User and the "BrokerForge Tickets user"
 role (6); the mock maps them to `bob`. Two sources share the Tickets mock: `TicketsAPI` (OAuth against the mock's
 own authorisation server, table `ext_ticket`) and `TicketsEntraAPI` (Impersonate with an Entra token for the
 "BrokerForge Tickets mock API (dev)" app, table `ext_entraticket`).
