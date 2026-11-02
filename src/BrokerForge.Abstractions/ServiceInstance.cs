@@ -2,6 +2,9 @@ namespace BrokerForge.Abstractions;
 
 public enum AuthMode { ServiceAccount, Static, Impersonate, Sso, OAuth }
 
+/// <summary>Who an async call runs as (HLD 9.3, D-29): the user who triggered it, or the instance's explicit AsyncAuth.</summary>
+public enum AsyncContext { TriggeringUser, ServiceIdentity }
+
 /// <summary>
 /// One configured connection to a source (HLD 6, bf_serviceinstance). In phase 1 it comes from host
 /// configuration (HLD D-10). It holds secret references, never secret values.
@@ -15,6 +18,9 @@ public sealed record ServiceInstance(
     IReadOnlyDictionary<string, string> Secrets);
 
 /// <summary>
+/// OAuth and Impersonate: <see cref="OAuthResource"/> names an entry in OAuthResources. SSO:
+/// <see cref="SsoKind"/> is basic or apiKeyHeader (with <see cref="HeaderName"/>). <see cref="AsyncAuth"/>
+/// is the ServiceAccount or Static identity async calls use when <see cref="AsyncContext"/> is ServiceIdentity.
 /// Static: <see cref="StaticKind"/> is apiKeyHeader (with <see cref="HeaderName"/>), apiKeyQuery
 /// (with <see cref="QueryParam"/>) or basic (with <see cref="Username"/>); the value comes from
 /// <see cref="SecretRef"/>. ServiceAccount: <see cref="Scope"/> is the token scope.
@@ -26,7 +32,25 @@ public sealed record AuthConfig(
     string? QueryParam = null,
     string? Username = null,
     string? SecretRef = null,
-    string? Scope = null);
+    string? Scope = null,
+    string? OAuthResource = null,
+    string? SsoKind = null,
+    AsyncContext AsyncContext = AsyncContext.TriggeringUser,
+    AuthConfig? AsyncAuth = null);
+
+/// <summary>
+/// An OAuth authorisation server (HLD bf_oauthresource, D-28). With <see cref="UsesConnectApp"/> the client is
+/// the BrokerForge Connect app registration (Impersonate, against Entra), so ClientId and ClientSecretRef are
+/// absent. <see cref="ClientSecretRef"/> is a secret reference, never the value.
+/// </summary>
+public sealed record OAuthResource(
+    string Name,
+    string AuthorizeUrl,
+    string TokenUrl,
+    IReadOnlyList<string> Scopes,
+    string? ClientId,
+    string? ClientSecretRef,
+    bool UsesConnectApp);
 
 /// <summary>Links a virtual table to its operations (HLD 6, bf_objectmap). Operations is keyed by message name.</summary>
 public sealed record ObjectMap(

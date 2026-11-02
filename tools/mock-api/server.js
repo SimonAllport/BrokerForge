@@ -1,10 +1,12 @@
 'use strict';
 // Orders mock API for the BrokerForge contract tests (descriptor spec 13 shapes), plus the Inventory API
-// under /inv/v1 (inventory.js). Node built-ins only. Requires MOCK_API_KEY; every Orders request must send
-// it as X-Api-Key. Inventory requests send MOCK_INVENTORY_KEY as the api_key query parameter instead.
+// under /inv/v1 (inventory.js) and the per-user Tickets API under /tk (tickets.js). Node built-ins only. Requires MOCK_API_KEY; every Orders request must send
+// it as X-Api-Key. Inventory requests send MOCK_INVENTORY_KEY as the api_key query parameter instead;
+// Tickets requests carry a per-user credential (see tickets.js).
 const http = require('node:http');
 const { seed, pad } = require('./data');
 const { inventory, resetInventory } = require('./inventory');
+const { tickets, resetTickets, ticketStats } = require('./tickets');
 
 const API_KEY = process.env.MOCK_API_KEY;
 if (!API_KEY) {
@@ -13,6 +15,9 @@ if (!API_KEY) {
 }
 const INVENTORY_KEY = process.env.MOCK_INVENTORY_KEY;
 const SLOW_MS = Number(process.env.MOCK_SLOW_MS || 5000);
+// Which APIs this process serves (default all). The dev environment runs the Tickets API alone on an external
+// app, because the browser must reach its sign-in page, and Orders and Inventory on an internal one.
+const APIS = new Set((process.env.MOCK_APIS || 'orders,inventory,tickets').split(',').map((a) => a.trim()));
 const SORT_FIELDS = { reference: (o) => o.reference, placedAt: (o) => o.placedAt };
 
 let orders;
@@ -27,6 +32,7 @@ function reset() {
   failed503 = false;
   lastEcho = undefined;
   resetInventory();
+  resetTickets();
 }
 reset();
 
@@ -129,6 +135,7 @@ async function route(req, res) {
   let match;
 
   if (m === 'POST' && p === '/__reset') { reset(); return send(res, 204); }
+  if (m === 'GET' && p === '/__tk/stats') return send(res, 200, ticketStats());
 
   if (p.startsWith('/v2/echo/')) {
     const headers = { ...req.headers };
@@ -213,7 +220,9 @@ async function route(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://mock');
-    if (await inventory(req, res, url, INVENTORY_KEY, { send, readBody, parseJson, intParam, HttpError })) return;
+    if (APIS.has('inventory') && await inventory(req, res, url, INVENTORY_KEY, { send, readBody, parseJson, intParam, HttpError })) return;
+    if (APIS.has('tickets') && await tickets(req, res, url, { send, readBody, parseJson, intParam, HttpError })) return;
+    if (!APIS.has('orders')) return send(res, 404, { error: { detail: `no route for ${req.method} ${url.pathname}` } });
     if (req.headers['x-api-key'] !== API_KEY) return send(res, 401, { error: { detail: 'missing or invalid api key' } });
     await route(req, res);
   } catch (e) {

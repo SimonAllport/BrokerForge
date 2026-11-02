@@ -47,7 +47,13 @@ public static partial class ExecuteEndpoint
             return Results.Json(new ErrorPayload { CorrelationId = generated, Error = "BadRequest", Message = "The request needs a correlationId of letters, digits and hyphens." }, statusCode: 400);
         }
 
-        using var scope = log.BeginScope(new Dictionary<string, object> { ["correlationId"] = correlationId });
+        // The caller is what per-user credentials are keyed by (HLD D-27), so every line says who and whether async.
+        using var scope = log.BeginScope(new Dictionary<string, object>
+        {
+            ["correlationId"] = correlationId,
+            ["userObjectId"] = request.Caller?.UserObjectId ?? "(none)",
+            ["async"] = request.Caller?.Async ?? false,
+        });
         var watch = Stopwatch.StartNew();
         try
         {

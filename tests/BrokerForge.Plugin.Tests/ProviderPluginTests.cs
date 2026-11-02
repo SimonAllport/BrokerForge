@@ -174,6 +174,35 @@ public class ProviderPluginTests
         Assert.Equal(newId, context.OutputParameters["id"]);
     }
 
+    private static readonly Guid Simon = Guid.Parse("11111111-0000-0000-0000-000000000001");
+    private static readonly Guid TestMe = Guid.Parse("22222222-0000-0000-0000-000000000002");
+    private static readonly Guid TestMeOid = Guid.Parse("20304250-004f-4652-9c9c-d828fb41441e");
+
+    private static IPluginExecutionContext Caller(Guid authenticated, Guid initiating) =>
+        Fake<IPluginExecutionContext6>.WithProperties(new Dictionary<string, object>
+        {
+            ["AuthenticatedUserId"] = authenticated,
+            ["InitiatingUserId"] = initiating,
+            ["UserId"] = initiating,
+            ["InitiatingUserAzureActiveDirectoryObjectId"] = TestMeOid,
+        });
+
+    [Fact]
+    public void UserObjectId_NotImpersonated_SendsInitiatingUsersObjectId() =>
+        Assert.Equal(TestMeOid.ToString(), ProviderPlugin.UserObjectId(Caller(authenticated: TestMe, initiating: TestMe)));
+
+    [Fact]
+    public void UserObjectId_Impersonated_SendsNone()
+    {
+        // Live (phase 3 findings 10): under CallerObjectId the platform reports the impersonated user as the
+        // initiating user; only AuthenticatedUserId names who actually called.
+        Assert.Null(ProviderPlugin.UserObjectId(Caller(authenticated: Simon, initiating: TestMe)));
+    }
+
+    [Fact]
+    public void UserObjectId_AuthenticatedUserUnknown_SendsNone() =>
+        Assert.Null(ProviderPlugin.UserObjectId(Caller(authenticated: Guid.Empty, initiating: TestMe)));
+
     [Fact]
     public void Execute_CreateWithClientSuppliedId_RefusedWithoutCallingHost()
     {

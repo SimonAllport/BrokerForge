@@ -4,8 +4,25 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+
 const KEY = 'bf-test-dummy-key';
 const INV_KEY = 'bf-test-dummy-inventory-key';
+// Tickets (phase 3): dummy client secret and user passwords; a throwaway RSA key stands in for Entra.
+const TK = { secret: 'bf-test-tk-client-secret', alice: 'bf-test-alice-pw', bob: 'bf-test-bob-pw', redirect: 'https://bf-host.example/connect/callback' };
+const ENTRA = { aud: 'api://bf-test-tickets', aliceOid: 'a11ce000-0000-0000-0000-000000000001', bobOid: 'b0b00000-0000-0000-0000-000000000002' };
+const signing = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const jwksFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bf-jwks-')), 'jwks.json');
+fs.writeFileSync(jwksFile, JSON.stringify({ keys: [{ ...signing.publicKey.export({ format: 'jwk' }), kid: 'bf-test', use: 'sig' }] }));
+
+function entraToken(claims, key = signing.privateKey, kid = 'bf-test') {
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const body = `${enc({ alg: 'RS256', typ: 'JWT', kid })}.${enc({ aud: ENTRA.aud, exp: now + 600, nbf: now - 10, ...claims })}`;
+  return `${body}.${crypto.sign('RSA-SHA256', Buffer.from(body), key).toString('base64url')}`;
+}
 let child;
 let base;
 
@@ -37,7 +54,11 @@ async function call(method, p, { body, headers = {}, key = KEY } = {}) {
 }
 
 before(async () => {
-  const s = await start({ MOCK_API_KEY: KEY, MOCK_INVENTORY_KEY: INV_KEY });
+  const s = await start({
+    MOCK_API_KEY: KEY, MOCK_INVENTORY_KEY: INV_KEY,
+    MOCK_TK_CLIENT_SECRET: TK.secret, MOCK_TK_ALICE_PASSWORD: TK.alice, MOCK_TK_BOB_PASSWORD: TK.bob, MOCK_TK_REDIRECT_URIS: TK.redirect,
+    MOCK_ENTRA_AUDIENCE: ENTRA.aud, MOCK_ENTRA_JWKS_FILE: jwksFile, MOCK_ENTRA_USERS: `${ENTRA.aliceOid}:alice,${ENTRA.bobOid}:bob`,
+  });
   child = s.proc;
   base = `http://127.0.0.1:${s.port}`;
 });
@@ -268,4 +289,154 @@ test('reset restores the inventory seed', async () => {
   await inv('DELETE', '/items/1');
   assert.equal((await call('POST', '/__reset')).status, 204);
   assert.equal((await inv('GET', '/items/1')).status, 200);
+});
+
+// ---- Tickets (phase 3) ----
+
+async function tk(method, p, { auth, form, body } = {}) {
+  const headers = {};
+  if (auth) headers.authorization = auth;
+  let payload;
+  if (form) { headers['content-type'] = 'application/x-www-form-urlencoded'; payload = new URLSearchParams(form).toString(); }
+  if (body !== undefined) { headers['content-type'] = 'application/json'; payload = JSON.stringify(body); }
+  const res = await fetch(base + p, { method, headers, body: payload, redirect: 'manual' });
+  const text = await res.text();
+  let json;
+  try { json = text ? JSON.parse(text) : undefined; } catch { json = undefined; }
+  return { status: res.status, headers: res.headers, json, text };
+}
+
+const basic = (user, pw) => 'Basic ' + Buffer.from(`${user}:${pw}`).toString('base64');
+
+/** Signs in through the authorize form and redeems the code: the browser half of the flow, done by hand. */
+async function oauthTokens(user, password, { verifier = crypto.randomBytes(32).toString('base64url'), sentVerifier } = {}) {
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const params = { response_type: 'code', client_id: 'bf-tickets', redirect_uri: TK.redirect, state: 's1', code_challenge: challenge, code_challenge_method: 'S256', scope: 'tickets.read' };
+  assert.equal((await tk('GET', '/tk/oauth/authorize?' + new URLSearchParams(params))).status, 200);
+  const signedIn = await tk('POST', '/tk/oauth/authorize', { form: { ...params, user, password } });
+  assert.equal(signedIn.status, 302);
+  const location = new URL(signedIn.headers.get('location'));
+  assert.equal(location.searchParams.get('state'), 's1');
+  return tk('POST', '/tk/oauth/token', { form: { grant_type: 'authorization_code', code: location.searchParams.get('code'), redirect_uri: TK.redirect, code_verifier: sentVerifier ?? verifier, client_id: 'bf-tickets', client_secret: TK.secret } });
+}
+
+const ids = (r) => r.json.items.map((t) => t.id);
+
+test('tickets: each user sees only their own', async () => {
+  const alice = await tk('GET', '/tk/v1/tickets?limit=100', { auth: basic('alice', TK.alice) });
+  const bob = await tk('GET', '/tk/v1/tickets?limit=100', { auth: basic('bob', TK.bob) });
+  assert.deepEqual(ids(alice), ['TK-1', 'TK-2', 'TK-3', 'TK-4', 'TK-5', 'TK-6', 'TK-7']);
+  assert.deepEqual(ids(bob), ['TK-8', 'TK-9', 'TK-10', 'TK-11', 'TK-12']);
+  assert.equal(alice.json.items[0].owner, undefined);
+});
+
+test('tickets: cursor paging and status filter', async () => {
+  const first = await tk('GET', '/tk/v1/tickets?limit=3', { auth: basic('alice', TK.alice) });
+  assert.deepEqual(ids(first), ['TK-1', 'TK-2', 'TK-3']);
+  const second = await tk('GET', `/tk/v1/tickets?limit=10&cursor=${first.json.nextCursor}`, { auth: basic('alice', TK.alice) });
+  assert.deepEqual(ids(second), ['TK-4', 'TK-5', 'TK-6', 'TK-7']);
+  assert.equal(second.json.nextCursor, null);
+  const closed = await tk('GET', '/tk/v1/tickets?status=closed', { auth: basic('alice', TK.alice) });
+  assert.deepEqual(ids(closed), ['TK-4']);
+});
+
+test("tickets: other user's id is 404", async () => {
+  assert.equal((await tk('GET', '/tk/v1/tickets/TK-8', { auth: basic('alice', TK.alice) })).status, 404);
+  assert.equal((await tk('GET', '/tk/v1/tickets/TK-8', { auth: basic('bob', TK.bob) })).json.title, 'Ticket 8');
+});
+
+test('tickets: create is owned by the caller', async () => {
+  const created = await tk('POST', '/tk/v1/tickets', { auth: basic('bob', TK.bob), body: { title: 'New one', priority: 'high' } });
+  assert.equal(created.status, 201);
+  assert.ok(ids(await tk('GET', '/tk/v1/tickets?limit=100', { auth: basic('bob', TK.bob) })).includes(created.json.id));
+  assert.ok(!ids(await tk('GET', '/tk/v1/tickets?limit=100', { auth: basic('alice', TK.alice) })).includes(created.json.id));
+});
+
+test('no credential is 401', async () => {
+  assert.equal((await tk('GET', '/tk/v1/tickets')).status, 401);
+  assert.equal((await tk('GET', '/tk/v1/tickets', { auth: basic('alice', 'wrong') })).status, 401);
+  assert.equal((await tk('GET', '/tk/v1/tickets', { auth: 'Bearer tk-at-made-up' })).status, 401);
+});
+
+test('oauth: code flow gives a token that lists the user\'s tickets', async () => {
+  const t = await oauthTokens('bob', TK.bob);
+  assert.equal(t.status, 200);
+  assert.equal(t.json.expires_in, 3600);
+  assert.deepEqual(ids(await tk('GET', '/tk/v1/tickets', { auth: 'Bearer ' + t.json.access_token })), ['TK-8', 'TK-9', 'TK-10', 'TK-11', 'TK-12']);
+});
+
+test('oauth: code requires matching PKCE verifier', async () => {
+  const t = await oauthTokens('alice', TK.alice, { sentVerifier: 'x'.repeat(43) });
+  assert.equal(t.status, 400);
+  assert.equal(t.json.error, 'invalid_grant');
+});
+
+test('oauth: wrong password re-shows the form, unregistered redirect is refused', async () => {
+  const challenge = crypto.createHash('sha256').update('v'.repeat(43)).digest('base64url');
+  const params = { response_type: 'code', client_id: 'bf-tickets', redirect_uri: TK.redirect, state: 's', code_challenge: challenge, code_challenge_method: 'S256' };
+  assert.equal((await tk('POST', '/tk/oauth/authorize', { form: { ...params, user: 'alice', password: 'nope' } })).status, 401);
+  assert.equal((await tk('GET', '/tk/oauth/authorize?' + new URLSearchParams({ ...params, redirect_uri: 'https://evil.example/cb' }))).status, 400);
+});
+
+test('oauth: refresh token is single-use', async () => {
+  const t = await oauthTokens('alice', TK.alice);
+  const form = { grant_type: 'refresh_token', refresh_token: t.json.refresh_token, client_id: 'bf-tickets', client_secret: TK.secret };
+  const first = await tk('POST', '/tk/oauth/token', { form });
+  assert.equal(first.status, 200);
+  assert.notEqual(first.json.refresh_token, t.json.refresh_token);
+  const again = await tk('POST', '/tk/oauth/token', { form });
+  assert.equal(again.status, 400);
+  assert.equal(again.json.error, 'invalid_grant');
+});
+
+test('oauth: revoked refresh token gives invalid_grant', async () => {
+  const t = await oauthTokens('alice', TK.alice);
+  assert.equal((await tk('POST', '/tk/oauth/revoke', { form: { token: t.json.refresh_token } })).status, 200);
+  const r = await tk('POST', '/tk/oauth/token', { form: { grant_type: 'refresh_token', refresh_token: t.json.refresh_token, client_id: 'bf-tickets', client_secret: TK.secret } });
+  assert.equal(r.json.error, 'invalid_grant');
+});
+
+test('oauth: wrong client secret is invalid_client', async () => {
+  const r = await tk('POST', '/tk/oauth/token', { form: { grant_type: 'refresh_token', refresh_token: 'x', client_id: 'bf-tickets', client_secret: 'wrong' } });
+  assert.equal(r.status, 401);
+  assert.equal(r.json.error, 'invalid_client');
+});
+
+test('entra: a valid token maps oid to the user', async () => {
+  const r = await tk('GET', '/tk/v1/tickets?limit=100', { auth: 'Bearer ' + entraToken({ oid: ENTRA.bobOid }) });
+  assert.deepEqual(ids(r), ['TK-8', 'TK-9', 'TK-10', 'TK-11', 'TK-12']);
+});
+
+test('entra: wrong audience is 401', async () => {
+  assert.equal((await tk('GET', '/tk/v1/tickets', { auth: 'Bearer ' + entraToken({ oid: ENTRA.aliceOid, aud: 'api://other' }) })).status, 401);
+});
+
+test('entra: expired, unknown oid or wrong key is 401', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  assert.equal((await tk('GET', '/tk/v1/tickets', { auth: 'Bearer ' + entraToken({ oid: ENTRA.aliceOid, exp: now - 5 }) })).status, 401);
+  assert.equal((await tk('GET', '/tk/v1/tickets', { auth: 'Bearer ' + entraToken({ oid: 'c0000000-0000-0000-0000-000000000003' }) })).status, 401);
+  const other = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  assert.equal((await tk('GET', '/tk/v1/tickets', { auth: 'Bearer ' + entraToken({ oid: ENTRA.aliceOid }, other.privateKey) })).status, 401);
+});
+
+test('tickets: /__tk/stats counts data requests, including refused ones', async () => {
+  const stats = async () => (await call('GET', '/__tk/stats')).json.dataRequests;
+  assert.equal(await stats(), 0);
+  await tk('GET', '/tk/v1/tickets');
+  await tk('GET', '/tk/v1/tickets', { auth: basic('alice', TK.alice) });
+  assert.equal(await stats(), 2);
+  assert.equal((await call('GET', '/__tk/stats', { key: null })).status, 401);
+});
+
+test('MOCK_APIS=tickets serves only the Tickets API, even with valid keys', async () => {
+  const s = await start({ MOCK_API_KEY: KEY, MOCK_INVENTORY_KEY: INV_KEY, MOCK_APIS: 'tickets', MOCK_TK_CLIENT_SECRET: TK.secret, MOCK_TK_REDIRECT_URIS: TK.redirect });
+  try {
+    const at = (p, headers) => fetch(`http://127.0.0.1:${s.port}${p}`, { method: p === '/__reset' ? 'POST' : 'GET', headers });
+    assert.equal((await at('/v2/orders', { 'x-api-key': KEY })).status, 404);
+    assert.equal((await at(`/inv/v1/items?api_key=${INV_KEY}`)).status, 404);
+    assert.equal((await at('/__reset', { 'x-api-key': KEY })).status, 404);
+    assert.equal((await at('/tk/v1/tickets')).status, 401);
+  } finally {
+    s.proc.kill();
+  }
 });

@@ -34,6 +34,8 @@ public sealed class MockApiFixture : IAsyncLifetime
         info.Environment["PORT"] = "0";
         info.Environment["MOCK_API_KEY"] = ApiKey;
         info.Environment["MOCK_SLOW_MS"] = SlowMs.ToString();
+        foreach (var (k, v) in Tickets.MockEnvironment())
+            info.Environment[k] = v;
         _process = Process.Start(info) ?? throw new InvalidOperationException("could not start node");
 
         var read = _process.StandardOutput.ReadLineAsync();

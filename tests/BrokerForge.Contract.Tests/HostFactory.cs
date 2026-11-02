@@ -36,6 +36,8 @@ public sealed class HostFactory : WebApplicationFactory<Program>
     private static readonly RsaSecurityKey SigningKey = new(RSA.Create(2048)) { KeyId = "bf-test" };
     private readonly string _mockBaseUrl;
     private readonly int _timeoutSeconds;
+    private readonly IReadOnlyDictionary<string, string?> _extra;
+    private readonly Action<IServiceCollection>? _services;
     private readonly string _descriptors;
     private readonly string _schemas;
 
@@ -43,10 +45,14 @@ public sealed class HostFactory : WebApplicationFactory<Program>
 
     /// <param name="timeoutSeconds">The host's request budget. Generous by default so a cold first call is not a timeout;
     /// the timeout test passes a short one under <see cref="MockApiFixture.SlowMs"/>.</param>
-    public HostFactory(string mockBaseUrl, int timeoutSeconds = 30)
+    /// <param name="extra">Settings added after the defaults; a null value removes a default.</param>
+    /// <param name="services">Service replacements applied after the host's own registrations.</param>
+    public HostFactory(string mockBaseUrl, int timeoutSeconds = 30, IReadOnlyDictionary<string, string?>? extra = null, Action<IServiceCollection>? services = null)
     {
+        _services = services;
         _mockBaseUrl = mockBaseUrl;
         _timeoutSeconds = timeoutSeconds;
+        _extra = extra ?? new Dictionary<string, string?>();
         _descriptors = Path.Combine(Path.GetTempPath(), "bf-descriptors-" + Guid.NewGuid().ToString("N"));
         Copy(Path.Combine(MockApiFixture.RepoRoot, "descriptors"), _descriptors);
         Copy(Path.Combine(MockApiFixture.RepoRoot, "tests", "BrokerForge.Contract.Tests", "descriptors", "host"), _descriptors);
@@ -113,15 +119,20 @@ public sealed class HostFactory : WebApplicationFactory<Program>
         Map("ext_echoq", "EchoAPI", ("Retrieve", "echoQuerySecret"));
         Map("ext_echofail", "EchoAPI", ("Retrieve", "echoFail"));
 
+        foreach (var (k, v) in _extra)
+            if (v == null) settings.Remove(k); else settings[k] = v;
         builder.ConfigureAppConfiguration(c => c.AddInMemoryCollection(settings));
         builder.ConfigureLogging(l => l.AddProvider(new CaptureLoggerProvider(Logs)));
         builder.ConfigureTestServices(services =>
+        {
             services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, o =>
             {
                 var config = new OpenIdConnectConfiguration { Issuer = Issuer };
                 config.SigningKeys.Add(SigningKey);
                 o.ConfigurationManager = new StaticConfigurationManager<OpenIdConnectConfiguration>(config);
-            }));
+            });
+            _services?.Invoke(services);
+        });
     }
 
     public static string Issuer => $"https://login.microsoftonline.com/{Tenant}/v2.0";

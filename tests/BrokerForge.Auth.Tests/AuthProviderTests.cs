@@ -165,6 +165,18 @@ public class AuthProviderTests
     }
 
     [Fact]
+    public void AuthReservedNames_PerUserModes_ReserveTheirHeadersAndTheAsyncIdentitys()
+    {
+        var sso = AuthReservedNames.For(Instance(new AuthConfig(AuthMode.Sso, HeaderName: "X-User-Key", SsoKind: "apiKeyHeader")));
+        Assert.True(sso.Contains("X-User-Key"));
+        Assert.True(sso.Contains("Authorization"));
+        var oauth = AuthReservedNames.For(Instance(new AuthConfig(AuthMode.OAuth, OAuthResource: "Tickets", AsyncContext: AsyncContext.ServiceIdentity,
+            AsyncAuth: new AuthConfig(AuthMode.Static, "apiKeyQuery", QueryParam: "api_key", SecretRef: "env:K"))));
+        Assert.True(oauth.Contains("Authorization"));
+        Assert.True(oauth.ContainsQueryParam("api_key"));
+    }
+
+    [Fact]
     public void AuthReservedNames_ForStaticQueryMode_ReservesQueryParam()
     {
         var reserved = AuthReservedNames.For(Instance(new AuthConfig(AuthMode.Static, "apiKeyQuery", QueryParam: "api_key", SecretRef: "env:K")));
