@@ -89,3 +89,20 @@ would need a second az profile signed in as B.
 
 Not covered live: SSO (contract tests only, D-32) and `Auth:AsyncContext: ServiceIdentity`, which no dev source
 configures. The async signal itself (`async=true` with the triggering user) was verified live in the spike.
+Also not verified: a Power Automate flow calling a per-user Custom API (it needs a flow connection signed in
+interactively), and how the connect error renders in a model-driven view or canvas gallery. A flow that reads a
+per-user virtual table never gets the async rule: the data provider plug-in runs synchronously, so `async` is false
+and the flow's connection user needs their own credential (HLD 9.3).
+
+## 10. Impersonation borrows the impersonated user's credential (D-27 does not hold)
+
+With the second user available, A read `ext_entratickets` through the Web API with the header
+`CallerObjectId: 20304250-…` (B). The host received B's object ID and the read returned B's rows (Ticket 8 to 12)
+through B's stored Impersonate credential. Under `CallerObjectId` impersonation the platform sets
+`InitiatingUserAzureActiveDirectoryObjectId` to the impersonated user, not the caller.
+
+So anyone with `prvActOnBehalfOfAnotherUser` (System Administrators, and integration application users granted
+it) can call a per-user source as any user who has connected. Nothing falls back to the service account and the
+source still sees one user's own credential, but D-27's intent — Dataverse impersonation must not borrow a source
+credential — is not met. This is open in HLD section 15; the options are there. The plug-in and host are unchanged
+pending that decision.
