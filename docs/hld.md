@@ -363,7 +363,9 @@ Descriptors live in Git as YAML, one file per operation. CI runs the descriptor 
 | Virtual tables cannot have currency (Money) columns: Dataverse refuses the column with `0x80044815` ("money is not valid for this entity"), verified in phase 1 | Certain | Low | Source amounts map to Decimal columns; currency, if needed, is a separate text column |
 | Virtual table platform gaps (offline, auditing, row-level security, Power BI) block a client use case | High | Medium | State gaps at scoping; route reporting to the source or a sync |
 | Users experience live-call latency as slowness | Medium | Medium | Caching, narrow views, latency targets per source |
-| Per-user modes need a connect step users skip | Medium | Medium | Clear error with connect link; connect prompt on first use |
+| Per-user modes need a connect step users skip | Medium | Medium | Clear error with connect link (live in phase 3); connect prompt on first use is later work |
+| A user connects the wrong account: the connect page and Dataverse can be signed in as different people in one browser, and the page does not say who is signed in (phase 3 findings 7) | Medium | Medium | Credentials are keyed by the connect sign-in's object ID, so nothing leaks; show the signed-in account on the connect page |
+| Generated tables are unreadable for non-administrators: `bf generate` creates no security role, and virtual tables are organisation-owned (phase 3 findings 6) | Certain | Medium | A role per source with Read (and Create, Write, Delete as the descriptors allow) at organisation depth, added by hand until the generator emits it |
 | Microsoft extends the Virtual Connector Provider into the same space | Medium | Medium | Focus on arbitrary REST, Custom API parity and fail-loud semantics |
 | Host becomes a single point of failure for every source | Low | High | Multi-replica deployment, health probes, availability alerting |
 | Key-map growth or pruning breaks lookups | Low | Medium | Prefer reversible encoding; prune only unreferenced rows |
