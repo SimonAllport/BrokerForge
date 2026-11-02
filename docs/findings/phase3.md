@@ -117,3 +117,23 @@ re-registering the plug-in and redeploying the host:
 | Sync step, plain / impersonating B | A / no object ID, `async=false` | as above |
 
 Orders and Inventory acceptance pass again on the redeployed host.
+
+## 11. Review minors, fixed
+
+The whole-branch review's minors were fixed before merge (e8d7015, 2c7d1ee), each with a test seen failing first:
+
+- An undecryptable credential row (key ring lost, row damaged) is `CredentialUnreadableException`: execute answers
+  `ConnectionRequiredException` ("could not be read"), and the connect page shows it and still offers Disconnect.
+- A token endpoint that does not answer within the HTTP timeout is `CredentialUnavailableException`; the connect
+  callback shows the "try again later" page instead of a 500. A caller's own cancellation is still a cancellation.
+- The refresh gate removes a user's entry once nobody holds or waits for it.
+- Each connect sign-in has its own nonce cookie, so a second tab no longer breaks the first.
+- A refresh refused because another replica used the token first waits up to 1 second for that replica's save
+  and then uses its grant, so neither call fails.
+- The host's table role is scoped to `bfusercredentials` (the old account-wide assignment was deleted by hand:
+  Bicep does not remove assignments).
+- The Tickets mock runs alone on an external app (`bf-dev-tickets-mock`, `MOCK_APIS=tickets`); the Orders and
+  Inventory mock is internal again. Live: the old public mock URL answers 404 and the Tickets app answers 404 for
+  `/v2/orders`. Orders and Inventory acceptance pass; A's Impersonate read still returns Ticket 1 to Ticket 7.
+  A's OAuth credential came from the old mock's in-memory sign-in state, so it now fails as expired until A
+  connects again; the OAuth connect flow against the new app has contract-test evidence only.
