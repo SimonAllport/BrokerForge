@@ -192,28 +192,37 @@ public partial class ConnectTests(MockApiFixture mock) : IAsyncLifetime
         var alice = Browser(host, Tickets.AliceOid);
         var callback = await StartAndSignIn(alice, "alice");
         HttpResponseMessage refused;
+        string reason;
         switch (variant)
         {
             case "other user":
-                refused = await Browser(host, Tickets.BobOid).GetAsync(callback);
+                // Same browser, so the nonce cookie matches; only the signed-in user has changed.
+                alice.DefaultRequestHeaders.Remove(OidHeader);
+                alice.DefaultRequestHeaders.Add(OidHeader, Tickets.BobOid);
+                refused = await alice.GetAsync(callback);
+                reason = "started by another user";
                 break;
             case "tampered":
                 var q = HttpUtility.ParseQueryString(callback[(callback.IndexOf('?') + 1)..]);
                 var state = q["state"]!;
                 q["state"] = state[..^2] + (state[^2] == 'A' ? 'B' : 'A') + state[^1];
                 refused = await alice.GetAsync("/connect/callback?" + q);
+                reason = "sign-in link is not valid";
                 break;
             case "reused":
                 Assert.Equal(HttpStatusCode.SeeOther, (await alice.GetAsync(callback)).StatusCode);
                 await store.DeleteAsync("TicketsAPI", Tickets.AliceOid, default);
                 refused = await alice.GetAsync(callback);
+                reason = "has already been used";
                 break;
             default:
                 _time.Now += TimeSpan.FromMinutes(11);
                 refused = await alice.GetAsync(callback);
+                reason = "longer than 10 minutes";
                 break;
         }
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.Contains(reason, await refused.Content.ReadAsStringAsync());
         Assert.Null(await store.GetAsync("TicketsAPI", Tickets.AliceOid, default));
         Assert.Null(await store.GetAsync("TicketsAPI", Tickets.BobOid, default));
     }

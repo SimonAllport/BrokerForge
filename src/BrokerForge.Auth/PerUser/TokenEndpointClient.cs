@@ -79,9 +79,26 @@ public sealed partial class TokenEndpointClient(HttpClient http, ISecretResolver
             if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("access_token", out var at) || at.ValueKind != JsonValueKind.String)
                 throw new CredentialUnavailableException($"The token endpoint {resource.TokenUrl} returned {(int)response.StatusCode} without an access_token.");
             var refresh = body.TryGetProperty("refresh_token", out var rt) && rt.ValueKind == JsonValueKind.String ? rt.GetString() : null;
-            var lifetime = body.TryGetProperty("expires_in", out var ei) && ei.TryGetInt32(out var seconds) && seconds > 0
-                ? TimeSpan.FromSeconds(seconds) : DefaultLifetime;
-            return new TokenSet(at.GetString()!, refresh, time.GetUtcNow() + lifetime);
+            return new TokenSet(at.GetString()!, refresh, time.GetUtcNow() + Lifetime(body, resource));
         }
+    }
+
+    /// <summary>
+    /// <c>expires_in</c> in seconds: a JSON number, or a string of digits as some servers send it. Absent means
+    /// <see cref="DefaultLifetime"/>; anything else is refused rather than guessed.
+    /// </summary>
+    private static TimeSpan Lifetime(JsonElement body, OAuthResource resource)
+    {
+        if (!body.TryGetProperty("expires_in", out var ei))
+            return DefaultLifetime;
+        var seconds = ei.ValueKind switch
+        {
+            JsonValueKind.Number when ei.TryGetInt32(out var n) => n,
+            JsonValueKind.String when int.TryParse(ei.GetString(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n) => n,
+            _ => 0,
+        };
+        return seconds > 0
+            ? TimeSpan.FromSeconds(seconds)
+            : throw new CredentialUnavailableException($"The token endpoint {resource.TokenUrl} returned an expires_in that is not a positive number of seconds.");
     }
 }

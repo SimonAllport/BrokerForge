@@ -22,12 +22,18 @@ public class PerUserProviderTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 
-    /// <summary>A token endpoint: each refresh token works once and is rotated; records every form posted.</summary>
+    /// <summary>
+    /// A token endpoint: each refresh token works once and is rotated; records every form posted. Like a real
+    /// server it decides the answer when the request arrives, then waits the next of <see cref="Delays"/> (50 ms
+    /// when empty) before answering, so a test can make the refused call answer before the one that won.
+    /// </summary>
     private sealed class TokenEndpoint : HttpMessageHandler
     {
         public ConcurrentQueue<Dictionary<string, string>> Forms { get; } = new();
         public HashSet<string> ValidRefreshTokens { get; } = new() { "rt-1" };
         public Func<HttpResponseMessage>? Override { get; set; }
+        public ConcurrentQueue<int> Delays { get; } = new();
+        public TaskCompletionSource Arrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _issued;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -35,7 +41,14 @@ public class PerUserProviderTests
             var form = (await request.Content!.ReadAsStringAsync(ct)).Split('&')
                 .Select(p => p.Split('=', 2)).ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p[1].Replace('+', ' ')));
             Forms.Enqueue(form);
-            await Task.Delay(50, ct);
+            var response = Answer(form);
+            Arrived.TrySetResult();
+            await Task.Delay(Delays.TryDequeue(out var delay) ? delay : 50, ct);
+            return response;
+        }
+
+        private HttpResponseMessage Answer(Dictionary<string, string> form)
+        {
             if (Override != null)
                 return Override();
             lock (ValidRefreshTokens)
@@ -173,6 +186,85 @@ public class PerUserProviderTests
         var channels = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => provider.AuthenticateAsync(OAuthInstance, Caller(), "corr-1", default)));
         Assert.Single(_tokens.Forms);
         Assert.All(channels, c => Assert.Contains("at-2", c.CredentialValues));
+        Assert.Equal("rt-2", (await _store.GetAsync("Tickets", Alice, default))!.RefreshToken);
+    }
+
+    // Two replicas (two providers, so two refresh gates) share the store. The source consumes rt-1 for the
+    // first request to arrive and refuses the second with invalid_grant.
+    private async Task<(IAuthenticatedChannel? First, Exception? Second)[]> TwoReplicasRefresh(int firstDelay, int secondDelay)
+    {
+        await _store.SaveAsync("Tickets", Alice, Tokens(Now.AddSeconds(-5)), default);
+        _tokens.Delays.Enqueue(firstDelay);
+        _tokens.Delays.Enqueue(secondDelay);
+        var calls = new[] { Delegated(), Delegated() }.Select(async p =>
+        {
+            try { return ((IAuthenticatedChannel?)await p.AuthenticateAsync(OAuthInstance, Caller(), "corr-1", default), (Exception?)null); }
+            catch (Exception ex) { return (null, ex); }
+        });
+        return await Task.WhenAll(calls);
+    }
+
+    [Fact]
+    public async Task OAuth_TwoReplicas_WinnerSavesFirst_BothUseNewToken()
+    {
+        var results = await TwoReplicasRefresh(firstDelay: 20, secondDelay: 300);
+        Assert.Equal(2, _tokens.Forms.Count);
+        Assert.All(results, r => Assert.Null(r.Second));
+        Assert.All(results, r => Assert.Contains("at-2", r.First!.CredentialValues));
+        var saved = (await _store.GetAsync("Tickets", Alice, default))!;
+        Assert.Equal((CredentialStatus.Connected, "at-2", "rt-2"), (saved.Status, saved.AccessToken, saved.RefreshToken));
+    }
+
+    [Fact]
+    public async Task OAuth_TwoReplicas_RefusalAnswersFirst_StoreKeepsWinnersToken()
+    {
+        var results = await TwoReplicasRefresh(firstDelay: 300, secondDelay: 20);
+        Assert.Contains(results, r => r.First != null && r.First.CredentialValues.Contains("at-2"));
+        var saved = (await _store.GetAsync("Tickets", Alice, default))!;
+        Assert.Equal((CredentialStatus.Connected, "at-2", "rt-2"), (saved.Status, saved.AccessToken, saved.RefreshToken));
+        var next = await Send(Delegated(), OAuthInstance);
+        Assert.Equal("Bearer at-2", next.Headers.Authorization!.ToString());
+    }
+
+    [Fact]
+    public async Task OAuth_DisconnectDuringRefresh_RowNotRecreated()
+    {
+        await _store.SaveAsync("Tickets", Alice, Tokens(Now.AddSeconds(-5)), default);
+        _tokens.Delays.Enqueue(200);
+        var call = Delegated().AuthenticateAsync(OAuthInstance, Caller(), "corr-1", default);
+        await _tokens.Arrived.Task;
+        await _store.DeleteAsync("Tickets", Alice, default);
+        var ex = await Assert.ThrowsAsync<ConnectionRequiredException>(() => call);
+        Assert.Contains("disconnected", ex.Message);
+        Assert.Null(await _store.GetAsync("Tickets", Alice, default));
+    }
+
+    [Fact]
+    public async Task OAuth_ReconnectDuringRefusedRefresh_NewConnectionKept()
+    {
+        _tokens.ValidRefreshTokens.Clear();
+        await _store.SaveAsync("Tickets", Alice, Tokens(Now.AddSeconds(-5)), default);
+        _tokens.Delays.Enqueue(200);
+        var call = Delegated().AuthenticateAsync(OAuthInstance, Caller(), "corr-1", default);
+        await _tokens.Arrived.Task;
+        await _store.SaveAsync("Tickets", Alice, Tokens(Now.AddMinutes(30)) with { AccessToken = "at-new", RefreshToken = "rt-new" }, default);
+        var channel = await call;
+        Assert.Contains("at-new", channel.CredentialValues);
+        var saved = (await _store.GetAsync("Tickets", Alice, default))!;
+        Assert.Equal((CredentialStatus.Connected, "at-new"), (saved.Status, saved.AccessToken));
+    }
+
+    [Fact]
+    public async Task OAuth_ReconnectDuringSuccessfulRefresh_NewConnectionKept()
+    {
+        await _store.SaveAsync("Tickets", Alice, Tokens(Now.AddSeconds(-5)), default);
+        _tokens.Delays.Enqueue(200);
+        var call = Delegated().AuthenticateAsync(OAuthInstance, Caller(), "corr-1", default);
+        await _tokens.Arrived.Task;
+        await _store.SaveAsync("Tickets", Alice, Tokens(Now.AddMinutes(30)) with { AccessToken = "at-new", RefreshToken = "rt-new" }, default);
+        var channel = await call;
+        Assert.Contains("at-new", channel.CredentialValues);
+        Assert.Equal("at-new", (await _store.GetAsync("Tickets", Alice, default))!.AccessToken);
     }
 
     [Fact]
@@ -257,6 +349,27 @@ public class PerUserProviderTests
         var form = Assert.Single(_tokens.Forms);
         Assert.Equal(("authorization_code", "code-1", "verifier-1", "https://bf-host.example/connect/callback"),
             (form["grant_type"], form["code"], form["code_verifier"], form["redirect_uri"]));
+    }
+
+    [Fact]
+    public async Task TokenClient_ExpiresInAsString_Accepted()
+    {
+        _tokens.Override = () => TokenEndpoint.Json(HttpStatusCode.OK, new { access_token = "at-s", refresh_token = "rt-s", expires_in = "3599", token_type = "Bearer" });
+        var set = await Client().RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default);
+        Assert.Equal(("at-s", Now.AddSeconds(3599)), (set.AccessToken, set.ExpiresAt));
+    }
+
+    [Theory]
+    [InlineData("soon")]
+    [InlineData("-5")]
+    [InlineData(true)]
+    public async Task TokenClient_ExpiresInNotAPositiveInteger_Refused(object value)
+    {
+        _tokens.Override = () => TokenEndpoint.Json(HttpStatusCode.OK, new { access_token = "at-s", expires_in = value });
+        var ex = await Assert.ThrowsAsync<CredentialUnavailableException>(() =>
+            Client().RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default));
+        Assert.Contains("expires_in", ex.Message);
+        Assert.DoesNotContain("at-s", ex.Message);
     }
 
     [Fact]

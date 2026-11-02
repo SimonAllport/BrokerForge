@@ -40,15 +40,17 @@ public sealed class DelegatedTokenAuthProvider(
         if (!ExpiresSoon(credential))
             return Channel(credential.AccessToken!);
 
+        // The gate stops two calls on this replica refreshing at once. Across replicas, and against the user's
+        // own disconnect or reconnect, every write below is conditional on the row version read here.
         using (await _gate.EnterAsync(instance.Name, user, ct))
         {
-            // Another call may have refreshed while this one waited.
-            credential = Usable(instance, await store.GetAsync(instance.Name, user, ct), correlationId);
+            var row = await store.GetVersionedAsync(instance.Name, user, ct);
+            credential = Usable(instance, row?.Credential, correlationId);
             if (!ExpiresSoon(credential))
                 return Channel(credential.AccessToken!);
             if (credential.RefreshToken == null)
             {
-                await store.SetStatusAsync(instance.Name, user, CredentialStatus.Expired, ct);
+                await store.SetStatusIfUnchangedAsync(instance.Name, user, CredentialStatus.Expired, row!.Version, ct);
                 throw ConnectionRequired.Because(instance, "the stored token has expired and cannot be refreshed", correlationId, connectUrl);
             }
 
@@ -59,20 +61,50 @@ public sealed class DelegatedTokenAuthProvider(
             }
             catch (RefreshRejectedException)
             {
-                await store.SetStatusAsync(instance.Name, user, CredentialStatus.Expired, ct);
+                // Refused because another replica used this refresh token first, or the user reconnected meanwhile:
+                // the row then holds a newer grant, and that grant is the answer.
+                if (!await store.SetStatusIfUnchangedAsync(instance.Name, user, CredentialStatus.Expired, row!.Version, ct)
+                    && await store.GetAsync(instance.Name, user, ct) is { } current && current.RefreshToken != credential.RefreshToken && Fresh(current))
+                    return Channel(current.AccessToken!);
                 log.LogWarning("The {Mode} refresh for {Instance} user {UserObjectId} was refused; marked expired", Mode, instance.Name, user);
                 throw ConnectionRequired.Because(instance, "the stored token has expired and the source refused to refresh it", correlationId, connectUrl);
             }
-            await store.SaveAsync(instance.Name, user, credential with
+
+            var updated = credential with
             {
+                Status = CredentialStatus.Connected,
                 AccessToken = refreshed.AccessToken,
                 RefreshToken = refreshed.RefreshToken ?? credential.RefreshToken,
                 ExpiresAt = refreshed.ExpiresAt,
-            }, ct);
-            log.LogInformation("Refreshed the {Mode} token for {Instance} user {UserObjectId}", Mode, instance.Name, user);
-            return Channel(refreshed.AccessToken);
+            };
+            var version = row!.Version;
+            // Two attempts: the second covers a racing replica that marked this same grant expired after its
+            // refresh of the same token was refused (only the status changed, so the refreshed grant still stands).
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                if (await store.ReplaceIfUnchangedAsync(instance.Name, user, updated, version, ct))
+                {
+                    log.LogInformation("Refreshed the {Mode} token for {Instance} user {UserObjectId}", Mode, instance.Name, user);
+                    return Channel(refreshed.AccessToken);
+                }
+                var now = await store.GetVersionedAsync(instance.Name, user, ct);
+                if (now == null)
+                    throw ConnectionRequired.Because(instance, "the user disconnected while the token was being refreshed", correlationId, connectUrl);
+                if (now.Credential.RefreshToken != credential.RefreshToken)
+                {
+                    // The user reconnected, or another replica refreshed: keep that grant and discard this one.
+                    if (Fresh(now.Credential))
+                        return Channel(now.Credential.AccessToken!);
+                    break;
+                }
+                version = now.Version;
+            }
+            throw ConnectionRequired.Because(instance, "the stored credential changed while it was being refreshed", correlationId, connectUrl);
         }
     }
+
+    private bool Fresh(UserCredential credential) =>
+        credential is { Status: CredentialStatus.Connected, AccessToken: not null } && credential.Kind == Kind && !ExpiresSoon(credential);
 
     private UserCredential Usable(ServiceInstance instance, UserCredential? credential, string correlationId) => credential switch
     {
