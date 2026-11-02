@@ -94,15 +94,26 @@ interactively), and how the connect error renders in a model-driven view or canv
 per-user virtual table never gets the async rule: the data provider plug-in runs synchronously, so `async` is false
 and the flow's connection user needs their own credential (HLD 9.3).
 
-## 10. Impersonation borrows the impersonated user's credential (D-27 does not hold)
+## 10. Impersonation borrowed the impersonated user's credential (found live, fixed)
 
 With the second user available, A read `ext_entratickets` through the Web API with the header
 `CallerObjectId: 20304250-…` (B). The host received B's object ID and the read returned B's rows (Ticket 8 to 12)
-through B's stored Impersonate credential. Under `CallerObjectId` impersonation the platform sets
-`InitiatingUserAzureActiveDirectoryObjectId` to the impersonated user, not the caller.
+through B's stored Impersonate credential: under `CallerObjectId` the platform sets
+`InitiatingUserAzureActiveDirectoryObjectId` to the impersonated user, not the caller. Anyone with
+`prvActOnBehalfOfAnotherUser` (System Administrators, integration application users granted it) could call a
+per-user source as any connected user, which D-27 rules out.
 
-So anyone with `prvActOnBehalfOfAnotherUser` (System Administrators, and integration application users granted
-it) can call a per-user source as any user who has connected. Nothing falls back to the service account and the
-source still sees one user's own credential, but D-27's intent — Dataverse impersonation must not borrow a source
-credential — is not met. This is open in HLD section 15; the options are there. The plug-in and host are unchanged
-pending that decision.
+Fix (2ac9cc9): the plug-in sends the object ID only when `IPluginExecutionContext3.AuthenticatedUserId` equals
+`InitiatingUserId`, and sends none otherwise, so per-user modes refuse the call with `ConnectionRequiredException`.
+Service account and Static modes do not use the ID and are unaffected; no contract changed. Verified live after
+re-registering the plug-in and redeploying the host:
+
+| Call | Host saw | Result |
+| --- | --- | --- |
+| A reads `ext_entratickets` impersonating B | no object ID | `ConnectionRequiredException` ("an impersonated call sends none") |
+| A reads `ext_entratickets` | A | Ticket 1 to Ticket 7 |
+| Async step on a Custom API (spike probe), plain | A, `async=true` | the async rule still gets the triggering user |
+| Async step, impersonating B | no object ID, `async=true` | refused |
+| Sync step, plain / impersonating B | A / no object ID, `async=false` | as above |
+
+Orders and Inventory acceptance pass again on the redeployed host.
