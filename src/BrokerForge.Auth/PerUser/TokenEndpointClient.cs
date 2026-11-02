@@ -58,6 +58,10 @@ public sealed partial class TokenEndpointClient(HttpClient http, ISecretResolver
         {
             throw new CredentialUnavailableException($"The token endpoint {resource.TokenUrl} could not be reached ({ex.HttpRequestError}).");
         }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new CredentialUnavailableException($"The token endpoint {resource.TokenUrl} did not answer within {http.Timeout.TotalSeconds:0} s.");
+        }
         using (response)
         {
             JsonElement body = default;

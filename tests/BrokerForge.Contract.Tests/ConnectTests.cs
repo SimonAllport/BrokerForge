@@ -78,13 +78,16 @@ public partial class ConnectTests(MockApiFixture mock) : IAsyncLifetime
         });
     }
 
-    private HostFactory Host(params (string, string?)[] edits)
+    private HostFactory Host(params (string, string?)[] edits) => Host(null, edits);
+
+    private HostFactory Host(Action<IServiceCollection>? more, params (string, string?)[] edits)
     {
         Environment.SetEnvironmentVariable("BF_TEST_CONNECT_SECRET", "bf-test-connect-secret");
         var host = new HostFactory(mock.BaseUrl, extra: Tickets.HostSettings(mock.BaseUrl, ConnectSettings.Concat(edits).ToArray()), services: s =>
         {
             TestSignIn(s);
             s.AddSingleton<TimeProvider>(_time);
+            more?.Invoke(s);
         });
         _hosts.Add(host);
         return host;
@@ -225,6 +228,50 @@ public partial class ConnectTests(MockApiFixture mock) : IAsyncLifetime
         Assert.Contains(reason, await refused.Content.ReadAsStringAsync());
         Assert.Null(await store.GetAsync("TicketsAPI", Tickets.AliceOid, default));
         Assert.Null(await store.GetAsync("TicketsAPI", Tickets.BobOid, default));
+    }
+
+    [Fact]
+    public async Task Callback_TwoTabs_BothComplete()
+    {
+        var host = Host();
+        var browser = Browser(host, Tickets.AliceOid);
+        var first = await StartAndSignIn(browser, "alice");
+        var second = await StartAndSignIn(browser, "alice");
+        Assert.Equal(HttpStatusCode.SeeOther, (await browser.GetAsync(first)).StatusCode);
+        Assert.Equal(HttpStatusCode.SeeOther, (await browser.GetAsync(second)).StatusCode);
+        Assert.NotNull(await host.Services.GetRequiredService<IUserCredentialStore>().GetAsync("TicketsAPI", Tickets.AliceOid, default));
+    }
+
+    /// <summary>Alice's row cannot be decrypted (key ring lost, row corrupted) until it is deleted.</summary>
+    private sealed class UnreadableForAlice : IUserCredentialStore
+    {
+        private readonly InMemoryUserCredentialStore _inner = new();
+        private bool _broken = true;
+        private void Check(string user)
+        {
+            if (_broken && user == Tickets.AliceOid)
+                throw new CredentialUnreadableException("The stored credential for TicketsAPI could not be read.");
+        }
+        public Task<UserCredential?> GetAsync(string i, string u, CancellationToken ct) { Check(u); return _inner.GetAsync(i, u, ct); }
+        public Task<VersionedCredential?> GetVersionedAsync(string i, string u, CancellationToken ct) { Check(u); return _inner.GetVersionedAsync(i, u, ct); }
+        public Task SaveAsync(string i, string u, UserCredential c, CancellationToken ct) { _broken = false; return _inner.SaveAsync(i, u, c, ct); }
+        public Task<bool> ReplaceIfUnchangedAsync(string i, string u, UserCredential c, string v, CancellationToken ct) => _inner.ReplaceIfUnchangedAsync(i, u, c, v, ct);
+        public Task<bool> SetStatusIfUnchangedAsync(string i, string u, CredentialStatus s, string v, CancellationToken ct) => _inner.SetStatusIfUnchangedAsync(i, u, s, v, ct);
+        public Task DeleteAsync(string i, string u, CancellationToken ct) { _broken = false; return _inner.DeleteAsync(i, u, ct); }
+    }
+
+    [Fact]
+    public async Task Status_UnreadableCredential_ShownAndCanDisconnect()
+    {
+        var host = Host(s => s.AddSingleton<IUserCredentialStore, UnreadableForAlice>());
+        var browser = Browser(host, Tickets.AliceOid);
+        var (page, html, token) = await Page(browser);
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        Assert.Contains("could not be read", html);
+        Assert.Contains("/connect/TicketsAPI/disconnect", html);
+        var disconnected = await Post(browser, "/connect/TicketsAPI/disconnect", token);
+        Assert.Equal(HttpStatusCode.SeeOther, disconnected.StatusCode);
+        Assert.Contains("Status: not connected", (await Page(browser)).Html);
     }
 
     [Fact]

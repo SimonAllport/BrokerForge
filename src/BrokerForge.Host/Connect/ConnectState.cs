@@ -7,13 +7,16 @@ namespace BrokerForge.Host.Connect;
 /// <summary>
 /// The OAuth state parameter (HLD D-26): who started the connect, for which instance, the PKCE verifier and a
 /// nonce that a cookie in the same browser must match. Protected with Data Protection, so it cannot be read or
-/// forged; valid for <see cref="Lifetime"/> and once only (the nonce cookie is deleted on use).
+/// forged; valid for <see cref="Lifetime"/> and once only (its nonce cookie is deleted on use).
 /// </summary>
 public sealed record ConnectState(string Instance, string UserObjectId, string Verifier, string Nonce, DateTimeOffset IssuedAt)
 {
     public const string Purpose = "BrokerForge.ConnectState.v1";
     public const string NonceCookie = "bf_connect_nonce";
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
+
+    /// <summary>One cookie per sign-in, named from its nonce, so a second connect tab does not replace the first one's.</summary>
+    public string NonceCookieName => NonceCookie + "_" + Challenge(Nonce)[..16];
 
     public string Protect(IDataProtectionProvider protection) => protection.CreateProtector(Purpose).Protect(JsonSerializer.Serialize(this));
 

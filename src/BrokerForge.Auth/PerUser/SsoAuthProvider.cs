@@ -20,7 +20,16 @@ public sealed class SsoAuthProvider(IUserCredentialStore store, Func<string, str
         if (auth.Mode != AuthMode.Sso)
             throw new ConfigurationException($"Service instance {instance.Name} uses {auth.Mode}, not Sso.");
         var user = ConnectionRequired.User(instance, caller, correlationId, connectUrl);
-        var credential = await store.GetAsync(instance.Name, user, ct) switch
+        UserCredential? stored;
+        try
+        {
+            stored = await store.GetAsync(instance.Name, user, ct);
+        }
+        catch (CredentialUnreadableException)
+        {
+            throw ConnectionRequired.Because(instance, "the stored credential could not be read", correlationId, connectUrl);
+        }
+        var credential = stored switch
         {
             null => throw ConnectionRequired.Because(instance, "there is no credential for this user", correlationId, connectUrl),
             { Status: not CredentialStatus.Connected } c => throw ConnectionRequired.Because(instance, $"the stored credential is {c.Status.ToString().ToLowerInvariant()}", correlationId, connectUrl),

@@ -197,4 +197,16 @@ public sealed class TableCredentialStoreTests : CredentialStoreContract, IClassF
         Assert.Equal("Connected", entity.GetString("Status"));
         Assert.Equal("OAuth", entity.GetString("Kind"));
     }
+
+    [Fact]
+    public async Task Table_PayloadFromAnotherKeyRing_UnreadableNotCrypto()
+    {
+        await Store.SaveAsync("Tickets", Alice, OAuth(), default);
+        var other = new TableUserCredentialStore(_table, new EphemeralDataProtectionProvider());
+        var ex = await Assert.ThrowsAsync<CredentialUnreadableException>(() => other.GetAsync("Tickets", Alice, default));
+        Assert.Contains("Tickets", ex.Message);
+        Assert.DoesNotContain(AccessToken, ex.ToString());
+        await other.DeleteAsync("Tickets", Alice, default);
+        Assert.Null(await other.GetAsync("Tickets", Alice, default));
+    }
 }

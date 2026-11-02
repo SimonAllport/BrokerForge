@@ -74,10 +74,20 @@ public static partial class ConnectEndpoints
             return NotFound(instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
-        var credential = await store.GetAsync(si.Name, user, ct);
+        UserCredential? credential = null;
+        var unreadable = false;
+        try
+        {
+            credential = await store.GetAsync(si.Name, user, ct);
+        }
+        catch (CredentialUnreadableException)
+        {
+            unreadable = true;
+        }
         var token = antiforgery.GetAndStoreTokens(http).RequestToken!;
         var status = credential switch
         {
+            null when unreadable => "the stored connection could not be read; connect again",
             null => "not connected",
             { Kind: var k } when k != KindFor(si.Auth.Mode) => "not connected (an earlier connection was for another mode)",
             { Status: CredentialStatus.Connected } => "connected",
@@ -86,8 +96,8 @@ public static partial class ConnectEndpoints
         var body = ConnectPages.Paragraph($"Service: {si.Name}. Status: {status}.");
         body += si.Auth.Mode == AuthMode.Sso
             ? ConnectPages.Form($"/connect/{si.Name}/sso", token, ConnectPages.SsoFields(si.Auth.SsoKind == "basic"), "Save")
-            : ConnectPages.Form($"/connect/{si.Name}/start", token, "", credential == null ? "Connect" : "Connect again");
-        if (credential != null)
+            : ConnectPages.Form($"/connect/{si.Name}/start", token, "", credential == null && !unreadable ? "Connect" : "Connect again");
+        if (credential != null || unreadable)
             body += ConnectPages.Form($"/connect/{si.Name}/disconnect", token, "", "Disconnect");
         return ConnectPages.Page(200, $"Connect to {si.Name}", body);
     }
@@ -109,7 +119,7 @@ public static partial class ConnectEndpoints
             ? (services.GetService<IConnectAppClient>() ?? throw new ConfigurationException("Connect:ClientId is not set.")).ClientId
             : resource.ClientId!;
         var state = new ConnectState(si.Name, user, ConnectState.Random(32), ConnectState.Random(16), time.GetUtcNow());
-        http.Response.Cookies.Append(ConnectState.NonceCookie, state.Nonce, new CookieOptions
+        http.Response.Cookies.Append(state.NonceCookieName, state.Nonce, new CookieOptions
         {
             HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Lax, Path = "/connect/callback", MaxAge = ConnectState.Lifetime,
         });
@@ -135,8 +145,8 @@ public static partial class ConnectEndpoints
         var state = ConnectState.Unprotect(protection, q["state"]);
         if (state == null)
             return Refused("This sign-in link is not valid. Start again from the connect page.");
-        var nonce = http.Request.Cookies[ConnectState.NonceCookie];
-        http.Response.Cookies.Delete(ConnectState.NonceCookie, new CookieOptions { Path = "/connect/callback", Secure = http.Request.IsHttps, SameSite = SameSiteMode.Lax });
+        var nonce = http.Request.Cookies[state.NonceCookieName];
+        http.Response.Cookies.Delete(state.NonceCookieName, new CookieOptions { Path = "/connect/callback", Secure = http.Request.IsHttps, SameSite = SameSiteMode.Lax });
         var age = time.GetUtcNow() - state.IssuedAt;
         if (age < TimeSpan.Zero || age > ConnectState.Lifetime)
             return Refused("This sign-in took longer than 10 minutes. Start again from the connect page.");

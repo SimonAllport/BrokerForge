@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Azure;
 using Azure.Data.Tables;
@@ -26,12 +27,20 @@ public sealed class TableUserCredentialStore(TableClient table, IDataProtectionP
         if (!row.HasValue)
             return null;
         var e = row.Value!;
-        var secrets = JsonSerializer.Deserialize<Secrets>(_protector.Unprotect(e.GetString("Payload")))!;
-        return new VersionedCredential(new UserCredential(
-            Enum.Parse<CredentialKind>(e.GetString("Kind")),
-            Enum.Parse<CredentialStatus>(e.GetString("Status")),
-            secrets.AccessToken, secrets.RefreshToken, e.GetDateTimeOffset("ExpiresAt"), secrets.Username, secrets.Secret,
-            e.GetDateTimeOffset("ConnectedAt")!.Value), e.ETag.ToString());
+        try
+        {
+            var secrets = JsonSerializer.Deserialize<Secrets>(_protector.Unprotect(e.GetString("Payload")))!;
+            return new VersionedCredential(new UserCredential(
+                Enum.Parse<CredentialKind>(e.GetString("Kind")),
+                Enum.Parse<CredentialStatus>(e.GetString("Status")),
+                secrets.AccessToken, secrets.RefreshToken, e.GetDateTimeOffset("ExpiresAt"), secrets.Username, secrets.Secret,
+                e.GetDateTimeOffset("ConnectedAt")!.Value), e.ETag.ToString());
+        }
+        catch (Exception ex) when (ex is CryptographicException or JsonException or ArgumentException or InvalidOperationException or NullReferenceException)
+        {
+            // The key ring that protected the payload is gone, or the row is damaged. No detail: it could hold ciphertext.
+            throw new CredentialUnreadableException($"The stored credential for {pk} user {rk} could not be read ({ex.GetType().Name}); the user must connect again.");
+        }
     }
 
     public async Task SaveAsync(string instance, string userObjectId, UserCredential credential, CancellationToken ct)

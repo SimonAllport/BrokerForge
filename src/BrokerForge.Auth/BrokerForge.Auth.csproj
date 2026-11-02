@@ -17,4 +17,7 @@
     <ProjectReference Include="..\BrokerForge.Abstractions\BrokerForge.Abstractions.csproj" />
     <ProjectReference Include="..\BrokerForge.Descriptors\BrokerForge.Descriptors.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BrokerForge.Auth.Tests" />
+  </ItemGroup>
 </Project>

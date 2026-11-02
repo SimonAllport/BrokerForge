@@ -219,7 +219,8 @@ public class PerUserProviderTests
     public async Task OAuth_TwoReplicas_RefusalAnswersFirst_StoreKeepsWinnersToken()
     {
         var results = await TwoReplicasRefresh(firstDelay: 300, secondDelay: 20);
-        Assert.Contains(results, r => r.First != null && r.First.CredentialValues.Contains("at-2"));
+        Assert.All(results, r => Assert.Null(r.Second));
+        Assert.All(results, r => Assert.Contains("at-2", r.First!.CredentialValues));
         var saved = (await _store.GetAsync("Tickets", Alice, default))!;
         Assert.Equal((CredentialStatus.Connected, "at-2", "rt-2"), (saved.Status, saved.AccessToken, saved.RefreshToken));
         var next = await Send(Delegated(), OAuthInstance);
@@ -370,6 +371,70 @@ public class PerUserProviderTests
             Client().RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default));
         Assert.Contains("expires_in", ex.Message);
         Assert.DoesNotContain("at-s", ex.Message);
+    }
+
+    [Fact]
+    public async Task TokenClient_EndpointDoesNotAnswer_CredentialUnavailable()
+    {
+        _tokens.Delays.Enqueue(5000);
+        var client = new TokenEndpointClient(new HttpClient(_tokens) { Timeout = TimeSpan.FromMilliseconds(100) }, new FixedSecrets(), new FakeConnectApp(), new FixedTime(Now));
+        var ex = await Assert.ThrowsAsync<CredentialUnavailableException>(() =>
+            client.RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default));
+        Assert.Contains("did not answer", ex.Message);
+        Assert.DoesNotContain("code-1", ex.Message);
+    }
+
+    [Fact]
+    public async Task TokenClient_CallerCancels_StillCancellation()
+    {
+        _tokens.Delays.Enqueue(5000);
+        using var cancel = new CancellationTokenSource(100);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            Client().RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", cancel.Token));
+    }
+
+    [Fact]
+    public async Task RefreshGate_EntryRemovedWhenLastCallerLeaves()
+    {
+        var gate = new RefreshGate();
+        var first = await gate.EnterAsync("Tickets", Alice, default);
+        var second = gate.EnterAsync("Tickets", Alice, default);
+        Assert.False(second.IsCompleted);
+        Assert.Equal(1, gate.Count);
+        first.Dispose();
+        (await second).Dispose();
+        Assert.Equal(0, gate.Count);
+        using var cancel = new CancellationTokenSource();
+        var held = await gate.EnterAsync("Tickets", Alice, default);
+        var waiting = gate.EnterAsync("Tickets", Alice, cancel.Token);
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        held.Dispose();
+        Assert.Equal(0, gate.Count);
+    }
+
+    /// <summary>A store whose row for Alice cannot be decrypted (key ring lost or row corrupted).</summary>
+    private sealed class UnreadableStore : IUserCredentialStore
+    {
+        private static CredentialUnreadableException Unreadable() => new("The stored credential for Tickets could not be read.");
+        public Task<UserCredential?> GetAsync(string instance, string userObjectId, CancellationToken ct) => throw Unreadable();
+        public Task<VersionedCredential?> GetVersionedAsync(string instance, string userObjectId, CancellationToken ct) => throw Unreadable();
+        public Task SaveAsync(string instance, string userObjectId, UserCredential credential, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> ReplaceIfUnchangedAsync(string instance, string userObjectId, UserCredential credential, string version, CancellationToken ct) => Task.FromResult(false);
+        public Task<bool> SetStatusIfUnchangedAsync(string instance, string userObjectId, CredentialStatus status, string version, CancellationToken ct) => Task.FromResult(false);
+        public Task DeleteAsync(string instance, string userObjectId, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task UnreadableCredential_ConnectionRequired()
+    {
+        var oauth = new DelegatedTokenAuthProvider(AuthMode.OAuth, new UnreadableStore(), _ => Tickets, Client(), _ => ConnectUrl, new HttpClient(_source), _log, new FixedTime(Now));
+        var ex = await Assert.ThrowsAsync<ConnectionRequiredException>(() => oauth.AuthenticateAsync(OAuthInstance, Caller(), "corr-1", default));
+        Assert.Contains("could not be read", ex.Message);
+        Assert.Equal(ConnectUrl, ex.ConnectUrl);
+        var sso = new SsoAuthProvider(new UnreadableStore(), _ => ConnectUrl, new HttpClient(_source));
+        ex = await Assert.ThrowsAsync<ConnectionRequiredException>(() => sso.AuthenticateAsync(Instance(new AuthConfig(AuthMode.Sso, SsoKind: "basic")), Caller(), "corr-1", default));
+        Assert.Contains("could not be read", ex.Message);
     }
 
     [Fact]

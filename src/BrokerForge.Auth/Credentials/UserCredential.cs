@@ -20,3 +20,6 @@ public sealed record UserCredential(
 {
     public override string ToString() => $"UserCredential {{ Kind = {Kind}, Status = {Status}, ExpiresAt = {ExpiresAt:O}, ConnectedAt = {ConnectedAt:O} }}";
 }
+
+/// <summary>A stored row exists but cannot be decrypted or parsed (key ring lost, row corrupted): the user must connect again.</summary>
+public sealed class CredentialUnreadableException(string message) : Exception(message);

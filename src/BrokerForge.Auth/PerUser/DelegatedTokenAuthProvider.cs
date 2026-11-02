@@ -19,9 +19,17 @@ public sealed class DelegatedTokenAuthProvider(
     Func<string, string> connectUrl,
     HttpClient http,
     ILogger log,
-    TimeProvider time) : IAuthProvider
+    TimeProvider time,
+    TimeSpan? refusalGrace = null) : IAuthProvider
 {
     public static readonly TimeSpan RefreshWindow = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// How long a refused refresh waits for another replica's save before marking the user expired: with
+    /// single-use refresh tokens the refusal can answer before the winner's success does.
+    /// </summary>
+    public static readonly TimeSpan DefaultRefusalGrace = TimeSpan.FromSeconds(1);
+    private readonly TimeSpan _refusalGrace = refusalGrace ?? DefaultRefusalGrace;
     private readonly RefreshGate _gate = new();
 
     public AuthMode Mode => mode is AuthMode.OAuth or AuthMode.Impersonate
@@ -31,6 +39,18 @@ public sealed class DelegatedTokenAuthProvider(
     private CredentialKind Kind => mode == AuthMode.OAuth ? CredentialKind.OAuth : CredentialKind.Impersonate;
 
     public async Task<IAuthenticatedChannel> AuthenticateAsync(ServiceInstance instance, CallerContext caller, string correlationId, CancellationToken ct)
+    {
+        try
+        {
+            return await AuthenticateCoreAsync(instance, caller, correlationId, ct);
+        }
+        catch (CredentialUnreadableException)
+        {
+            throw ConnectionRequired.Because(instance, "the stored credential could not be read", correlationId, connectUrl);
+        }
+    }
+
+    private async Task<IAuthenticatedChannel> AuthenticateCoreAsync(ServiceInstance instance, CallerContext caller, string correlationId, CancellationToken ct)
     {
         if (instance.Auth.Mode != Mode)
             throw new ConfigurationException($"Service instance {instance.Name} uses {instance.Auth.Mode}, not {Mode}.");
@@ -63,9 +83,14 @@ public sealed class DelegatedTokenAuthProvider(
             {
                 // Refused because another replica used this refresh token first, or the user reconnected meanwhile:
                 // the row then holds a newer grant, and that grant is the answer.
+                if (await NewerGrant(instance.Name, user, credential, ct) is { } newer)
+                    return Channel(newer.AccessToken!);
+                await Task.Delay(_refusalGrace, ct);
+                if (await NewerGrant(instance.Name, user, credential, ct) is { } later)
+                    return Channel(later.AccessToken!);
                 if (!await store.SetStatusIfUnchangedAsync(instance.Name, user, CredentialStatus.Expired, row!.Version, ct)
-                    && await store.GetAsync(instance.Name, user, ct) is { } current && current.RefreshToken != credential.RefreshToken && Fresh(current))
-                    return Channel(current.AccessToken!);
+                    && await NewerGrant(instance.Name, user, credential, ct) is { } last)
+                    return Channel(last.AccessToken!);
                 log.LogWarning("The {Mode} refresh for {Instance} user {UserObjectId} was refused; marked expired", Mode, instance.Name, user);
                 throw ConnectionRequired.Because(instance, "the stored token has expired and the source refused to refresh it", correlationId, connectUrl);
             }
@@ -102,6 +127,10 @@ public sealed class DelegatedTokenAuthProvider(
             throw ConnectionRequired.Because(instance, "the stored credential changed while it was being refreshed", correlationId, connectUrl);
         }
     }
+
+    /// <summary>The stored grant when it is not the one this call used (another replica refreshed, or the user reconnected) and is usable.</summary>
+    private async Task<UserCredential?> NewerGrant(string instance, string user, UserCredential used, CancellationToken ct) =>
+        await store.GetAsync(instance, user, ct) is { } current && current.RefreshToken != used.RefreshToken && Fresh(current) ? current : null;
 
     private bool Fresh(UserCredential credential) =>
         credential is { Status: CredentialStatus.Connected, AccessToken: not null } && credential.Kind == Kind && !ExpiresSoon(credential);
