@@ -24,6 +24,9 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
     public sealed class FakeDesigns : IDesignSource
     {
         public Dictionary<string, List<(ConnectionDesign, EnvironmentSettings)>> ByEnvironment { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, List<string>> Failures { get; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Thrown by every load: the environment's Dataverse cannot be read.</summary>
+        public Exception? Down { get; set; }
         public int Loads;
 
         public void Add(string environmentId, ConnectionDesign design, EnvironmentSettings settings)
@@ -33,11 +36,21 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
             list.Add((design, settings));
         }
 
-        public Task<IReadOnlyList<(ConnectionDesign Design, EnvironmentSettings Settings)>> LoadAsync(string environmentId, CancellationToken ct)
+        public void Fail(string environmentId, string failure)
+        {
+            if (!Failures.TryGetValue(environmentId, out var list))
+                Failures[environmentId] = list = new();
+            list.Add(failure);
+        }
+
+        public Task<DesignLoad> LoadAsync(string environmentId, CancellationToken ct)
         {
             Interlocked.Increment(ref Loads);
-            return Task.FromResult<IReadOnlyList<(ConnectionDesign, EnvironmentSettings)>>(
-                ByEnvironment.TryGetValue(environmentId, out var list) ? list.ToList() : new());
+            if (Down != null)
+                throw Down;
+            return Task.FromResult(new DesignLoad(
+                ByEnvironment.TryGetValue(environmentId, out var list) ? list.ToList() : new(),
+                Failures.TryGetValue(environmentId, out var failures) ? failures.ToList() : new()));
         }
     }
 
@@ -305,7 +318,12 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
     public async Task NameClashBetweenFilesAndDesignFails()
     {
         _designs.Add(EnvA, Warehouse("OrdersAPI"), At(mock.BaseUrl));
-        var (status, _, error) = await Run(Host(), List("ext_order", "OrdersAPI", EnvA));
+        await KeyFor(EnvA, "OrdersAPI");
+        var host = Host();
+        // The design is left out, never the file instance, and neither is picked for the design's table.
+        var orders = await Run(host, List("ext_order", "OrdersAPI", EnvA));
+        Assert.True(orders.Status == 200, orders.Error?.Message);
+        var (status, _, error) = await Run(host, List("ext_item", "OrdersAPI", EnvA));
         Assert.Equal(500, status);
         Assert.Equal("ConfigurationError", error!.Error);
         Assert.Contains($"Instance OrdersAPI is configured both in host settings and as a connection design in environment {EnvA}", error.Message);
@@ -418,10 +436,19 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
     {
         _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl));
         _designs.Add(EnvA, Warehouse("StockAPI"), At(mock.BaseUrl));
-        var (status, _, error) = await Run(Host(), List("ext_item", "WarehouseAPI", EnvA));
-        Assert.Equal(500, status);
-        Assert.Equal("ConfigurationError", error!.Error);
-        Assert.Contains($"Table ext_item is mapped by both connection designs WarehouseAPI and StockAPI in environment {EnvA}", error.Message);
+        await KeyFor(EnvA);
+        await KeyFor(EnvA, "StockAPI");
+        var host = Host();
+        // Neither design is picked: both are left out.
+        foreach (var instance in new[] { "WarehouseAPI", "StockAPI" })
+        {
+            var (status, _, error) = await Run(host, List("ext_item", instance, EnvA));
+            Assert.Equal(500, status);
+            Assert.Equal("ConfigurationError", error!.Error);
+            Assert.Contains($"Table ext_item is mapped by both connection designs StockAPI and WarehouseAPI in environment {EnvA}", error.Message);
+        }
+        Assert.Equal(0, _sent.Value);
+        Assert.Equal(200, (await Run(host, List("ext_order", "OrdersAPI", EnvA))).Status);
 
         var twice = DesignConfigInput.Merge(new ConfigInput(), EnvA, new[] { (Warehouse(), At("https://a.example")), (Warehouse(), At("https://b.example")) });
         Assert.Contains($"Instance WarehouseAPI has two connection designs in environment {EnvA}", Assert.Throws<ConfigurationException>(() => new HostConfigStore(twice)).Message);

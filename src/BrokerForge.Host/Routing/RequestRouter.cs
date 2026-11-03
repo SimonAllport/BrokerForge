@@ -26,7 +26,12 @@ public sealed class RequestRouter(IEnumerable<IAuthProvider> providers, IEnumera
         var correlationId = request.CorrelationId!;
         UnsupportedQueryException Reject(string why) => new(why, correlationId);
 
-        var resolved = config.Map(request.Table ?? "") ?? throw Reject($"Table {request.Table} is not mapped to a BrokerForge source.");
+        // A design left out of this environment may be what maps the table: say why, not "not mapped".
+        var resolved = config.Map(request.Table ?? "")
+            ?? throw (Exception?)config.NotLoaded($"Table {request.Table}") ?? Reject($"Table {request.Table} is not mapped to a BrokerForge source.");
+        if (resolved.Map.ServiceInstance != request.ServiceInstance && config.Instance(request.ServiceInstance ?? "") == null
+            && config.NotLoaded($"Service instance {request.ServiceInstance}") is { } notLoaded)
+            throw notLoaded;
         if (resolved.Map.ServiceInstance != request.ServiceInstance)
             throw Reject($"Table {request.Table} belongs to service instance {resolved.Map.ServiceInstance}, not {request.ServiceInstance}.");
         if (!resolved.Map.Operations.TryGetValue(request.Message ?? "", out var operation))
@@ -65,7 +70,8 @@ public sealed class RequestRouter(IEnumerable<IAuthProvider> providers, IEnumera
         var correlationId = request.CorrelationId!;
         var name = request.Message ?? "";
         var api = config.CustomApi(name)
-            ?? throw new UnsupportedQueryException($"{(name.Length == 0 ? "The request names no message" : $"Message {name} is not a virtual table message or a BrokerForge Custom API")}.", correlationId);
+            ?? throw (Exception?)config.NotLoaded(name.Length == 0 ? "A request without a message" : $"Message {name}")
+            ?? new UnsupportedQueryException($"{(name.Length == 0 ? "The request names no message" : $"Message {name} is not a virtual table message or a BrokerForge Custom API")}.", correlationId);
         if (request.Table != null)
             throw new UnsupportedQueryException($"Custom API {name} is unbound; the request must not name table {request.Table}.", correlationId);
         if (request.ServiceInstance != null && request.ServiceInstance != api.Instance.Name)

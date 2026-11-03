@@ -13,9 +13,10 @@ namespace BrokerForge.Host.Config;
 /// published web resource named <c>&lt;prefix&gt;_/brokerforge/&lt;Instance&gt;/design.xml</c>, whatever the publisher
 /// prefix, and the environment variables <c>bf_&lt;Instance&gt;_BaseUrl</c> and <c>bf_&lt;Instance&gt;_Auth</c> (the
 /// current value, else the default). The org URL is the environment's <see cref="AllowedCaller.OrgUrl"/>.
-/// A design that cannot be read fails the whole environment with every problem listed; Dataverse that cannot be read
-/// at all is a <see cref="DesignSourceUnavailableException"/> when the failure is transient, so the provider can keep
-/// serving the last good store, and a <see cref="ConfigurationException"/> with the same text otherwise.
+/// A design that cannot be read, or whose variables are wrong, is left out with one failure text naming it; the others
+/// still load. Dataverse that cannot be read at all is a <see cref="DesignSourceUnavailableException"/> when the failure
+/// is transient, so the provider can keep serving the last good store, and a <see cref="ConfigurationException"/> with
+/// the same text otherwise.
 /// </summary>
 public sealed partial class DataverseDesignSource(IOptions<TrustOptions> trust, IDataverseReader reader) : IDesignSource
 {
@@ -34,37 +35,41 @@ public sealed partial class DataverseDesignSource(IOptions<TrustOptions> trust, 
 
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    public async Task<IReadOnlyList<(ConnectionDesign Design, EnvironmentSettings Settings)>> LoadAsync(string environmentId, CancellationToken ct)
+    public async Task<DesignLoad> LoadAsync(string environmentId, CancellationToken ct)
     {
         var org = OrgUrl(environmentId);
-        var problems = new List<string>();
+        // One text per design (or unrelated resource) left out; the others still load (final review I1).
+        var failures = new List<string>();
         var found = new Dictionary<string, List<(string Name, ConnectionDesign Design)>>(StringComparer.Ordinal);
         using (var resources = await Read(environmentId, org, DesignQuery, ct))
             foreach (var row in resources.RootElement.GetProperty("value").EnumerateArray())
-                if (ReadDesign(row, problems) is { } d)
+                if (ReadDesign(row, failures) is { } d)
                 {
                     if (!found.TryGetValue(d.Design.Instance, out var list))
                         found[d.Design.Instance] = list = new();
                     list.Add(d);
                 }
         foreach (var (instance, list) in found.Where(f => f.Value.Count > 1))
-            problems.Add($"Instance {instance} has two connection designs in environment {environmentId}: "
+            failures.Add($"Instance {instance} has two connection designs in environment {environmentId}: "
                 + string.Join(" and ", list.Select(d => d.Name).Order(StringComparer.Ordinal)));
 
-        var instances = found.Keys.Order(StringComparer.Ordinal).ToList();
-        var variables = instances.Count == 0 ? new Dictionary<string, string?>() : await ReadVariables(environmentId, org, instances, problems, ct);
+        var instances = found.Keys.Where(i => found[i].Count == 1).Order(StringComparer.Ordinal).ToList();
+        var badVariables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var variables = instances.Count == 0 ? new Dictionary<string, string?>() : await ReadVariables(environmentId, org, instances, badVariables, ct);
         var loaded = new List<(ConnectionDesign, EnvironmentSettings)>();
-        foreach (var instance in instances.Where(i => found[i].Count == 1))
+        foreach (var instance in instances)
         {
+            var problems = new[] { $"bf_{instance}_BaseUrl", $"bf_{instance}_Auth" }.Where(badVariables.ContainsKey).Select(v => badVariables[v]).ToList();
             var auth = new Dictionary<string, string>(StringComparer.Ordinal);
             if (variables.GetValueOrDefault($"bf_{instance}_Auth") is { } text && !string.IsNullOrWhiteSpace(text)
                 && !TryReadOverrides(text, auth))
                 problems.Add($"bf_{instance}_Auth in environment {environmentId} must be a JSON object of strings, for example {{\"scope\":\"api://x/.default\"}}");
-            loaded.Add((found[instance][0].Design, new EnvironmentSettings(variables.GetValueOrDefault($"bf_{instance}_BaseUrl"), auth)));
+            if (problems.Count > 0)
+                failures.AddRange(problems);
+            else
+                loaded.Add((found[instance][0].Design, new EnvironmentSettings(variables.GetValueOrDefault($"bf_{instance}_BaseUrl"), auth)));
         }
-        if (problems.Count > 0)
-            throw new ConfigurationException($"Connection designs in environment {environmentId} could not be read:" + string.Concat(problems.Select(p => "\n - " + p)));
-        return loaded;
+        return new DesignLoad(loaded, failures);
     }
 
     private string OrgUrl(string environmentId)
@@ -133,7 +138,7 @@ public sealed partial class DataverseDesignSource(IOptions<TrustOptions> trust, 
     }
 
     /// <summary>Each instance's variables by schema name: the current value when there is one, else the default.</summary>
-    private async Task<Dictionary<string, string?>> ReadVariables(string environmentId, string org, IReadOnlyList<string> instances, List<string> problems, CancellationToken ct)
+    private async Task<Dictionary<string, string?>> ReadVariables(string environmentId, string org, IReadOnlyList<string> instances, Dictionary<string, string> problems, CancellationToken ct)
     {
         var wanted = instances.SelectMany(i => new[] { $"bf_{i}_BaseUrl", $"bf_{i}_Auth" }).ToList();
         // eq, not startswith: a pattern function would treat the _ in the names as a wildcard.
@@ -149,7 +154,7 @@ public sealed partial class DataverseDesignSource(IOptions<TrustOptions> trust, 
             if (row.TryGetProperty("environmentvariabledefinition_environmentvariablevalue", out var current) && current.ValueKind == JsonValueKind.Array)
             {
                 if (current.GetArrayLength() > 1)
-                    problems.Add($"{schema} in environment {environmentId} has {current.GetArrayLength()} current values; it may have one");
+                    problems[schema] = $"{schema} in environment {environmentId} has {current.GetArrayLength()} current values; it may have one";
                 else if (current.GetArrayLength() == 1 && current[0].TryGetProperty("value", out var cv) && cv.ValueKind == JsonValueKind.String)
                     value = cv.GetString();
             }

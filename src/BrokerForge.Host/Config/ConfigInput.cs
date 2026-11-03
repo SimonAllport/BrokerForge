@@ -25,6 +25,11 @@ public sealed class ConfigInput
     public List<string> Problems { get; } = new();
     /// <summary>Problems found reading descriptors, reported after the schema problems and before the object map ones.</summary>
     public List<string> DescriptorProblems { get; } = new();
+    /// <summary>
+    /// Why connection designs of this environment were left out, one text each (or why none could be read). Not a
+    /// problem of the store: it serves what did load, and a request it cannot resolve gets these texts.
+    /// </summary>
+    public List<string> DesignFailures { get; } = new();
 }
 
 /// <summary>

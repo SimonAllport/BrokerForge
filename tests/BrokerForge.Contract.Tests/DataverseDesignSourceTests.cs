@@ -108,7 +108,7 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         _dataverse.Variable(OrgA, "bf_WarehouseAPI_Auth", "{\"queryParam\":\"key\"}");
         _dataverse.Variable(OrgA, "bf_OtherAPI_BaseUrl", "https://other.contoso.example");
 
-        var (design, settings) = Assert.Single(await Source().LoadAsync(EnvA, default));
+        var (design, settings) = Assert.Single((await Source().LoadAsync(EnvA, default)).Designs);
 
         Assert.Equal("WarehouseAPI", design.Instance);
         Assert.Equal(3, design.Version);
@@ -132,7 +132,7 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         _dataverse.Design(OrgA, "ext_/brokerforge/StockAPI/design.xml", EnvironmentConfigTests.Warehouse("StockAPI"));
         _dataverse.Variable(OrgA, "bf_WarehouseAPI_BaseUrl", "https://default.contoso.example");
 
-        var loaded = (await Source().LoadAsync(EnvA, default)).ToDictionary(d => d.Design.Instance, d => d.Settings);
+        var loaded = (await Source().LoadAsync(EnvA, default)).Designs.ToDictionary(d => d.Design.Instance, d => d.Settings);
 
         Assert.Equal("https://default.contoso.example", loaded["WarehouseAPI"].BaseUrl);
         Assert.Empty(loaded["WarehouseAPI"].AuthOverrides);
@@ -143,7 +143,7 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
     [Fact]
     public async Task NoDesignsReadsNoVariables()
     {
-        Assert.Empty(await Source().LoadAsync(EnvA, default));
+        Assert.Empty((await Source().LoadAsync(EnvA, default)).Designs);
         Assert.Single(_dataverse.Calls);
     }
 
@@ -158,26 +158,45 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         else
             _dataverse.Raw(OrgA, name, body);
 
-        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => Source().LoadAsync(EnvA, default));
-        Assert.Contains($"environment {EnvA}", ex.Message);
-        Assert.Contains(name, ex.Message);
-        Assert.Contains(problem, ex.Message);
+        var load = await Source().LoadAsync(EnvA, default);
+        Assert.Empty(load.Designs);
+        var failure = Assert.Single(load.Failures);
+        Assert.Contains(name, failure);
+        Assert.Contains(problem, failure);
+    }
+
+    [Fact]
+    public async Task OneBadDesignLeavesTheOthers()
+    {
+        _dataverse.Design(OrgA, "ext_/brokerforge/WarehouseAPI/design.xml", EnvironmentConfigTests.Warehouse());
+        _dataverse.Raw(OrgA, "ext_/brokerforge/StockAPI/design.xml", "<brokerforgeDesign");
+        _dataverse.Raw(OrgA, "ext_/brokerforge/notes/old/design.xml", "<notes/>");
+        _dataverse.Variable(OrgA, "bf_WarehouseAPI_BaseUrl", "https://inv.contoso.example");
+
+        var load = await Source().LoadAsync(EnvA, default);
+
+        Assert.Equal("WarehouseAPI", Assert.Single(load.Designs).Design.Instance);
+        Assert.Equal(2, load.Failures.Count);
+        Assert.Contains(load.Failures, f => f.Contains("ext_/brokerforge/StockAPI/design.xml: not valid XML"));
+        Assert.Contains(load.Failures, f => f.Contains("ext_/brokerforge/notes/old/design.xml is not named"));
     }
 
     [Fact]
     public async Task InstanceDifferingOnlyInCaseIsNamed()
     {
         _dataverse.Design(OrgA, "ext_/brokerforge/warehouseapi/design.xml", EnvironmentConfigTests.Warehouse());
-        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => Source().LoadAsync(EnvA, default));
-        Assert.Contains("ext_/brokerforge/warehouseapi/design.xml: the instance in the name, warehouseapi, differs in case from the design's instance WarehouseAPI", ex.Message);
+        var load = await Source().LoadAsync(EnvA, default);
+        Assert.Empty(load.Designs);
+        Assert.Contains("ext_/brokerforge/warehouseapi/design.xml: the instance in the name, warehouseapi, differs in case from the design's instance WarehouseAPI", Assert.Single(load.Failures));
     }
 
     [Fact]
     public async Task WrongWebResourceTypeFails()
     {
         _dataverse.Raw(OrgA, "ext_/brokerforge/WarehouseAPI/design.xml", DesignCarrier.Wrap(DesignSerializer.Serialize(EnvironmentConfigTests.Warehouse())), type: 3);
-        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => Source().LoadAsync(EnvA, default));
-        Assert.Contains("ext_/brokerforge/WarehouseAPI/design.xml has web resource type 3, not 4 (XML)", ex.Message);
+        var load = await Source().LoadAsync(EnvA, default);
+        Assert.Empty(load.Designs);
+        Assert.Contains("ext_/brokerforge/WarehouseAPI/design.xml has web resource type 3, not 4 (XML)", Assert.Single(load.Failures));
     }
 
     [Fact]
@@ -185,9 +204,10 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
     {
         _dataverse.Design(OrgA, "ext_/brokerforge/WarehouseAPI/design.xml", EnvironmentConfigTests.Warehouse());
         _dataverse.Design(OrgA, "contoso_/brokerforge/WarehouseAPI/design.xml", EnvironmentConfigTests.Warehouse());
-        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => Source().LoadAsync(EnvA, default));
+        var load = await Source().LoadAsync(EnvA, default);
+        Assert.Empty(load.Designs);
         Assert.Contains("Instance WarehouseAPI has two connection designs in environment " + EnvA
-            + ": contoso_/brokerforge/WarehouseAPI/design.xml and ext_/brokerforge/WarehouseAPI/design.xml", ex.Message);
+            + ": contoso_/brokerforge/WarehouseAPI/design.xml and ext_/brokerforge/WarehouseAPI/design.xml", Assert.Single(load.Failures));
     }
 
     [Fact]
@@ -195,8 +215,11 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
     {
         _dataverse.Design(OrgA, "ext_/brokerforge/WarehouseAPI/design.xml", EnvironmentConfigTests.Warehouse());
         _dataverse.Variable(OrgA, "bf_WarehouseAPI_Auth", "{\"queryParam\":1}");
-        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => Source().LoadAsync(EnvA, default));
-        Assert.Contains("bf_WarehouseAPI_Auth in environment " + EnvA + " must be a JSON object of strings", ex.Message);
+        _dataverse.Design(OrgA, "ext_/brokerforge/StockAPI/design.xml", EnvironmentConfigTests.Warehouse("StockAPI"));
+        var load = await Source().LoadAsync(EnvA, default);
+        // Only the design whose variable is wrong is left out.
+        Assert.Equal("StockAPI", Assert.Single(load.Designs).Design.Instance);
+        Assert.Contains("bf_WarehouseAPI_Auth in environment " + EnvA + " must be a JSON object of strings", Assert.Single(load.Failures));
     }
 
     [Fact]
@@ -207,13 +230,16 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         _dataverse.Variable(OrgB, "bf_WarehouseAPI_BaseUrl", "https://inv.contoso.example");
         var provider = Provider(new ConnectTests.MutableTime());
 
-        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
-        Assert.Contains("ext_/brokerforge/WarehouseAPI/design.xml", ex.Message);
-        Assert.Contains("$.instance", ex.Message);
+        var a = await provider.ForEnvironmentAsync(EnvA, default);
+        Assert.Null(a.Instance("WarehouseAPI"));
+        var failure = Assert.Single(a.DesignFailures);
+        Assert.Contains("ext_/brokerforge/WarehouseAPI/design.xml", failure);
+        Assert.Contains("$.instance", failure);
         Assert.NotNull((await provider.ForEnvironmentAsync(EnvB, default)).Instance("WarehouseAPI"));
+        Assert.Empty((await provider.ForEnvironmentAsync(EnvB, default)).DesignFailures);
         Assert.NotNull(provider.Files);
-        // Every request for the broken environment fails the same way.
-        Assert.Equal(ex.Message, (await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default))).Message);
+        // Every request for the broken environment gets the same store.
+        Assert.Same(a, await provider.ForEnvironmentAsync(EnvA, default));
     }
 
     [Theory]
@@ -223,8 +249,9 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
     public async Task DataverseDownColdFailsTyped(string reason)
     {
         _dataverse.Down = reason;
-        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => Provider(new ConnectTests.MutableTime()).ForEnvironmentAsync(EnvA, default));
-        Assert.Equal($"Could not read connection designs for environment {EnvA} from Dataverse: {reason}.", ex.Message);
+        var store = await Provider(new ConnectTests.MutableTime()).ForEnvironmentAsync(EnvA, default);
+        // The files still serve; what only a design could resolve gets this text.
+        Assert.Equal(new[] { $"Could not read connection designs for environment {EnvA} from Dataverse: {reason}." }, store.DesignFailures);
     }
 
     [Fact]
@@ -247,8 +274,9 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         Assert.All(warnings, w => Assert.Contains($"Could not read connection designs for environment {EnvA} from Dataverse: HTTP 503 (ServiceUnavailable).", w));
 
         time.Now = start + TimeSpan.FromMinutes(10.1);
-        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
-        Assert.Equal($"Could not read connection designs for environment {EnvA} from Dataverse: HTTP 503 (ServiceUnavailable).", ex.Message);
+        var after = await provider.ForEnvironmentAsync(EnvA, default);
+        Assert.Null(after.Instance("WarehouseAPI"));
+        Assert.Equal(new[] { $"Could not read connection designs for environment {EnvA} from Dataverse: HTTP 503 (ServiceUnavailable)." }, after.DesignFailures);
     }
 
     [Theory]
@@ -271,12 +299,13 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         _dataverse.Down = reason;
         _dataverse.DownTransient = false;
         time.Now += TimeSpan.FromMinutes(6);
-        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
-        Assert.Equal($"Could not read connection designs for environment {EnvA} from Dataverse: {reason}.", ex.Message);
+        var store = await provider.ForEnvironmentAsync(EnvA, default);
+        Assert.Null(store.Instance("WarehouseAPI"));
+        Assert.Equal(new[] { $"Could not read connection designs for environment {EnvA} from Dataverse: {reason}." }, store.DesignFailures);
         Assert.DoesNotContain(log.Lines, l => l.Level == LogLevel.Warning);
         // Still cached for the failure period, so Dataverse is not read again at once.
         var calls = _dataverse.Calls.Count;
-        await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
+        Assert.Same(store, await provider.ForEnvironmentAsync(EnvA, default));
         Assert.Equal(calls, _dataverse.Calls.Count);
     }
 
@@ -286,16 +315,16 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         var time = new ConnectTests.MutableTime();
         var provider = Provider(time);
         _dataverse.Down = "HTTP 503 (ServiceUnavailable)";
-        await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
-        await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
+        Assert.NotEmpty((await provider.ForEnvironmentAsync(EnvA, default)).DesignFailures);
+        Assert.NotEmpty((await provider.ForEnvironmentAsync(EnvA, default)).DesignFailures);
         Assert.Single(_dataverse.Calls);
 
         _dataverse.Down = null;
         time.Now += CompositeConfigProvider.FailureCacheTime - TimeSpan.FromSeconds(1);
-        await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
+        Assert.NotEmpty((await provider.ForEnvironmentAsync(EnvA, default)).DesignFailures);
         Assert.Single(_dataverse.Calls);
         time.Now += TimeSpan.FromSeconds(2);
-        Assert.NotNull(await provider.ForEnvironmentAsync(EnvA, default));
+        Assert.Empty((await provider.ForEnvironmentAsync(EnvA, default)).DesignFailures);
         Assert.Equal(2, _dataverse.Calls.Count);
     }
 

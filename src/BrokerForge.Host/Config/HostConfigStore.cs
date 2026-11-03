@@ -14,7 +14,9 @@ namespace BrokerForge.Host.Config;
 /// from <c>Config:DescriptorsPath/&lt;instance&gt;/*.yaml</c> and table schemas from
 /// <c>Config:SchemasPath/&lt;instance&gt;.yaml</c> (D-10, D-16), plus, per environment, the connection designs
 /// (<see cref="DesignConfigInput"/>). Everything is parsed and validated when the store is built; any error fails the
-/// whole store (at startup for the files), so a bad descriptor never reaches a request. The host reads a schema only for the
+/// whole store (at startup for the files), so a bad descriptor never reaches a request. An environment's store holds
+/// only the designs that are valid beside the files; the others are listed in <see cref="DesignFailures"/>
+/// (<see cref="CompositeConfigProvider"/>). The host reads a schema only for the
 /// Custom API parameters it declares: CRUD descriptors are checked against schemas by <c>bf validate</c> in CI.
 /// </summary>
 public sealed class HostConfigStore
@@ -38,11 +40,27 @@ public sealed class HostConfigStore
 
     private readonly Dictionary<string, DesignOrigin> _designs;
 
-    public HostConfigStore(ConfigInput input)
+    public HostConfigStore(ConfigInput input) : this(input, out var problems)
+    {
+        if (problems.Count > 0)
+            throw new ConfigurationException(
+                (input.EnvironmentId == null ? "Host configuration is invalid:" : $"Configuration for environment {input.EnvironmentId} is invalid:")
+                + string.Concat(problems.Select(p => "\n - " + p)));
+    }
+
+    /// <summary>The store, or null with every problem when the input is not valid.</summary>
+    internal static HostConfigStore? TryCreate(ConfigInput input, out IReadOnlyList<string> problems)
+    {
+        var store = new HostConfigStore(input, out var found);
+        problems = found;
+        return found.Count == 0 ? store : null;
+    }
+
+    private HostConfigStore(ConfigInput input, out List<string> problems)
     {
         Input = input;
         _designs = input.Designs;
-        var problems = new List<string>();
+        problems = new List<string>();
         LoadOAuthResources(input.OAuthResources, problems);
         _connectBaseUrl = input.ConnectBaseUrl?.TrimEnd('/');
         _connectClientId = input.ConnectClientId;
@@ -52,14 +70,22 @@ public sealed class HostConfigStore
         problems.AddRange(input.DescriptorProblems);
         LoadDescriptors(input.DescriptorTexts, problems);
         LoadMaps(input.ObjectMaps, problems);
-        if (problems.Count > 0)
-            throw new ConfigurationException(
-                (input.EnvironmentId == null ? "Host configuration is invalid:" : $"Configuration for environment {input.EnvironmentId} is invalid:")
-                + string.Concat(problems.Select(p => "\n - " + p)));
     }
 
     /// <summary>What the store was built from; an environment's store merges its designs into the file store's input.</summary>
     internal ConfigInput Input { get; }
+
+    /// <summary>Why connection designs of this environment were left out (<see cref="ConfigInput.DesignFailures"/>); empty when all loaded.</summary>
+    public IReadOnlyList<string> DesignFailures => Input.DesignFailures;
+
+    /// <summary>
+    /// For a request this store cannot resolve: when connection designs of its environment were left out, the
+    /// <see cref="ConfigurationException"/> to throw instead of "unknown", since the missing design may be what would
+    /// have resolved it. Null when every design loaded.
+    /// </summary>
+    public ConfigurationException? NotLoaded(string what) => DesignFailures.Count == 0 ? null : new ConfigurationException(
+        $"{what} cannot be served in environment {Input.EnvironmentId}, where connection designs could not be loaded:"
+        + string.Concat(DesignFailures.Select(f => "\n - " + f)));
 
     public static HostConfigStore FromConfiguration(IConfiguration configuration) => new(FileConfigInput.Read(configuration));
 

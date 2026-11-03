@@ -75,7 +75,11 @@ public static partial class ConnectEndpoints
         _ => CredentialKind.Sso,
     };
 
-    private static IResult NotFound(string name) => ConnectPages.Message(404, "Not found", $"There is no per-user service instance called {name}.");
+    /// <summary>404, unless designs of the environment were left out: one of them may be the instance, so say why (final review I1).</summary>
+    private static IResult NotFound(HostConfigStore config, string name) =>
+        config.NotLoaded($"Service instance {name}") is { } notLoaded
+            ? ConnectPages.Message(500, "Not available", notLoaded.Message)
+            : ConnectPages.Message(404, "Not found", $"There is no per-user service instance called {name}.");
 
     private static string PagePath(ServiceInstance si) => HostConfigStore.ConnectPath(si);
 
@@ -98,8 +102,9 @@ public static partial class ConnectEndpoints
 
     private static async Task<IResult> Status(string instance, HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IAntiforgery antiforgery, CancellationToken ct)
     {
-        if ((await Find(http, configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
-            return NotFound(instance);
+        var (found, config) = await Find(http, configs, EnvironmentOf(http), instance, ct);
+        if (found is not { } si)
+            return NotFound(config, instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
         UserCredential? credential = null;
@@ -135,7 +140,7 @@ public static partial class ConnectEndpoints
     {
         var (found, config) = await Find(http, configs, EnvironmentOf(http), instance, ct);
         if (found is not { } si)
-            return NotFound(instance);
+            return NotFound(config, instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
         if (!await AntiforgeryValid(http, antiforgery))
@@ -188,7 +193,7 @@ public static partial class ConnectEndpoints
         }
         var (found, config) = await Find(http, configs, state.EnvironmentId, state.Instance, ct);
         if (found is not { Auth.Mode: AuthMode.OAuth or AuthMode.Impersonate } si)
-            return NotFound(state.Instance);
+            return NotFound(config, state.Instance);
         if (q["error"].ToString() is { Length: > 0 } error)
             return Refused($"The sign-in at the source did not complete ({(OAuthErrorCode().IsMatch(error) ? error : "unknown error")}).");
         if (q["code"].ToString() is not { Length: > 0 } code)
@@ -224,8 +229,9 @@ public static partial class ConnectEndpoints
     private static async Task<IResult> SaveSso(string instance, HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IAntiforgery antiforgery,
         TimeProvider time, ILoggerFactory loggers, CancellationToken ct)
     {
-        if ((await Find(http, configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
-            return NotFound(instance);
+        var (found, config) = await Find(http, configs, EnvironmentOf(http), instance, ct);
+        if (found is not { } si)
+            return NotFound(config, instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
         if (!await AntiforgeryValid(http, antiforgery))
@@ -248,8 +254,9 @@ public static partial class ConnectEndpoints
     private static async Task<IResult> Disconnect(string instance, HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IAntiforgery antiforgery,
         ILoggerFactory loggers, CancellationToken ct)
     {
-        if ((await Find(http, configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
-            return NotFound(instance);
+        var (found, config) = await Find(http, configs, EnvironmentOf(http), instance, ct);
+        if (found is not { } si)
+            return NotFound(config, instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
         if (!await AntiforgeryValid(http, antiforgery))

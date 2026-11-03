@@ -16,7 +16,18 @@ public interface IHostConfigProvider
 /// <summary>Reads an environment's connection designs and their per-environment settings.</summary>
 public interface IDesignSource
 {
-    Task<IReadOnlyList<(ConnectionDesign Design, EnvironmentSettings Settings)>> LoadAsync(string environmentId, CancellationToken ct);
+    /// <summary>
+    /// The designs that could be read, and one failure text per design (or unrelated resource) that could not. Throws
+    /// only when the environment cannot be read at all: <see cref="DesignSourceUnavailableException"/> when that may
+    /// pass by itself, <see cref="BrokerForge.Abstractions.ConfigurationException"/> otherwise.
+    /// </summary>
+    Task<DesignLoad> LoadAsync(string environmentId, CancellationToken ct);
+}
+
+/// <summary>What <see cref="IDesignSource.LoadAsync"/> read: the usable designs, and why each other one was left out.</summary>
+public sealed record DesignLoad(IReadOnlyList<(ConnectionDesign Design, EnvironmentSettings Settings)> Designs, IReadOnlyList<string> Failures)
+{
+    public DesignLoad(IEnumerable<(ConnectionDesign Design, EnvironmentSettings Settings)> designs) : this(designs.ToList(), Array.Empty<string>()) { }
 }
 
 /// <summary>
