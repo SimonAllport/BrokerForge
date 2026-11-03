@@ -233,6 +233,7 @@ public sealed class HostConfigStore
                 o.Config, o.Secrets, design?.EnvironmentId)
             {
                 Incomplete = design?.Incomplete ?? Array.Empty<string>(),
+                DesignVersion = design?.Version,
             };
         }
     }

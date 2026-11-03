@@ -24,6 +24,9 @@ public sealed record ServiceInstance(
     /// instance fails naming them; it is not a startup problem, because a solution import sets them later.
     /// </summary>
     public IReadOnlyList<string> Incomplete { get; init; } = Array.Empty<string>();
+
+    /// <summary>The connection design version a design instance was built from (spec 6, Approval); null for a file instance.</summary>
+    public int? DesignVersion { get; init; }
 }
 
 /// <summary>

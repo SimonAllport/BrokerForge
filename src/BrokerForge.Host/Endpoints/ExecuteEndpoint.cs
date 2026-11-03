@@ -73,14 +73,14 @@ public static partial class ExecuteEndpoint
             if (!TableMessages.Contains(request.Message ?? ""))
             {
                 var (api, apiBroker) = await router.ResolveCustomApiAsync(config, request, ct);
-                log.LogInformation("Executing Custom API {Message} with {Operation} v{Version}", request.Message, api.Descriptor.Operation, api.Descriptor.Version);
+                log.LogInformation("Executing Custom API {Message} with {Operation} v{Version}{Design}", request.Message, api.Descriptor.Operation, api.Descriptor.Version, DesignLabel(api.Instance));
                 var result = await Call(api.Descriptor, api.Binding, api.Channel, new OperationExecutor(apiBroker), secrets, Deadline.After(timeout), ct);
                 var outputs = ResponseMapper.MapOutputs(api.Descriptor, result, correlationId);
                 log.LogInformation("Completed Custom API {Message} in {ElapsedMs} ms", request.Message, watch.ElapsedMilliseconds);
                 return Results.Json(new CanonicalResponse { CorrelationId = correlationId, Outputs = outputs });
             }
             var (op, broker) = await router.ResolveAsync(config, request, ct);
-            log.LogInformation("Executing {Message} on {Table} with {Operation} v{Version}", request.Message, request.Table, op.Descriptor.Operation, op.Descriptor.Version);
+            log.LogInformation("Executing {Message} on {Table} with {Operation} v{Version}{Design}", request.Message, request.Table, op.Descriptor.Operation, op.Descriptor.Version, DesignLabel(op.Instance));
 
             var response = await Run(request, op, new OperationExecutor(broker), secrets, tokenKey, Deadline.After(timeout), ct);
             response.CorrelationId = correlationId;
@@ -103,6 +103,9 @@ public static partial class ExecuteEndpoint
     /// operation. The platform sends these for Web API upserts and record lookups (phase 1 findings); the
     /// source answers them through the Retrieve descriptor, so nothing is filtered in the host.
     /// </summary>
+    /// <summary>" (design v7)" for an instance built from a connection design, so each call names the approved version it ran (spec 6).</summary>
+    private static string DesignLabel(ServiceInstance instance) => instance.DesignVersion is { } v ? $" (design v{v})" : "";
+
     private static CanonicalRequest? PrimaryKeyLookup(CanonicalRequest request, RequestRouter router, HostConfigStore config)
     {
         if (request.Message != Messages.RetrieveMultiple || !router.HasOperation(config, request.Table, Messages.Retrieve))

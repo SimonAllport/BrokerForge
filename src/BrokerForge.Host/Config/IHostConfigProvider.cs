@@ -18,3 +18,9 @@ public interface IDesignSource
 {
     Task<IReadOnlyList<(ConnectionDesign Design, EnvironmentSettings Settings)>> LoadAsync(string environmentId, CancellationToken ct);
 }
+
+/// <summary>
+/// An <see cref="IDesignSource"/> could not read the environment's designs at all (as opposed to reading a design that
+/// is wrong). The message is the full text a request gets; the provider may serve the last good store meanwhile.
+/// </summary>
+public sealed class DesignSourceUnavailableException(string message) : Exception(message);

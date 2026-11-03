@@ -172,15 +172,27 @@ foreach (var mode in new[] { AuthMode.OAuth, AuthMode.Impersonate })
 builder.Services.AddSingleton<IAuthProvider>(sp => new SsoAuthProvider(sp.GetRequiredService<IUserCredentialStore>(),
     sp.GetRequiredService<HostConfigStore>().ConnectUrl, sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
 builder.Services.AddSingleton<IBroker, RestBroker>();
+// Connection designs live in each environment's Dataverse and are read with the host's own identity (HLD D-34).
+// Off by default: the design source is then null and every environment gets the file configuration. Read when
+// resolved, not here, so the setting comes from the final configuration.
+builder.Services.AddHttpClient("dataverse", c => c.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+    .RemoveAllLoggers();
+builder.Services.AddSingleton<IDataverseReader>(sp => new DataverseReader(sp.GetRequiredService<TokenCredential>(),
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("dataverse")));
+builder.Services.AddSingleton<IDesignSource>(sp => sp.GetRequiredService<IConfiguration>().GetValue("Config:Designs:Enabled", false)
+    ? new DataverseDesignSource(sp.GetRequiredService<IOptions<TrustOptions>>(), sp.GetRequiredService<IDataverseReader>())
+    : null!);
 // One store per environment: the files plus that environment's connection designs (none until a design source is
 // registered). HostConfigStore stays registered as the file store for what is not per environment.
 builder.Services.AddSingleton<IHostConfigProvider>(sp =>
 {
     var configuration = sp.GetRequiredService<IConfiguration>();
-    var ttl = TimeSpan.FromSeconds(configuration.GetValue("Config:DesignCacheSeconds", 300));
+    var ttl = TimeSpan.FromSeconds(configuration.GetValue("Config:Designs:CacheSeconds", 300));
     if (ttl <= TimeSpan.Zero || ttl > TimeSpan.FromMinutes(5))
-        throw new ConfigurationException("Host configuration is invalid:\n - Config:DesignCacheSeconds must be between 1 and 300: a solution import must reach the host within 5 minutes");
-    return new CompositeConfigProvider(HostConfigStore.FromConfiguration(configuration), sp.GetService<IDesignSource>(), sp.GetRequiredService<TimeProvider>(), ttl);
+        throw new ConfigurationException("Host configuration is invalid:\n - Config:Designs:CacheSeconds must be between 1 and 300: a solution import must reach the host within 5 minutes");
+    return new CompositeConfigProvider(HostConfigStore.FromConfiguration(configuration), sp.GetService<IDesignSource>(), sp.GetRequiredService<TimeProvider>(), ttl,
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger("BrokerForge.Config"));
 });
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IHostConfigProvider>().Files);
 builder.Services.AddSingleton<CallerGuard>();
@@ -190,7 +202,8 @@ builder.Services.AddSingleton(sp => PageTokenKey.LoadAsync(sp.GetRequiredService
 var app = builder.Build();
 
 // Validate trust and load every descriptor before taking traffic; any problem stops the host here.
-var trustProblems = app.Services.GetRequiredService<IOptions<TrustOptions>>().Value.Problems().ToList();
+var trustProblems = app.Services.GetRequiredService<IOptions<TrustOptions>>().Value
+    .Problems(app.Configuration.GetValue("Config:Designs:Enabled", false)).ToList();
 if (trustProblems.Count > 0)
     throw new ConfigurationException("Host configuration is invalid:" + string.Concat(trustProblems.Select(p => "\n - " + p)));
 var store = app.Services.GetRequiredService<HostConfigStore>();
