@@ -20,6 +20,7 @@
     <ProjectReference Include="..\BrokerForge.Descriptors\BrokerForge.Descriptors.csproj" />
     <ProjectReference Include="..\BrokerForge.Auth\BrokerForge.Auth.csproj" />
     <ProjectReference Include="..\BrokerForge.Adapters.Rest\BrokerForge.Adapters.Rest.csproj" />
+    <ProjectReference Include="..\BrokerForge.Connections\BrokerForge.Connections.csproj" />
   </ItemGroup>
 
 </Project>

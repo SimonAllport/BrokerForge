@@ -80,6 +80,6 @@ Root:
 No key in the design is per-environment. Those values are `EnvironmentSettings(BaseUrl, AuthOverrides)` and are supplied as Dataverse environment variables:
 
 - `bf_<Instance>_BaseUrl`: the source base URL.
-- `bf_<Instance>_Auth`: JSON object of `AuthOverrides` (string to string).
+- `bf_<Instance>_Auth`: JSON object of `AuthOverrides` (string to string). Each key replaces the `auth` string field of the same name: `mode`, `staticKind`, `headerName`, `queryParam`, `username`, `scope`, `ssoKind` or `asyncContext`. Any other key is a configuration error naming the key and the instance.
 
 Secret values are never part of either; they stay in Key Vault or the host's encrypted store.

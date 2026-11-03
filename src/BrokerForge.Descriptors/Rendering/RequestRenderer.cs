@@ -247,7 +247,7 @@ public static partial class RequestRenderer
                 case SecretBinding s:
                     if (!ctx.Instance.Secrets.TryGetValue(s.Name, out var reference))
                         throw new ConfigurationException($"Service instance {ctx.Instance.Name} has no secret reference named `{s.Name}` ({d.Source} {path}).");
-                    var secret = await secrets.GetAsync(SecretRef.Parse(reference), ct);
+                    var secret = await secrets.GetAsync(SecretRef.Parse(reference), ctx.Instance, ct);
                     SecretValues.Add(secret);
                     SecretValues.Add(Uri.EscapeDataString(secret));
                     return new TextV(secret, Kind.String);

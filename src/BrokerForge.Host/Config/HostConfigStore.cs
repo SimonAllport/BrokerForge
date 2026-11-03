@@ -10,10 +10,11 @@ using BrokerForge.Schema;
 namespace BrokerForge.Host.Config;
 
 /// <summary>
-/// Interim configuration (D-10, D-16): service instances and object maps from host configuration, descriptors
+/// The configuration one request runs against: service instances and object maps from host configuration, descriptors
 /// from <c>Config:DescriptorsPath/&lt;instance&gt;/*.yaml</c> and table schemas from
-/// <c>Config:SchemasPath/&lt;instance&gt;.yaml</c>. Everything is parsed and validated at startup; any error
-/// stops the host, so a bad descriptor never reaches a request. The host reads a schema only for the
+/// <c>Config:SchemasPath/&lt;instance&gt;.yaml</c> (D-10, D-16), plus, per environment, the connection designs
+/// (<see cref="DesignConfigInput"/>). Everything is parsed and validated when the store is built; any error fails the
+/// whole store (at startup for the files), so a bad descriptor never reaches a request. The host reads a schema only for the
 /// Custom API parameters it declares: CRUD descriptors are checked against schemas by <c>bf validate</c> in CI.
 /// </summary>
 public sealed class HostConfigStore
@@ -35,8 +36,12 @@ public sealed class HostConfigStore
     /// <summary>An unbound Custom API: the instance and descriptor that serve it, and its declared parameters.</summary>
     public sealed record ResolvedCustomApi(ServiceInstance Instance, OperationDescriptor Descriptor, CustomApiSchema Schema);
 
+    private readonly Dictionary<string, DesignOrigin> _designs;
+
     public HostConfigStore(ConfigInput input)
     {
+        Input = input;
+        _designs = input.Designs;
         var problems = new List<string>();
         LoadOAuthResources(input.OAuthResources, problems);
         _connectBaseUrl = input.ConnectBaseUrl?.TrimEnd('/');
@@ -48,8 +53,13 @@ public sealed class HostConfigStore
         LoadDescriptors(input.DescriptorTexts, problems);
         LoadMaps(input.ObjectMaps, problems);
         if (problems.Count > 0)
-            throw new ConfigurationException("Host configuration is invalid:" + string.Concat(problems.Select(p => "\n - " + p)));
+            throw new ConfigurationException(
+                (input.EnvironmentId == null ? "Host configuration is invalid:" : $"Configuration for environment {input.EnvironmentId} is invalid:")
+                + string.Concat(problems.Select(p => "\n - " + p)));
     }
+
+    /// <summary>What the store was built from; an environment's store merges its designs into the file store's input.</summary>
+    internal ConfigInput Input { get; }
 
     public static HostConfigStore FromConfiguration(IConfiguration configuration) => new(FileConfigInput.Read(configuration));
 
@@ -71,9 +81,20 @@ public sealed class HostConfigStore
     public OAuthResource OAuthResource(string name) =>
         _oauthResources.GetValueOrDefault(name) ?? throw new ConfigurationException($"OAuthResources:{name} is not configured.");
 
-    /// <summary>The connect page for an instance (HLD D-26): the connectUrl of its ConnectionRequiredException.</summary>
-    public string ConnectUrl(string instance) =>
-        (_connectBaseUrl ?? throw new ConfigurationException("Connect:PublicBaseUrl is not set.")) + "/connect/" + Uri.EscapeDataString(instance);
+    /// <summary>
+    /// The connect page for an instance (HLD D-26): the connectUrl of its ConnectionRequiredException. A design
+    /// instance's page carries its environment, because its name is unique only there.
+    /// </summary>
+    public string ConnectUrl(ServiceInstance instance) =>
+        (_connectBaseUrl ?? throw new ConfigurationException("Connect:PublicBaseUrl is not set.")) + ConnectPath(instance);
+
+    /// <summary>The host-relative path of an instance's connect page.</summary>
+    public static string ConnectPath(ServiceInstance instance) =>
+        "/connect/" + (instance.EnvironmentId == null ? "" : Uri.EscapeDataString(instance.EnvironmentId) + "/") + Uri.EscapeDataString(instance.Name);
+
+    private string DesignSuffix(string instance) => _designs.TryGetValue(instance, out var d) ? $" (design v{d.Version})" : "";
+
+    private string SchemaSource(string instance) => $"schemas/{instance}.yaml{DesignSuffix(instance)}";
 
     /// <summary>The redirect URI every OAuth resource returns to (the connect page's callback).</summary>
     public string ConnectCallbackUrl =>
@@ -170,7 +191,7 @@ public sealed class HostConfigStore
                 continue;
             try
             {
-                _schemas[instance] = SchemaParser.Parse(text, $"schemas/{instance}.yaml");
+                _schemas[instance] = SchemaParser.Parse(text, SchemaSource(instance));
             }
             catch (SchemaException ex)
             {
@@ -184,9 +205,11 @@ public sealed class HostConfigStore
         foreach (var (key, o) in instances)
         {
             var where = $"Instances:{key}";
+            var design = _designs.GetValueOrDefault(key);
             if (o.BrokerType != "rest")
                 problems.Add($"{where}:BrokerType must be rest in phase 1");
-            if (!Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out var baseUri) || baseUri.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(baseUri.Query))
+            // A design instance without its base URL is Incomplete: its calls fail naming the variable to set.
+            if (design is not { Incomplete.Count: > 0 } && (!Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out var baseUri) || baseUri.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(baseUri.Query)))
                 problems.Add($"{where}:BaseUrl must be an absolute http(s) URL without a query");
             if (!Enum.TryParse<AuthMode>(o.Auth.Mode, out var mode))
             {
@@ -195,7 +218,11 @@ public sealed class HostConfigStore
             }
             var asyncAuth = PerUserAuth(mode, o.Auth, where, problems);
             foreach (var reference in o.Secrets.Values.Append(o.Auth.SecretRef).Where(r => r != null))
-                try { SecretRef.Parse(reference!); }
+                try
+                {
+                    if (SecretRef.Parse(reference!).Scheme == "store" && design == null)
+                        problems.Add($"{where}: {reference} is an instance secret, which only a connection design can use; use kv or env");
+                }
                 catch (FormatException ex) { problems.Add($"{where}: {ex.Message}"); }
 
             _instances[key] = new ServiceInstance(
@@ -203,7 +230,10 @@ public sealed class HostConfigStore
                 new AuthConfig(mode, o.Auth.StaticKind, o.Auth.HeaderName, o.Auth.QueryParam, o.Auth.Username, o.Auth.SecretRef, o.Auth.Scope,
                     o.Auth.OAuthResource, o.Auth.SsoKind,
                     Enum.TryParse<AsyncContext>(o.Auth.AsyncContext, out var ac) ? ac : AsyncContext.TriggeringUser, asyncAuth),
-                o.Config, o.Secrets);
+                o.Config, o.Secrets, design?.EnvironmentId)
+            {
+                Incomplete = design?.Incomplete ?? Array.Empty<string>(),
+            };
         }
     }
 
@@ -217,7 +247,7 @@ public sealed class HostConfigStore
             foreach (var (file, text) in texts.Where(t => t.Key.Instance == instance.Name)
                          .Select(t => (t.Key.File, t.Value)).OrderBy(t => t.File, StringComparer.Ordinal))
             {
-                var source = $"{instance.Name}/{file}";
+                var source = $"{instance.Name}/{file}{DesignSuffix(instance.Name)}";
                 try
                 {
                     var d = DescriptorParser.Parse(text, source);
@@ -234,7 +264,7 @@ public sealed class HostConfigStore
             }
             foreach (var api in schema?.CustomApis.Keys ?? Enumerable.Empty<string>())
                 if (_customApis.GetValueOrDefault(api)?.Instance != instance)
-                    problems.Add($"schemas/{instance.Name}.yaml declares Custom API {api}, but no {instance.Name} descriptor binds it");
+                    problems.Add($"{SchemaSource(instance.Name)} declares Custom API {api}, but no {instance.Name} descriptor binds it");
         }
     }
 
@@ -250,7 +280,7 @@ public sealed class HostConfigStore
         sources[api] = source;
         if (schema?.CustomApis.GetValueOrDefault(api) is not { } declared)
         {
-            problems.Add($"{source}: binds Custom API {api}, but schemas/{instance.Name}.yaml does not declare it, so its parameters are unknown");
+            problems.Add($"{source}: binds Custom API {api}, but {SchemaSource(instance.Name)} does not declare it, so its parameters are unknown");
             return;
         }
         _customApis[api] = new ResolvedCustomApi(instance, d, declared);

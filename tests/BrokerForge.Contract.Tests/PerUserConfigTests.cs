@@ -52,6 +52,12 @@ public class PerUserConfigTests : IDisposable
         Assert.Throws<ConfigurationException>(() => Load(settings)).Message;
 
     [Fact]
+    public void Config_StoreSecretOnFileInstance_Fails() =>
+        Assert.Contains("Instances:Tickets: store:apiKey is an instance secret, which only a connection design can use",
+            Problems(Settings("Static", ("Instances:Tickets:Auth:StaticKind", "apiKeyHeader"), ("Instances:Tickets:Auth:HeaderName", "X-Key"),
+                ("Instances:Tickets:Auth:SecretRef", "store:apiKey"))));
+
+    [Fact]
     public void Config_PerUserModesLoad()
     {
         var oauth = Load(Settings("OAuth"));
@@ -61,7 +67,7 @@ public class PerUserConfigTests : IDisposable
         var tickets = oauth.OAuthResource("Tickets");
         Assert.Equal(new[] { "tickets.read" }, tickets.Scopes);
         Assert.False(tickets.UsesConnectApp);
-        Assert.Equal("https://bf-host.example/connect/Tickets", oauth.ConnectUrl("Tickets"));
+        Assert.Equal("https://bf-host.example/connect/Tickets", oauth.ConnectUrl(oauth.Instance("Tickets")!));
 
         var impersonate = Load(Settings("Impersonate"));
         Assert.True(impersonate.OAuthResource("Entra").UsesConnectApp);

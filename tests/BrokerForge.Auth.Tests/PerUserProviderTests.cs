@@ -118,7 +118,7 @@ public class PerUserProviderTests
     private TokenEndpointClient Client() => new(new HttpClient(_tokens), new FixedSecrets(), new FakeConnectApp(), new FixedTime(Now));
 
     private DelegatedTokenAuthProvider Delegated(AuthMode mode = AuthMode.OAuth) =>
-        new(mode, _store, name => name == "Entra" ? Entra : Tickets, Client(), _ => ConnectUrl, new HttpClient(_source), _log, new FixedTime(Now));
+        new(mode, _store, (i, _) => Task.FromResult(i.Auth.OAuthResource == "Entra" ? Entra : Tickets), Client(), _ => ConnectUrl, new HttpClient(_source), _log, new FixedTime(Now));
 
     private static UserCredential Tokens(DateTimeOffset expires, CredentialKind kind = CredentialKind.OAuth, CredentialStatus status = CredentialStatus.Connected) =>
         new(kind, status, "at-1", "rt-1", expires, null, null, Now.AddHours(-2));
@@ -428,7 +428,7 @@ public class PerUserProviderTests
     [Fact]
     public async Task UnreadableCredential_ConnectionRequired()
     {
-        var oauth = new DelegatedTokenAuthProvider(AuthMode.OAuth, new UnreadableStore(), _ => Tickets, Client(), _ => ConnectUrl, new HttpClient(_source), _log, new FixedTime(Now));
+        var oauth = new DelegatedTokenAuthProvider(AuthMode.OAuth, new UnreadableStore(), (_, _) => Task.FromResult(Tickets), Client(), _ => ConnectUrl, new HttpClient(_source), _log, new FixedTime(Now));
         var ex = await Assert.ThrowsAsync<ConnectionRequiredException>(() => oauth.AuthenticateAsync(OAuthInstance, Caller(), "corr-1", default));
         Assert.Contains("could not be read", ex.Message);
         Assert.Equal(ConnectUrl, ex.ConnectUrl);

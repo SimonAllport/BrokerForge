@@ -9,14 +9,15 @@ namespace BrokerForge.Auth.PerUser;
 /// <summary>
 /// OAuth and Impersonate (HLD 9.1, D-28): the caller's stored access token as a bearer, refreshed when it has
 /// under a minute left. No credential, an expired or revoked one, or a refused refresh is a
-/// ConnectionRequiredException. Nothing here can reach another identity.
+/// ConnectionRequiredException. Nothing here can reach another identity. Credentials are kept under
+/// <see cref="CredentialPartition"/>, and <c>resources</c> looks up the instance's OAuth resource in its own environment.
 /// </summary>
 public sealed class DelegatedTokenAuthProvider(
     AuthMode mode,
     IUserCredentialStore store,
-    Func<string, OAuthResource> resources,
+    Func<ServiceInstance, CancellationToken, Task<OAuthResource>> resources,
     TokenEndpointClient tokens,
-    Func<string, string> connectUrl,
+    Func<ServiceInstance, string> connectUrl,
     HttpClient http,
     ILogger log,
     TimeProvider time,
@@ -55,41 +56,42 @@ public sealed class DelegatedTokenAuthProvider(
         if (instance.Auth.Mode != Mode)
             throw new ConfigurationException($"Service instance {instance.Name} uses {instance.Auth.Mode}, not {Mode}.");
         var user = ConnectionRequired.User(instance, caller, correlationId, connectUrl);
+        var key = CredentialPartition.For(instance);
 
-        var credential = Usable(instance, await store.GetAsync(instance.Name, user, ct), correlationId);
+        var credential = Usable(instance, await store.GetAsync(key, user, ct), correlationId);
         if (!ExpiresSoon(credential))
             return Channel(credential.AccessToken!);
 
         // The gate stops two calls on this replica refreshing at once. Across replicas, and against the user's
         // own disconnect or reconnect, every write below is conditional on the row version read here.
-        using (await _gate.EnterAsync(instance.Name, user, ct))
+        using (await _gate.EnterAsync(key, user, ct))
         {
-            var row = await store.GetVersionedAsync(instance.Name, user, ct);
+            var row = await store.GetVersionedAsync(key, user, ct);
             credential = Usable(instance, row?.Credential, correlationId);
             if (!ExpiresSoon(credential))
                 return Channel(credential.AccessToken!);
             if (credential.RefreshToken == null)
             {
-                await store.SetStatusIfUnchangedAsync(instance.Name, user, CredentialStatus.Expired, row!.Version, ct);
+                await store.SetStatusIfUnchangedAsync(key, user, CredentialStatus.Expired, row!.Version, ct);
                 throw ConnectionRequired.Because(instance, "the stored token has expired and cannot be refreshed", correlationId, connectUrl);
             }
 
             TokenSet refreshed;
             try
             {
-                refreshed = await tokens.RefreshAsync(resources(instance.Auth.OAuthResource!), credential.RefreshToken, ct);
+                refreshed = await tokens.RefreshAsync(await resources(instance, ct), credential.RefreshToken, ct);
             }
             catch (RefreshRejectedException)
             {
                 // Refused because another replica used this refresh token first, or the user reconnected meanwhile:
                 // the row then holds a newer grant, and that grant is the answer.
-                if (await NewerGrant(instance.Name, user, credential, ct) is { } newer)
+                if (await NewerGrant(key, user, credential, ct) is { } newer)
                     return Channel(newer.AccessToken!);
                 await Task.Delay(_refusalGrace, ct);
-                if (await NewerGrant(instance.Name, user, credential, ct) is { } later)
+                if (await NewerGrant(key, user, credential, ct) is { } later)
                     return Channel(later.AccessToken!);
-                if (!await store.SetStatusIfUnchangedAsync(instance.Name, user, CredentialStatus.Expired, row!.Version, ct)
-                    && await NewerGrant(instance.Name, user, credential, ct) is { } last)
+                if (!await store.SetStatusIfUnchangedAsync(key, user, CredentialStatus.Expired, row!.Version, ct)
+                    && await NewerGrant(key, user, credential, ct) is { } last)
                     return Channel(last.AccessToken!);
                 log.LogWarning("The {Mode} refresh for {Instance} user {UserObjectId} was refused; marked expired", Mode, instance.Name, user);
                 throw ConnectionRequired.Because(instance, "the stored token has expired and the source refused to refresh it", correlationId, connectUrl);
@@ -107,12 +109,12 @@ public sealed class DelegatedTokenAuthProvider(
             // refresh of the same token was refused (only the status changed, so the refreshed grant still stands).
             for (var attempt = 0; attempt < 2; attempt++)
             {
-                if (await store.ReplaceIfUnchangedAsync(instance.Name, user, updated, version, ct))
+                if (await store.ReplaceIfUnchangedAsync(key, user, updated, version, ct))
                 {
                     log.LogInformation("Refreshed the {Mode} token for {Instance} user {UserObjectId}", Mode, instance.Name, user);
                     return Channel(refreshed.AccessToken);
                 }
-                var now = await store.GetVersionedAsync(instance.Name, user, ct);
+                var now = await store.GetVersionedAsync(key, user, ct);
                 if (now == null)
                     throw ConnectionRequired.Because(instance, "the user disconnected while the token was being refreshed", correlationId, connectUrl);
                 if (now.Credential.RefreshToken != credential.RefreshToken)

@@ -10,17 +10,18 @@ namespace BrokerForge.Host.Routing;
 
 /// <summary>
 /// Resolves a canonical request to its object map, approved descriptor, key strategy and authenticated
-/// channel (HLD 4 step 3, 5). A table, message or instance that does not line up is refused.
+/// channel (HLD 4 step 3, 5), in the configuration of the request's environment. A table, message or instance that
+/// does not line up is refused.
 /// </summary>
-public sealed class RequestRouter(HostConfigStore config, IEnumerable<IAuthProvider> providers, IEnumerable<IBroker> brokers)
+public sealed class RequestRouter(IEnumerable<IAuthProvider> providers, IEnumerable<IBroker> brokers)
 {
     private readonly Dictionary<AuthMode, IAuthProvider> _providers = providers.ToDictionary(p => p.Mode);
     private readonly Dictionary<string, IBroker> _brokers = brokers.ToDictionary(b => b.BrokerType);
 
-    public bool HasOperation(string? table, string message) =>
+    public bool HasOperation(HostConfigStore config, string? table, string message) =>
         table != null && config.Map(table)?.Map.Operations.ContainsKey(message) == true;
 
-    public async Task<(OperationContext Op, IBroker Broker)> ResolveAsync(CanonicalRequest request, CancellationToken ct)
+    public async Task<(OperationContext Op, IBroker Broker)> ResolveAsync(HostConfigStore config, CanonicalRequest request, CancellationToken ct)
     {
         var correlationId = request.CorrelationId!;
         UnsupportedQueryException Reject(string why) => new(why, correlationId);
@@ -59,7 +60,7 @@ public sealed class RequestRouter(HostConfigStore config, IEnumerable<IAuthProvi
     /// An unbound Custom API (HLD D-18): the message is its unique name and the descriptor that binds it names
     /// the instance. Inputs are checked against the schema's declared parameters before anything is sent.
     /// </summary>
-    public async Task<(CustomApiContext Api, IBroker Broker)> ResolveCustomApiAsync(CanonicalRequest request, CancellationToken ct)
+    public async Task<(CustomApiContext Api, IBroker Broker)> ResolveCustomApiAsync(HostConfigStore config, CanonicalRequest request, CancellationToken ct)
     {
         var correlationId = request.CorrelationId!;
         var name = request.Message ?? "";
@@ -115,6 +116,8 @@ public sealed class RequestRouter(HostConfigStore config, IEnumerable<IAuthProvi
 
     private async Task<(IBroker Broker, IAuthenticatedChannel Channel)> Connect(ServiceInstance instance, CanonicalRequest request, string correlationId, CancellationToken ct)
     {
+        if (instance.Incomplete.Count > 0)
+            throw new ConfigurationException($"Service instance {instance.Name} needs its {string.Join("; ", instance.Incomplete.Select(Missing))}.");
         var broker = _brokers.GetValueOrDefault(instance.BrokerType)
             ?? throw new ConfigurationException($"No adapter is registered for broker type {instance.BrokerType}.");
         var caller = request.Caller ?? new CallerContext();
@@ -122,6 +125,15 @@ public sealed class RequestRouter(HostConfigStore config, IEnumerable<IAuthProvi
         var provider = _providers.GetValueOrDefault(effective.Auth.Mode)
             ?? throw new ConfigurationException($"No authentication provider is registered for mode {effective.Auth.Mode}.");
         return (broker, await provider.AuthenticateAsync(effective, caller, correlationId, ct));
+    }
+
+    /// <summary>"base URL (environment variable bf_X_BaseUrl)" reads "base URL in this environment: set environment variable bf_X_BaseUrl".</summary>
+    private static string Missing(string incomplete)
+    {
+        var open = incomplete.IndexOf(" (", StringComparison.Ordinal);
+        return open < 0 || !incomplete.EndsWith(')')
+            ? incomplete + " in this environment"
+            : $"{incomplete[..open]} in this environment: set {incomplete[(open + 2)..^1]}";
     }
 
     private static ExternalKey? DecodeId(CanonicalRequest request, IKeyStrategy keys)

@@ -10,6 +10,7 @@ namespace BrokerForge.Contract.Tests;
 public sealed class MockApiFixture : IAsyncLifetime
 {
     public const string ApiKey = "bf-test-dummy-key";
+    public const string InventoryKey = "bf-test-dummy-inventory-key";
     public const int SlowMs = 5000;
     private Process? _process;
 
@@ -33,6 +34,7 @@ public sealed class MockApiFixture : IAsyncLifetime
         };
         info.Environment["PORT"] = "0";
         info.Environment["MOCK_API_KEY"] = ApiKey;
+        info.Environment["MOCK_INVENTORY_KEY"] = InventoryKey;
         info.Environment["MOCK_SLOW_MS"] = SlowMs.ToString();
         foreach (var (k, v) in Tickets.MockEnvironment())
             info.Environment[k] = v;

@@ -13,7 +13,9 @@ namespace BrokerForge.Host.Connect;
 /// The connect page (HLD 9.1, D-26). The user signs in with Entra (the Connect cookie scheme), and what they
 /// grant is stored under their Entra object ID, the ID the plug-in sends as caller.userObjectId:
 /// OAuth and Impersonate through the authorisation-code flow with PKCE, SSO through a form. Every POST checks
-/// antiforgery. No credential is logged, echoed or put in a page.
+/// antiforgery. No credential is logged, echoed or put in a page. A host-settings instance's page is
+/// <c>/connect/&lt;instance&gt;</c>; a connection design's is <c>/connect/&lt;environmentId&gt;/&lt;instance&gt;</c>, read from that
+/// environment's configuration and stored under its <see cref="CredentialPartition"/>.
 /// </summary>
 public static partial class ConnectEndpoints
 {
@@ -30,10 +32,13 @@ public static partial class ConnectEndpoints
     {
         var group = app.MapGroup("/connect").RequireAuthorization(Policy);
         group.MapGet("/callback", Callback);
-        group.MapGet("/{instance}", Status);
-        group.MapPost("/{instance}/start", Start);
-        group.MapPost("/{instance}/sso", SaveSso);
-        group.MapPost("/{instance}/disconnect", Disconnect);
+        foreach (var prefix in new[] { "", "/{environmentId:guid}" })
+        {
+            group.MapGet(prefix + "/{instance}", Status);
+            group.MapPost(prefix + "/{instance}/start", Start);
+            group.MapPost(prefix + "/{instance}/sso", SaveSso);
+            group.MapPost(prefix + "/{instance}/disconnect", Disconnect);
+        }
     }
 
     private static string? UserObjectId(HttpContext http) =>
@@ -41,6 +46,21 @@ public static partial class ConnectEndpoints
 
     private static ServiceInstance? PerUser(HostConfigStore config, string name) =>
         config.Instance(name) is { Auth.Mode: AuthMode.OAuth or AuthMode.Impersonate or AuthMode.Sso } instance ? instance : null;
+
+    /// <summary>
+    /// The per-user instance a page is for, and the configuration it comes from: the files without an environment,
+    /// else that environment's designs only (a host-settings instance never answers under an environment).
+    /// </summary>
+    private static async Task<(ServiceInstance? Instance, HostConfigStore Config)> Find(IHostConfigProvider configs, string? environmentId, string name, CancellationToken ct)
+    {
+        if (environmentId == null)
+            return (PerUser(configs.Files, name), configs.Files);
+        var config = await configs.ForEnvironmentAsync(environmentId, ct);
+        return (PerUser(config, name) is { EnvironmentId: not null } si ? si : null, config);
+    }
+
+    private static string? EnvironmentOf(HttpContext http) =>
+        http.Request.RouteValues.TryGetValue("environmentId", out var env) && Guid.TryParse(env?.ToString(), out var id) ? id.ToString("D") : null;
 
     private static CredentialKind KindFor(AuthMode mode) => mode switch
     {
@@ -50,6 +70,8 @@ public static partial class ConnectEndpoints
     };
 
     private static IResult NotFound(string name) => ConnectPages.Message(404, "Not found", $"There is no per-user service instance called {name}.");
+
+    private static string PagePath(ServiceInstance si) => HostConfigStore.ConnectPath(si);
 
     private static IResult NoIdentity() => ConnectPages.Message(403, "Not signed in", "Your sign-in did not include an Entra object ID, so nothing can be stored for you.");
 
@@ -68,9 +90,9 @@ public static partial class ConnectEndpoints
 
     private static IResult Refused(string message) => ConnectPages.Message(400, "Connection not saved", message);
 
-    private static async Task<IResult> Status(string instance, HttpContext http, HostConfigStore config, IUserCredentialStore store, IAntiforgery antiforgery, CancellationToken ct)
+    private static async Task<IResult> Status(string instance, HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IAntiforgery antiforgery, CancellationToken ct)
     {
-        if (PerUser(config, instance) is not { } si)
+        if ((await Find(configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
             return NotFound(instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
@@ -78,7 +100,7 @@ public static partial class ConnectEndpoints
         var unreadable = false;
         try
         {
-            credential = await store.GetAsync(si.Name, user, ct);
+            credential = await store.GetAsync(CredentialPartition.For(si), user, ct);
         }
         catch (CredentialUnreadableException)
         {
@@ -95,17 +117,18 @@ public static partial class ConnectEndpoints
         };
         var body = ConnectPages.Paragraph($"Service: {si.Name}. Status: {status}.");
         body += si.Auth.Mode == AuthMode.Sso
-            ? ConnectPages.Form($"/connect/{si.Name}/sso", token, ConnectPages.SsoFields(si.Auth.SsoKind == "basic"), "Save")
-            : ConnectPages.Form($"/connect/{si.Name}/start", token, "", credential == null && !unreadable ? "Connect" : "Connect again");
+            ? ConnectPages.Form($"{PagePath(si)}/sso", token, ConnectPages.SsoFields(si.Auth.SsoKind == "basic"), "Save")
+            : ConnectPages.Form($"{PagePath(si)}/start", token, "", credential == null && !unreadable ? "Connect" : "Connect again");
         if (credential != null || unreadable)
-            body += ConnectPages.Form($"/connect/{si.Name}/disconnect", token, "", "Disconnect");
+            body += ConnectPages.Form($"{PagePath(si)}/disconnect", token, "", "Disconnect");
         return ConnectPages.Page(200, $"Connect to {si.Name}", body);
     }
 
-    private static async Task<IResult> Start(string instance, HttpContext http, HostConfigStore config, IAntiforgery antiforgery,
-        IDataProtectionProvider protection, TimeProvider time, IServiceProvider services)
+    private static async Task<IResult> Start(string instance, HttpContext http, IHostConfigProvider configs, IAntiforgery antiforgery,
+        IDataProtectionProvider protection, TimeProvider time, IServiceProvider services, CancellationToken ct)
     {
-        if (PerUser(config, instance) is not { } si)
+        var (found, config) = await Find(configs, EnvironmentOf(http), instance, ct);
+        if (found is not { } si)
             return NotFound(instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
@@ -118,7 +141,7 @@ public static partial class ConnectEndpoints
         var clientId = resource.UsesConnectApp
             ? (services.GetService<IConnectAppClient>() ?? throw new ConfigurationException("Connect:ClientId is not set.")).ClientId
             : resource.ClientId!;
-        var state = new ConnectState(si.Name, user, ConnectState.Random(32), ConnectState.Random(16), time.GetUtcNow());
+        var state = new ConnectState(si.Name, user, ConnectState.Random(32), ConnectState.Random(16), time.GetUtcNow(), si.EnvironmentId);
         http.Response.Cookies.Append(state.NonceCookieName, state.Nonce, new CookieOptions
         {
             HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Lax, Path = "/connect/callback", MaxAge = ConnectState.Lifetime,
@@ -137,7 +160,7 @@ public static partial class ConnectEndpoints
         return Results.Redirect(resource.AuthorizeUrl + separator + query.Value![1..]);
     }
 
-    private static async Task<IResult> Callback(HttpContext http, HostConfigStore config, IUserCredentialStore store, IDataProtectionProvider protection,
+    private static async Task<IResult> Callback(HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IDataProtectionProvider protection,
         TokenEndpointClient tokens, TimeProvider time, ILoggerFactory loggers, CancellationToken ct)
     {
         var log = loggers.CreateLogger("BrokerForge.Connect");
@@ -157,7 +180,8 @@ public static partial class ConnectEndpoints
             log.LogWarning("Connect callback for {Instance} refused: started by another user", state.Instance);
             return Refused("This sign-in was started by another user. Start again from the connect page.");
         }
-        if (PerUser(config, state.Instance) is not { Auth.Mode: AuthMode.OAuth or AuthMode.Impersonate } si)
+        var (found, config) = await Find(configs, state.EnvironmentId, state.Instance, ct);
+        if (found is not { Auth.Mode: AuthMode.OAuth or AuthMode.Impersonate } si)
             return NotFound(state.Instance);
         if (q["error"].ToString() is { Length: > 0 } error)
             return Refused($"The sign-in at the source did not complete ({(OAuthErrorCode().IsMatch(error) ? error : "unknown error")}).");
@@ -178,16 +202,16 @@ public static partial class ConnectEndpoints
             log.LogWarning("Connect for {Instance} user {UserObjectId} failed: {Reason}", si.Name, state.UserObjectId, ex.Message);
             return ConnectPages.Message(502, "Connection not saved", "The source's sign-in service did not answer properly. Try again later.");
         }
-        await store.SaveAsync(si.Name, state.UserObjectId,
+        await store.SaveAsync(CredentialPartition.For(si), state.UserObjectId,
             new UserCredential(KindFor(si.Auth.Mode), CredentialStatus.Connected, set.AccessToken, set.RefreshToken, set.ExpiresAt, null, null, time.GetUtcNow()), ct);
         log.LogInformation("Connected {Mode} for {Instance} user {UserObjectId}", si.Auth.Mode, si.Name, state.UserObjectId);
-        return SeeOther($"/connect/{si.Name}");
+        return SeeOther(PagePath(si));
     }
 
-    private static async Task<IResult> SaveSso(string instance, HttpContext http, HostConfigStore config, IUserCredentialStore store, IAntiforgery antiforgery,
+    private static async Task<IResult> SaveSso(string instance, HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IAntiforgery antiforgery,
         TimeProvider time, ILoggerFactory loggers, CancellationToken ct)
     {
-        if (PerUser(config, instance) is not { } si)
+        if ((await Find(configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
             return NotFound(instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
@@ -203,23 +227,23 @@ public static partial class ConnectEndpoints
             return Refused($"Enter a password or key of 1 to {MaxSecret} characters on one line.");
         if (basic && (username!.Length is 0 or > MaxUsername || username.IndexOfAny(new[] { '\r', '\n', ':' }) >= 0))
             return Refused($"Enter a username of 1 to {MaxUsername} characters without a colon.");
-        await store.SaveAsync(si.Name, user, new UserCredential(CredentialKind.Sso, CredentialStatus.Connected, null, null, null, username, secret, time.GetUtcNow()), ct);
+        await store.SaveAsync(CredentialPartition.For(si), user, new UserCredential(CredentialKind.Sso, CredentialStatus.Connected, null, null, null, username, secret, time.GetUtcNow()), ct);
         loggers.CreateLogger("BrokerForge.Connect").LogInformation("Connected Sso for {Instance} user {UserObjectId}", si.Name, user);
-        return SeeOther($"/connect/{si.Name}");
+        return SeeOther(PagePath(si));
     }
 
-    private static async Task<IResult> Disconnect(string instance, HttpContext http, HostConfigStore config, IUserCredentialStore store, IAntiforgery antiforgery,
+    private static async Task<IResult> Disconnect(string instance, HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IAntiforgery antiforgery,
         ILoggerFactory loggers, CancellationToken ct)
     {
-        if (PerUser(config, instance) is not { } si)
+        if ((await Find(configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
             return NotFound(instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
         if (!await AntiforgeryValid(http, antiforgery))
             return Refused("The form has expired. Open the connect page again.");
-        await store.DeleteAsync(si.Name, user, ct);
+        await store.DeleteAsync(CredentialPartition.For(si), user, ct);
         loggers.CreateLogger("BrokerForge.Connect").LogInformation("Disconnected {Instance} user {UserObjectId}", si.Name, user);
-        return SeeOther($"/connect/{si.Name}");
+        return SeeOther(PagePath(si));
     }
 
     /// <summary>303, so the browser follows a POST with a GET of the status page.</summary>

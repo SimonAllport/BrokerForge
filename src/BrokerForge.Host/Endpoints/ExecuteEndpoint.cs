@@ -6,6 +6,7 @@ using BrokerForge.Descriptors.Mapping;
 using BrokerForge.Descriptors.Model;
 using BrokerForge.Descriptors.Planning;
 using BrokerForge.Descriptors.Rendering;
+using BrokerForge.Host.Config;
 using BrokerForge.Host.Errors;
 using BrokerForge.Host.Execution;
 using BrokerForge.Host.Ingress;
@@ -33,6 +34,7 @@ public static partial class ExecuteEndpoint
         HttpContext http,
         CallerGuard guard,
         RequestRouter router,
+        IHostConfigProvider configs,
         ISecretResolver secrets,
         PageTokenKey tokenKey,
         IConfiguration configuration,
@@ -58,23 +60,24 @@ public static partial class ExecuteEndpoint
         try
         {
             guard.Check(http.User, request);
+            var config = await configs.ForEnvironmentAsync(request.EnvironmentId!, ct);
             var timeout = TimeSpan.FromSeconds(configuration.GetValue("Host:TimeoutSeconds", 90));
-            if (PrimaryKeyLookup(request, router) is { } lookup)
+            if (PrimaryKeyLookup(request, router, config) is { } lookup)
             {
-                var rows = await LookUpByKey(lookup, router, secrets, tokenKey, Deadline.After(timeout), ct);
+                var rows = await LookUpByKey(lookup, router, config, secrets, tokenKey, Deadline.After(timeout), ct);
                 log.LogInformation("Completed {Message} on {Table} as a primary key lookup in {ElapsedMs} ms", request.Message, request.Table, watch.ElapsedMilliseconds);
                 return Results.Json(new CanonicalResponse { CorrelationId = correlationId, Rows = rows });
             }
             if (!TableMessages.Contains(request.Message ?? ""))
             {
-                var (api, apiBroker) = await router.ResolveCustomApiAsync(request, ct);
+                var (api, apiBroker) = await router.ResolveCustomApiAsync(config, request, ct);
                 log.LogInformation("Executing Custom API {Message} with {Operation} v{Version}", request.Message, api.Descriptor.Operation, api.Descriptor.Version);
                 var result = await Call(api.Descriptor, api.Binding, api.Channel, new OperationExecutor(apiBroker), secrets, Deadline.After(timeout), ct);
                 var outputs = ResponseMapper.MapOutputs(api.Descriptor, result, correlationId);
                 log.LogInformation("Completed Custom API {Message} in {ElapsedMs} ms", request.Message, watch.ElapsedMilliseconds);
                 return Results.Json(new CanonicalResponse { CorrelationId = correlationId, Outputs = outputs });
             }
-            var (op, broker) = await router.ResolveAsync(request, ct);
+            var (op, broker) = await router.ResolveAsync(config, request, ct);
             log.LogInformation("Executing {Message} on {Table} with {Operation} v{Version}", request.Message, request.Table, op.Descriptor.Operation, op.Descriptor.Version);
 
             var response = await Run(request, op, new OperationExecutor(broker), secrets, tokenKey, Deadline.After(timeout), ct);
@@ -98,9 +101,9 @@ public static partial class ExecuteEndpoint
     /// operation. The platform sends these for Web API upserts and record lookups (phase 1 findings); the
     /// source answers them through the Retrieve descriptor, so nothing is filtered in the host.
     /// </summary>
-    private static CanonicalRequest? PrimaryKeyLookup(CanonicalRequest request, RequestRouter router)
+    private static CanonicalRequest? PrimaryKeyLookup(CanonicalRequest request, RequestRouter router, HostConfigStore config)
     {
-        if (request.Message != Messages.RetrieveMultiple || !router.HasOperation(request.Table, Messages.Retrieve))
+        if (request.Message != Messages.RetrieveMultiple || !router.HasOperation(config, request.Table, Messages.Retrieve))
             return null;
         var filter = request.Query?.Filter;
         if (filter is not { Type: "and", Conditions.Count: 1 } || filter.Groups is { Count: > 0 } || request.Query!.Page?.Token != null)
@@ -120,11 +123,11 @@ public static partial class ExecuteEndpoint
         };
     }
 
-    private static async Task<List<Row>> LookUpByKey(CanonicalRequest retrieve, RequestRouter router, ISecretResolver secrets, PageTokenKey tokenKey, Deadline deadline, CancellationToken ct)
+    private static async Task<List<Row>> LookUpByKey(CanonicalRequest retrieve, RequestRouter router, HostConfigStore config, ISecretResolver secrets, PageTokenKey tokenKey, Deadline deadline, CancellationToken ct)
     {
         try
         {
-            var (op, broker) = await router.ResolveAsync(retrieve, ct);
+            var (op, broker) = await router.ResolveAsync(config, retrieve, ct);
             var response = await Run(retrieve, op, new OperationExecutor(broker), secrets, tokenKey, deadline, ct);
             return new List<Row> { response.Record };
         }

@@ -34,7 +34,7 @@ public sealed class StaticAuthProvider(ISecretResolver secrets, HttpClient http)
 
     private async Task<(Action<HttpRequestMessage>, string[])> Attach(ServiceInstance instance, AuthConfig auth, CancellationToken ct)
     {
-        var secret = await secrets.GetAsync(SecretRef.Parse(auth.SecretRef!), ct);
+        var secret = await secrets.GetAsync(SecretRef.Parse(auth.SecretRef!), instance, ct);
         if (secret.Contains('\r') || secret.Contains('\n'))
             throw new CredentialUnavailableException($"The secret named by {auth.SecretRef} contains a line break.");
 

@@ -19,11 +19,19 @@ public sealed class ConfigInput
     public string? ConnectClientId { get; set; }
     /// <summary>The Dataverse environment the input belongs to; null for file input.</summary>
     public string? EnvironmentId { get; set; }
+    /// <summary>The instances that come from a connection design, by name. The others come from host settings.</summary>
+    public Dictionary<string, DesignOrigin> Designs { get; } = new(StringComparer.Ordinal);
     /// <summary>Problems found while reading, reported after the instance problems and before the schema ones.</summary>
     public List<string> Problems { get; } = new();
     /// <summary>Problems found reading descriptors, reported after the schema problems and before the object map ones.</summary>
     public List<string> DescriptorProblems { get; } = new();
 }
+
+/// <summary>
+/// Where a design instance came from: its environment and design version, which label its descriptors and schema in
+/// problem messages, and the per-environment values it still lacks (<see cref="BrokerForge.Abstractions.ServiceInstance.Incomplete"/>).
+/// </summary>
+public sealed record DesignOrigin(string EnvironmentId, int Version, IReadOnlyList<string> Incomplete);
 
 public sealed class InstanceOptions
 {

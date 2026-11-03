@@ -5,11 +5,11 @@ using Microsoft.AspNetCore.DataProtection;
 namespace BrokerForge.Host.Connect;
 
 /// <summary>
-/// The OAuth state parameter (HLD D-26): who started the connect, for which instance, the PKCE verifier and a
-/// nonce that a cookie in the same browser must match. Protected with Data Protection, so it cannot be read or
+/// The OAuth state parameter (HLD D-26): who started the connect, for which instance (and, for a connection design,
+/// which environment), the PKCE verifier and a nonce that a cookie in the same browser must match. Protected with Data Protection, so it cannot be read or
 /// forged; valid for <see cref="Lifetime"/> and once only (its nonce cookie is deleted on use).
 /// </summary>
-public sealed record ConnectState(string Instance, string UserObjectId, string Verifier, string Nonce, DateTimeOffset IssuedAt)
+public sealed record ConnectState(string Instance, string UserObjectId, string Verifier, string Nonce, DateTimeOffset IssuedAt, string? EnvironmentId = null)
 {
     public const string Purpose = "BrokerForge.ConnectState.v1";
     public const string NonceCookie = "bf_connect_nonce";

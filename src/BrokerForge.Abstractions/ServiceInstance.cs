@@ -6,8 +6,9 @@ public enum AuthMode { ServiceAccount, Static, Impersonate, Sso, OAuth }
 public enum AsyncContext { TriggeringUser, ServiceIdentity }
 
 /// <summary>
-/// One configured connection to a source (HLD 6, bf_serviceinstance). In phase 1 it comes from host
-/// configuration (HLD D-10). It holds secret references, never secret values.
+/// One configured connection to a source (HLD 6, bf_serviceinstance), from host configuration (HLD D-10) or a
+/// connection design. It holds secret references, never secret values. <see cref="EnvironmentId"/> is set only
+/// for a design instance: its name is unique within that environment, not across the host.
 /// </summary>
 public sealed record ServiceInstance(
     string Name,
@@ -15,7 +16,15 @@ public sealed record ServiceInstance(
     string BaseUrl,
     AuthConfig Auth,
     IReadOnlyDictionary<string, string> Config,
-    IReadOnlyDictionary<string, string> Secrets);
+    IReadOnlyDictionary<string, string> Secrets,
+    string? EnvironmentId = null)
+{
+    /// <summary>
+    /// Per-environment values a design instance still lacks, each as "what (how to set it)". A call to such an
+    /// instance fails naming them; it is not a startup problem, because a solution import sets them later.
+    /// </summary>
+    public IReadOnlyList<string> Incomplete { get; init; } = Array.Empty<string>();
+}
 
 /// <summary>
 /// OAuth and Impersonate: <see cref="OAuthResource"/> names an entry in OAuthResources. SSO:

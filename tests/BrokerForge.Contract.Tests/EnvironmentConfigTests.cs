@@ -1,0 +1,336 @@
+using System.Net;
+using System.Text.RegularExpressions;
+using System.Web;
+using BrokerForge.Abstractions;
+using BrokerForge.Auth.Credentials;
+using BrokerForge.Connections;
+using BrokerForge.Contracts;
+using BrokerForge.Host.Config;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace BrokerForge.Contract.Tests;
+
+/// <summary>
+/// One host, several Dataverse environments: connection designs are loaded per environment beside the file
+/// configuration, and the same instance name in two environments never shares config, credentials or URLs.
+/// </summary>
+[Collection(MockApiCollection.Name)]
+public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetime
+{
+    private const string EnvA = "00000000-0000-0000-0000-00000000000a";
+    private const string EnvB = "00000000-0000-0000-0000-00000000000b";
+
+    public sealed class FakeDesigns : IDesignSource
+    {
+        public Dictionary<string, List<(ConnectionDesign, EnvironmentSettings)>> ByEnvironment { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public int Loads;
+
+        public void Add(string environmentId, ConnectionDesign design, EnvironmentSettings settings)
+        {
+            if (!ByEnvironment.TryGetValue(environmentId, out var list))
+                ByEnvironment[environmentId] = list = new();
+            list.Add((design, settings));
+        }
+
+        public Task<IReadOnlyList<(ConnectionDesign Design, EnvironmentSettings Settings)>> LoadAsync(string environmentId, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Loads);
+            return Task.FromResult<IReadOnlyList<(ConnectionDesign, EnvironmentSettings)>>(
+                ByEnvironment.TryGetValue(environmentId, out var list) ? list.ToList() : new());
+        }
+    }
+
+    private sealed class CountingHandler(Counter counter) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Interlocked.Increment(ref counter.Value);
+            return base.SendAsync(request, ct);
+        }
+    }
+
+    private sealed class Counter { public int Value; }
+
+    private readonly FakeDesigns _designs = new();
+    private readonly InMemoryInstanceSecretStore _secrets = new();
+    private readonly Counter _sent = new();
+    private readonly List<IDisposable> _owned = new();
+
+    public Task InitializeAsync() => mock.ResetAsync();
+
+    public async Task DisposeAsync()
+    {
+        foreach (var o in _owned)
+            o.Dispose();
+        foreach (var m in _mocks)
+            await m.DisposeAsync();
+    }
+
+    private readonly List<MockApiFixture> _mocks = new();
+
+    private HostFactory Host(params (string, string?)[] edits)
+    {
+        Environment.SetEnvironmentVariable("BF_TEST_CONNECT_SECRET", "bf-test-connect-secret");
+        var settings = new Dictionary<string, string?>
+        {
+            ["Trust:AllowedCallers:0:EnvironmentId"] = EnvA,
+            ["Trust:AllowedCallers:1:EnvironmentId"] = EnvB,
+            ["Connect:PublicBaseUrl"] = Tickets.ConnectBase,
+            ["Connect:ClientId"] = "connect-test-client",
+            ["Connect:ClientSecretRef"] = "env:BF_TEST_CONNECT_SECRET",
+            ["Credentials:InMemory"] = "true",
+        };
+        foreach (var (k, v) in edits)
+            settings[k] = v;
+        var host = new HostFactory(mock.BaseUrl, extra: settings, services: s =>
+        {
+            ConnectTests.TestSignIn(s);
+            s.AddSingleton<IDesignSource>(_designs);
+            s.AddSingleton<IInstanceSecretStore>(_secrets);
+            s.AddHttpClient("sources").AddHttpMessageHandler(() => new CountingHandler(_sent));
+        });
+        _owned.Add(host);
+        return host;
+    }
+
+    private static Dictionary<string, string> Descriptors(string folder) =>
+        Directory.GetFiles(Path.Combine(MockApiFixture.RepoRoot, "descriptors", folder), "*.yaml")
+            .ToDictionary(f => Path.GetFileNameWithoutExtension(f), File.ReadAllText);
+
+    private static string Schema(string name) => File.ReadAllText(Path.Combine(MockApiFixture.RepoRoot, "schemas", name + ".yaml"));
+
+    /// <summary>The Inventory mock's descriptors and schema as a design: Static, the key as the api_key query parameter.</summary>
+    public static ConnectionDesign Warehouse(string instance = "WarehouseAPI", string queryParam = "api_key", int version = 3) => new(
+        1, instance, version, "rest", "openapi: 3.0.0", new Dictionary<string, string>(),
+        new DesignAuth("Static", "apiKeyQuery", null, queryParam, null, null, null, null, null, new[] { "apiKey" }),
+        new DesignObjectMap("ext_item", "reversible", "Int32", new Dictionary<string, string>
+        {
+            ["RetrieveMultiple"] = "listItems", ["Retrieve"] = "getItem", ["Create"] = "createItem", ["Update"] = "updateItem", ["Delete"] = "deleteItem",
+        }),
+        Schema("InventoryAPI"), Descriptors("InventoryAPI"));
+
+    private ConnectionDesign TicketsDesign() => new(
+        1, "TicketsAPI", 1, "rest", "openapi: 3.0.0", new Dictionary<string, string>(),
+        new DesignAuth("OAuth", null, null, null, null, null, null, null,
+            new DesignOAuth(mock.BaseUrl + "/tk/oauth/authorize", mock.BaseUrl + "/tk/oauth/token", new[] { "tickets.read" }, Tickets.ClientId, false),
+            Array.Empty<string>()),
+        new DesignObjectMap("ext_ticket", "reversible", "String", new Dictionary<string, string>
+        {
+            ["RetrieveMultiple"] = "listTickets", ["Retrieve"] = "getTicket", ["Create"] = "createTicket",
+        }),
+        Schema("TicketsAPI"), Descriptors("TicketsAPI"));
+
+    private static EnvironmentSettings At(string? baseUrl, params (string, string)[] overrides) =>
+        new(baseUrl, overrides.ToDictionary(o => o.Item1, o => o.Item2));
+
+    private static CanonicalRequest List(string table, string instance, string environment, string? user = "user-1")
+    {
+        var request = HostFactory.Request(table, Messages.RetrieveMultiple, instance);
+        request.EnvironmentId = environment;
+        request.Query = new CanonicalQuery { Page = new PageRequest { Size = 50 } };
+        request.Caller = new CallerContext { UserObjectId = user };
+        return request;
+    }
+
+    private static string TokenFor(string environment) => HostFactory.Token(azp: environment == EnvA ? HostFactory.PluginApp : HostFactory.OtherApp);
+
+    private static Task<(int Status, CanonicalResponse? Response, ErrorPayload? Error)> Run(HostFactory host, CanonicalRequest request) =>
+        host.Execute(request, TokenFor(request.EnvironmentId!));
+
+    private static string[] Names(CanonicalResponse response) => response.Rows.Select(r => r.Cells.Single(c => c.Col == "ext_name").Value!).ToArray();
+
+    private async Task KeyFor(string environment, string instance = "WarehouseAPI") =>
+        await _secrets.SetAsync(environment, instance, "apiKey", MockApiFixture.InventoryKey, default);
+
+    [Fact]
+    public async Task DesignInstanceServesItsEnvironment()
+    {
+        _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl));
+        await KeyFor(EnvA);
+        var (status, response, error) = await Run(Host(), List("ext_item", "WarehouseAPI", EnvA));
+        Assert.True(status == 200, error?.Message);
+        Assert.NotEmpty(response!.Rows);
+    }
+
+    [Fact]
+    public async Task DesignInstanceUnknownInOtherEnvironment()
+    {
+        _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl));
+        await KeyFor(EnvA);
+        var (status, _, error) = await Run(Host(), List("ext_item", "WarehouseAPI", EnvB));
+        Assert.Equal(400, status);
+        Assert.Equal(nameof(UnsupportedQueryException), error!.Error);
+        Assert.Equal("Table ext_item is not mapped to a BrokerForge source.", error.Message);
+    }
+
+    [Fact]
+    public async Task SameInstanceInTwoEnvironmentsStaysSeparate()
+    {
+        var other = new MockApiFixture();
+        _mocks.Add(other);
+        await other.InitializeAsync();
+        using (var http = new HttpClient())
+            (await http.PostAsync(other.BaseUrl + "/inv/v1/items?api_key=" + MockApiFixture.InventoryKey,
+                new StringContent("{\"name\":\"Only in B\"}", System.Text.Encoding.UTF8, "application/json"))).EnsureSuccessStatusCode();
+        _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl));
+        _designs.Add(EnvB, Warehouse(), At(other.BaseUrl));
+        await KeyFor(EnvA);
+        await KeyFor(EnvB);
+        var host = Host();
+
+        var a = await Run(host, List("ext_item", "WarehouseAPI", EnvA));
+        var b = await Run(host, List("ext_item", "WarehouseAPI", EnvB));
+        Assert.True(a.Status == 200, a.Error?.Message);
+        Assert.True(b.Status == 200, b.Error?.Message);
+        Assert.DoesNotContain("Only in B", Names(a.Response!));
+        Assert.Contains("Only in B", Names(b.Response!));
+    }
+
+    [Fact]
+    public async Task InstanceSecretIsPerEnvironment()
+    {
+        _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl));
+        _designs.Add(EnvB, Warehouse(), At(mock.BaseUrl));
+        await KeyFor(EnvA);
+        var (status, _, error) = await Run(Host(), List("ext_item", "WarehouseAPI", EnvB));
+        Assert.Equal(500, status);
+        Assert.Equal("ConfigurationError", error!.Error);
+        Assert.Equal("Service instance WarehouseAPI needs its key `apiKey` in this environment: an administrator sets it on the BrokerForge secret page.", error.Message);
+        Assert.Equal(0, _sent.Value);
+    }
+
+    [Fact]
+    public async Task NameClashBetweenFilesAndDesignFails()
+    {
+        _designs.Add(EnvA, Warehouse("OrdersAPI"), At(mock.BaseUrl));
+        var (status, _, error) = await Run(Host(), List("ext_order", "OrdersAPI", EnvA));
+        Assert.Equal(500, status);
+        Assert.Equal("ConfigurationError", error!.Error);
+        Assert.Contains($"Instance OrdersAPI is configured both in host settings and as a connection design in environment {EnvA}", error.Message);
+    }
+
+    [Fact]
+    public async Task MissingBaseUrlFailsNamingTheVariable()
+    {
+        _designs.Add(EnvA, Warehouse(), At(null));
+        await KeyFor(EnvA);
+        var (status, _, error) = await Run(Host(), List("ext_item", "WarehouseAPI", EnvA));
+        Assert.Equal(500, status);
+        Assert.Equal("ConfigurationError", error!.Error);
+        Assert.Equal("Service instance WarehouseAPI needs its base URL in this environment: set environment variable bf_WarehouseAPI_BaseUrl.", error.Message);
+        Assert.Equal(0, _sent.Value);
+    }
+
+    [Fact]
+    public async Task FileInstancesUnchanged()
+    {
+        _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl));
+        await KeyFor(EnvA);
+        var (status, response, error) = await Run(Host(), List("ext_order", "OrdersAPI", EnvA));
+        Assert.True(status == 200, error?.Message);
+        Assert.Equal(50, response!.Rows.Count);
+    }
+
+    [Fact]
+    public async Task AuthOverrideReplacesField()
+    {
+        _designs.Add(EnvA, Warehouse(queryParam: "wrong_param"), At(mock.BaseUrl, ("queryParam", "api_key")));
+        await KeyFor(EnvA);
+        var (status, response, error) = await Run(Host(), List("ext_item", "WarehouseAPI", EnvA));
+        Assert.True(status == 200, error?.Message);
+        Assert.NotEmpty(response!.Rows);
+    }
+
+    [Fact]
+    public async Task UnknownAuthOverrideFails()
+    {
+        _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl, ("colour", "blue")));
+        var (status, _, error) = await Run(Host(), List("ext_item", "WarehouseAPI", EnvA));
+        Assert.Equal(500, status);
+        Assert.Equal("ConfigurationError", error!.Error);
+        Assert.Contains("colour", error.Message);
+        Assert.Contains("WarehouseAPI", error.Message);
+    }
+
+    [Fact]
+    public void DesignProblemsNameTheDesignVersion()
+    {
+        var design = Warehouse(version: 7);
+        var broken = new Dictionary<string, string>(design.Descriptors) { ["listItems"] = "operation: listItems\nversion: 1\nbinds: Nonsense\n" };
+        var input = DesignConfigInput.Merge(new ConfigInput(), EnvA, new[] { (design with { Descriptors = broken }, At("https://inv.example")) });
+        var ex = Assert.Throws<ConfigurationException>(() => new HostConfigStore(input));
+        Assert.Contains("WarehouseAPI/listItems.yaml (design v7)", ex.Message);
+        Assert.Contains(EnvA, ex.Message);
+    }
+
+    [Fact]
+    public async Task DesignConnectUrlCarriesEnvironment()
+    {
+        _designs.Add(EnvA, TicketsDesign(), At(mock.BaseUrl));
+        var (status, _, error) = await Run(Host(), List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
+        Assert.Equal(401, status);
+        Assert.Equal(nameof(ConnectionRequiredException), error!.Error);
+        Assert.Equal($"{Tickets.ConnectBase}/connect/{EnvA}/TicketsAPI", error.ConnectUrl);
+    }
+
+    [GeneratedRegex("name=\"__RequestVerificationToken\" value=\"([^\"]+)\"")]
+    private static partial Regex AntiforgeryField();
+
+    [Fact]
+    public async Task DesignConnectPageStoresUnderTheEnvironment()
+    {
+        var sso = TicketsDesign() with { Auth = new DesignAuth("Sso", null, null, null, null, null, "basic", null, null, Array.Empty<string>()) };
+        _designs.Add(EnvA, sso, At(mock.BaseUrl));
+        var host = Host();
+        var browser = host.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
+        browser.DefaultRequestHeaders.Add(ConnectTests.OidHeader, Tickets.AliceOid);
+
+        var page = await browser.GetAsync($"/connect/{EnvA}/TicketsAPI");
+        var html = await page.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        Assert.Contains($"action=\"/connect/{EnvA}/TicketsAPI/sso\"", html);
+        var token = HttpUtility.HtmlDecode(AntiforgeryField().Match(html).Groups[1].Value);
+        var saved = await browser.PostAsync($"/connect/{EnvA}/TicketsAPI/sso", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["username"] = "alice", ["secret"] = Tickets.AlicePassword, ["__RequestVerificationToken"] = token,
+        }));
+        Assert.Equal(HttpStatusCode.SeeOther, saved.StatusCode);
+        Assert.Equal($"/connect/{EnvA}/TicketsAPI", saved.Headers.Location!.ToString());
+
+        var store = host.Services.GetRequiredService<IUserCredentialStore>();
+        Assert.NotNull(await store.GetAsync($"{Guid.Parse(EnvA):N}_TicketsAPI", Tickets.AliceOid, default));
+        Assert.Null(await store.GetAsync("TicketsAPI", Tickets.AliceOid, default));
+        Assert.Equal(HttpStatusCode.NotFound, (await browser.GetAsync("/connect/TicketsAPI")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await browser.GetAsync($"/connect/{EnvB}/TicketsAPI")).StatusCode);
+
+        var (status, response, error) = await Run(host, List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
+        Assert.True(status == 200, error?.Message);
+        Assert.NotEmpty(response!.Rows);
+    }
+
+    [Fact]
+    public async Task ProviderCachesPerEnvironmentUntilTtlOrInvalidate()
+    {
+        var time = new ConnectTests.MutableTime();
+        _designs.Add(EnvA, Warehouse(), At("https://inv.example"));
+        var provider = new CompositeConfigProvider(new HostConfigStore(new ConfigInput()), _designs, time, TimeSpan.FromMinutes(5));
+
+        var first = await provider.ForEnvironmentAsync(EnvA, default);
+        Assert.Same(first, await provider.ForEnvironmentAsync(EnvA.ToUpperInvariant(), default));
+        Assert.Equal(1, _designs.Loads);
+        Assert.NotNull(first.Instance("WarehouseAPI"));
+        Assert.Null((await provider.ForEnvironmentAsync(EnvB, default)).Instance("WarehouseAPI"));
+        Assert.Equal(2, _designs.Loads);
+
+        time.Now += TimeSpan.FromMinutes(6);
+        Assert.NotSame(first, await provider.ForEnvironmentAsync(EnvA, default));
+        Assert.Equal(3, _designs.Loads);
+        provider.Invalidate(EnvA);
+        await provider.ForEnvironmentAsync(EnvA, default);
+        Assert.Equal(4, _designs.Loads);
+
+        var files = new HostConfigStore(new ConfigInput());
+        Assert.Same(files, await new CompositeConfigProvider(files, null, time, TimeSpan.FromMinutes(5)).ForEnvironmentAsync(EnvA, default));
+    }
+}

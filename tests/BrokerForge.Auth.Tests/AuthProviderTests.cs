@@ -165,6 +165,31 @@ public class AuthProviderTests
     }
 
     [Fact]
+    public void StoreScheme_ParsesNamesOfLettersAndDigitsOnly()
+    {
+        Assert.Equal(new SecretRef("store", "apiKey2"), SecretRef.Parse("store:apiKey2"));
+        Assert.Contains("letters and digits", Assert.Throws<FormatException>(() => SecretRef.Parse("store:api-key")).Message);
+        Assert.Equal("Unknown secret reference scheme `vault`; use kv, env or store.", Assert.Throws<FormatException>(() => SecretRef.Parse("vault:x")).Message);
+    }
+
+    [Fact]
+    public async Task StoreScheme_ResolvesInTheInstancesEnvironmentOnly()
+    {
+        const string env = "00000000-0000-0000-0000-00000000000a";
+        var store = new Credentials.InMemoryInstanceSecretStore();
+        await store.SetAsync(env, "OrdersAPI", "apiKey", Dummy, default);
+        var router = new SecretResolverRouter(new FixedSecrets(null), new EnvironmentSecretResolver(), false, store);
+        var reference = SecretRef.Parse("store:apiKey");
+        var design = Instance(new AuthConfig(AuthMode.Static)) with { EnvironmentId = env };
+
+        Assert.Equal(Dummy, await router.GetAsync(reference, design, default));
+        var other = await Assert.ThrowsAsync<ConfigurationException>(() => router.GetAsync(reference, design with { EnvironmentId = "00000000-0000-0000-0000-00000000000b" }, default));
+        Assert.Equal("Service instance OrdersAPI needs its key `apiKey` in this environment: an administrator sets it on the BrokerForge secret page.", other.Message);
+        await Assert.ThrowsAsync<ConfigurationException>(() => router.GetAsync(reference, Instance(new AuthConfig(AuthMode.Static)), default));
+        await Assert.ThrowsAsync<ConfigurationException>(() => router.GetAsync(reference, default));
+    }
+
+    [Fact]
     public void AuthReservedNames_PerUserModes_ReserveTheirHeadersAndTheAsyncIdentitys()
     {
         var sso = AuthReservedNames.For(Instance(new AuthConfig(AuthMode.Sso, HeaderName: "X-User-Key", SsoKind: "apiKeyHeader")));

@@ -136,7 +136,8 @@ builder.Services.AddSingleton<TokenCredential>(azureCredential);
 builder.Services.AddSingleton<ISecretResolver>(sp => new SecretResolverRouter(
     new KeyVaultSecretResolver(sp.GetRequiredService<TokenCredential>()),
     new EnvironmentSecretResolver(),
-    builder.Configuration.GetValue("Secrets:AllowEnvironment", false)));
+    builder.Configuration.GetValue("Secrets:AllowEnvironment", false),
+    sp.GetService<IInstanceSecretStore>()));
 builder.Services.AddSingleton<IAuthProvider>(sp => new StaticAuthProvider(sp.GetRequiredService<ISecretResolver>(), sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
 builder.Services.AddSingleton<IAuthProvider>(sp => new ServiceAccountAuthProvider(sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
 // Per-user modes (HLD 9.1, D-25, D-28). Each provider serves only its own mode; none can reach another identity.
@@ -154,18 +155,32 @@ if (builder.Configuration["Connect:ClientId"] is { Length: > 0 } connectClientId
         ? new SecretConnectAppClient(connectClientId, SecretRef.Parse(connectSecret), sp.GetRequiredService<ISecretResolver>())
         : new ManagedIdentityConnectAppClient(connectClientId, new ManagedIdentityCredential(builder.Configuration["AZURE_CLIENT_ID"])));
 builder.Services.AddSingleton<IUserCredentialStore>(sp => CredentialStores.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<HostConfigStore>(),
-    sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IDataProtectionProvider>()));
+    sp.GetService<IDesignSource>() != null, sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IDataProtectionProvider>()));
 builder.Services.AddSingleton(sp => new TokenEndpointClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("tokens"),
     sp.GetRequiredService<ISecretResolver>(), sp.GetService<IConnectAppClient>(), sp.GetRequiredService<TimeProvider>()));
+// An instance's OAuth resource is looked up in its own environment's configuration; the connect base URL is the host's own.
+static async Task<OAuthResource> OAuthResourceOf(IHostConfigProvider configs, ServiceInstance instance, CancellationToken ct) =>
+    (instance.EnvironmentId == null ? configs.Files : await configs.ForEnvironmentAsync(instance.EnvironmentId, ct)).OAuthResource(instance.Auth.OAuthResource!);
 foreach (var mode in new[] { AuthMode.OAuth, AuthMode.Impersonate })
     builder.Services.AddSingleton<IAuthProvider>(sp => new DelegatedTokenAuthProvider(mode, sp.GetRequiredService<IUserCredentialStore>(),
-        sp.GetRequiredService<HostConfigStore>().OAuthResource, sp.GetRequiredService<TokenEndpointClient>(), sp.GetRequiredService<HostConfigStore>().ConnectUrl,
+        (instance, ct) => OAuthResourceOf(sp.GetRequiredService<IHostConfigProvider>(), instance, ct), sp.GetRequiredService<TokenEndpointClient>(),
+        sp.GetRequiredService<HostConfigStore>().ConnectUrl,
         sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources"), sp.GetRequiredService<ILoggerFactory>().CreateLogger("BrokerForge.Auth"),
         sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<IAuthProvider>(sp => new SsoAuthProvider(sp.GetRequiredService<IUserCredentialStore>(),
     sp.GetRequiredService<HostConfigStore>().ConnectUrl, sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
 builder.Services.AddSingleton<IBroker, RestBroker>();
-builder.Services.AddSingleton(sp => HostConfigStore.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
+// One store per environment: the files plus that environment's connection designs (none until a design source is
+// registered). HostConfigStore stays registered as the file store for what is not per environment.
+builder.Services.AddSingleton<IHostConfigProvider>(sp =>
+{
+    var configuration = sp.GetRequiredService<IConfiguration>();
+    var ttl = TimeSpan.FromSeconds(configuration.GetValue("Config:DesignCacheSeconds", 300));
+    if (ttl <= TimeSpan.Zero || ttl > TimeSpan.FromMinutes(5))
+        throw new ConfigurationException("Host configuration is invalid:\n - Config:DesignCacheSeconds must be between 1 and 300: a solution import must reach the host within 5 minutes");
+    return new CompositeConfigProvider(HostConfigStore.FromConfiguration(configuration), sp.GetService<IDesignSource>(), sp.GetRequiredService<TimeProvider>(), ttl);
+});
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IHostConfigProvider>().Files);
 builder.Services.AddSingleton<CallerGuard>();
 builder.Services.AddSingleton<RequestRouter>();
 builder.Services.AddSingleton(sp => PageTokenKey.LoadAsync(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<ISecretResolver>()).GetAwaiter().GetResult());

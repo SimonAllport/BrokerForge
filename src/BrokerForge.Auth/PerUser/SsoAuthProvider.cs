@@ -8,9 +8,10 @@ namespace BrokerForge.Auth.PerUser;
 
 /// <summary>
 /// SSO (HLD 9.1, D-28): the username and secret the caller entered on the connect page, sent as HTTP Basic or
-/// as an API key header (Auth:SsoKind). No credential is a ConnectionRequiredException.
+/// as an API key header (Auth:SsoKind). No credential is a ConnectionRequiredException. Credentials are read
+/// under <see cref="CredentialPartition"/>, so a design instance in one environment never sees another's.
 /// </summary>
-public sealed class SsoAuthProvider(IUserCredentialStore store, Func<string, string> connectUrl, HttpClient http) : IAuthProvider
+public sealed class SsoAuthProvider(IUserCredentialStore store, Func<ServiceInstance, string> connectUrl, HttpClient http) : IAuthProvider
 {
     public AuthMode Mode => AuthMode.Sso;
 
@@ -23,7 +24,7 @@ public sealed class SsoAuthProvider(IUserCredentialStore store, Func<string, str
         UserCredential? stored;
         try
         {
-            stored = await store.GetAsync(instance.Name, user, ct);
+            stored = await store.GetAsync(CredentialPartition.For(instance), user, ct);
         }
         catch (CredentialUnreadableException)
         {
