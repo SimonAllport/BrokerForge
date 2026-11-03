@@ -18,6 +18,9 @@ source "$IDS"
 devid() { [ -f "$OUT" ] && sed -n "s/^$1=//p" "$OUT" | tail -1 || true; }
 CONNECT_APP="$(devid CONNECT_APP)" TICKETS_API_APP="$(devid TICKETS_API_APP)"
 TICKETS_ALICE_OID="$(devid TICKETS_ALICE_OID)" TICKETS_BOB_OID="$(devid TICKETS_BOB_OID)"
+# The dev environment's org URL (DV_ORG, defaulted in dv.sh): the host reads its connection designs there.
+# shellcheck disable=SC1091
+source "$ROOT/tools/spike/dv.sh"
 
 az bicep version >/dev/null 2>&1 || az bicep install
 for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.KeyVault Microsoft.Storage Microsoft.OperationalInsights Microsoft.Insights Microsoft.ManagedIdentity; do
@@ -66,7 +69,7 @@ echo "== apps"
 HOST_URL="$(az deployment group create -g "$RG" -n bf-apps -f "$ROOT/infra/main.bicep" \
   -p deployApps=true deployerObjectId="$DEPLOYER" \
      hostImage="$SERVER/brokerforge-host:$TAG" mockImage="$SERVER/brokerforge-orders-mock:$TAG" \
-     tenantId="$TENANT" hostAudience="$HOST_APP" pluginClientId="$PLUGIN_APP" environmentId="$ENVID" \
+     tenantId="$TENANT" hostAudience="$HOST_APP" pluginClientId="$PLUGIN_APP" environmentId="$ENVID" orgUrl="$DV_ORG" \
      connectClientId="$CONNECT_APP" ticketsApiAppId="$TICKETS_API_APP" ticketsAliceOid="$TICKETS_ALICE_OID" ticketsBobOid="$TICKETS_BOB_OID" \
   --query properties.outputs.hostUrl.value -o tsv)"
 

@@ -16,6 +16,8 @@ param hostAudience string = ''
 @description('Plug-in app registration ID and the one environment it may call for (D-09).')
 param pluginClientId string = ''
 param environmentId string = ''
+@description('Dataverse org URL of that environment: the host reads its connection designs there (HLD D-34).')
+param orgUrl string = ''
 @description('BrokerForge Connect app registration (tools/dev/setup-connect-app.sh). Empty: no per-user sources.')
 param connectClientId string = ''
 @description('Tickets mock API app registration, the Entra resource of the Impersonate source.')
@@ -89,6 +91,7 @@ module apps 'containerApps.bicep' = if (deployApps) {
     hostAudience: hostAudience
     pluginClientId: pluginClientId
     environmentId: environmentId
+    orgUrl: orgUrl
     credentialTableEndpoint: storage.outputs.tableEndpoint
     keyRingBlobUri: storage.outputs.keyRingBlobUri
     dataProtectionKeyUri: vault.outputs.dataProtectionKeyUri

@@ -15,6 +15,7 @@ param tenantId string
 param hostAudience string
 param pluginClientId string
 param environmentId string
+param orgUrl string
 param credentialTableEndpoint string
 param keyRingBlobUri string
 param dataProtectionKeyUri string
@@ -144,9 +145,6 @@ var entraTicketMap = 'ObjectMaps__ext_entraticket__'
 var perUserEnv = [
   { name: 'Connect__PublicBaseUrl', value: hostUrl }
   { name: 'Connect__ClientId', value: connectClientId }
-  { name: 'Credentials__TableEndpoint', value: credentialTableEndpoint }
-  { name: 'DataProtection__BlobUri', value: keyRingBlobUri }
-  { name: 'DataProtection__KeyId', value: dataProtectionKeyUri }
   { name: 'OAuthResources__Tickets__AuthorizeUrl', value: '${ticketsUrl}/tk/oauth/authorize' }
   { name: 'OAuthResources__Tickets__TokenUrl', value: '${ticketsUrl}/tk/oauth/token' }
   { name: 'OAuthResources__Tickets__Scopes__0', value: 'tickets.read' }
@@ -204,6 +202,12 @@ resource host 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'Trust__Audience', value: hostAudience }
             { name: 'Trust__AllowedCallers__0__ClientId', value: pluginClientId }
             { name: 'Trust__AllowedCallers__0__EnvironmentId', value: environmentId }
+            { name: 'Trust__AllowedCallers__0__OrgUrl', value: orgUrl }
+            // Connection designs (HLD D-34) are read from that environment; their keys live in the credential table.
+            { name: 'Config__Designs__Enabled', value: 'true' }
+            { name: 'Credentials__TableEndpoint', value: credentialTableEndpoint }
+            { name: 'DataProtection__BlobUri', value: keyRingBlobUri }
+            { name: 'DataProtection__KeyId', value: dataProtectionKeyUri }
             { name: 'Host__TimeoutSeconds', value: '90' }
             { name: 'Host__PageTokenKeyRef', value: 'kv:${secretUri}/page-token-key' }
             { name: 'Config__DescriptorsPath', value: '/app/descriptors' }

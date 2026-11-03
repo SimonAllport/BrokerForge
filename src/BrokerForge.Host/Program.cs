@@ -6,6 +6,7 @@ using BrokerForge.Adapters.Rest;
 using BrokerForge.Auth;
 using BrokerForge.Auth.Credentials;
 using BrokerForge.Auth.PerUser;
+using BrokerForge.Host.Admin;
 using BrokerForge.Host.Config;
 using BrokerForge.Host.Connect;
 using BrokerForge.Host.Endpoints;
@@ -22,6 +23,8 @@ using Microsoft.IdentityModel.Tokens;
 
 // BrokerForge host (HLD 5.2): validates the plug-in's managed identity token, routes the canonical
 // request to its descriptor and adapter, and replies with rows, a record, an id or a typed error.
+// `set-instance-secret ...` runs one admin command with the host's own configuration and identity, then exits.
+args = SetInstanceSecretCommand.Split(args, out var adminCommand);
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddJsonConsole(o => o.IncludeScopes = true);
 
@@ -211,6 +214,14 @@ app.Logger.LogInformation("Loaded descriptors: {Descriptors}", string.Join(", ",
 app.Services.GetRequiredService<PageTokenKey>();
 app.Services.GetRequiredService<IUserCredentialStore>();
 app.Services.GetRequiredService<IInstanceSecretStore>();
+
+if (adminCommand != null)
+{
+    Environment.ExitCode = await SetInstanceSecretCommand.RunAsync(adminCommand,
+        app.Services.GetRequiredService<IOptions<TrustOptions>>().Value.AllowedCallers.Select(c => c.EnvironmentId),
+        app.Services.GetRequiredService<IInstanceSecretStore>(), app.Services.GetRequiredService<ISecretResolver>(), Console.Out, CancellationToken.None);
+    return;
+}
 
 app.UseForwardedHeaders();
 app.UseAuthentication();

@@ -6,7 +6,11 @@ from `bf generate` (tools/dev/generate.sh).
 Idempotent: every step looks for its component first. Follows the phase 0 metadata rules
 (docs/findings/phase0.md section 1). Uses the az CLI user's token; no secret is read or written.
 
+Also creates the host managed identity's application user with the `BrokerForge host` role, which can read
+connection designs (web resources) and environment variables and nothing else (HLD D-34).
+
 Usage: python3 setup_dataverse.py <signed plug-in dll>
+       python3 setup_dataverse.py --host-user     (only the application user and role)
 """
 import base64, json, os, subprocess, sys, urllib.error, urllib.parse, urllib.request
 
@@ -151,6 +155,42 @@ def ensure_env_var(schema, display, value, solution):
         call("PATCH", f"environmentvariablevalues({v['environmentvariablevalueid']})", {"value": value})
 
 
+HOST_ROLE = "BrokerForge host"
+# The host reads connection designs (web resources) and their environment variables with its own identity (HLD D-34).
+# environmentvariablevalue has no privilege of its own: its rows are read through the definition's (portal-1 findings).
+HOST_PRIVILEGES = ["prvReadWebResource", "prvReadEnvironmentVariableDefinition"]
+
+
+def ensure_host_user(solution):
+    """The host managed identity's application user, with only the BrokerForge host role (read designs and their variables)."""
+    step("application user for the host identity, role BrokerForge host")
+    client_id = subprocess.check_output(["az", "identity", "show", "-g", DEV["RG"], "-n", "bf-dev-id", "--query", "clientId", "-o", "tsv"], text=True).strip()
+    bu = first("businessunits?$select=businessunitid&$filter=_parentbusinessunitid_value eq null")["businessunitid"]
+    role = first(f"roles?$select=roleid&$filter=name eq '{HOST_ROLE}' and _businessunitid_value eq {bu}")
+    if role:
+        role_id = role["roleid"]
+    else:
+        _, body, _ = call("POST", "roles", {"name": HOST_ROLE, "businessunitid@odata.bind": f"/businessunits({bu})"}, solution)
+        role_id = body["roleid"]
+    granted = []
+    for name in HOST_PRIVILEGES:
+        privilege = first(f"privileges?$select=privilegeid&$filter=name eq '{name}'")
+        if not privilege:
+            sys.exit(f"privilege {name} not found")
+        granted.append({"PrivilegeId": privilege["privilegeid"], "PrivilegeName": name, "Depth": "Global", "BusinessUnitId": bu})
+    call("POST", f"roles({role_id})/Microsoft.Dynamics.CRM.AddPrivilegesRole", {"Privileges": granted})
+    user = first(f"systemusers?$select=systemuserid&$filter=applicationid eq {client_id}")
+    if user:
+        user_id = user["systemuserid"]
+    else:
+        _, body, _ = call("POST", "systemusers", {"applicationid": client_id, "businessunitid@odata.bind": f"/businessunits({bu})",
+                                                 "firstname": "BrokerForge", "lastname": "host"})
+        user_id = body["systemuserid"]
+    if not first(f"systemusers({user_id})/systemuserroles_association?$select=roleid&$filter=roleid eq {role_id}"):
+        call("POST", f"systemusers({user_id})/systemuserroles_association/$ref", {"@odata.id": f"{API}roles({role_id})"})
+    print(f"   host application user {user_id}, role {role_id}")
+
+
 def main(dll_path):
     core = "BrokerForgeCore"
 
@@ -201,6 +241,8 @@ def main(dll_path):
     ensure_env_var("bf_HostScope", "BrokerForge host token scope", f"api://{SPIKE['HOST_APP']}/.default", core)
     call("POST", "PublishXml", {"ParameterXml": "<importexportxml><entities><entity>bf_brokerdatasource</entity></entities></importexportxml>"})
 
+    ensure_host_user(core)
+
     values = dict(DEV, DEV_ASM=asm_id, DEV_PT=pt_id, DEV_API_PT=api_pt_id, DEV_DP=dp_id)
     with open(DEV_PATH, "w") as f:
         f.writelines(f"{k}={v}\n" for k, v in values.items())
@@ -208,4 +250,5 @@ def main(dll_path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    # --host-user: only the host's application user and role, without re-registering the plug-in.
+    ensure_host_user("BrokerForgeCore") if sys.argv[1] == "--host-user" else main(sys.argv[1])
