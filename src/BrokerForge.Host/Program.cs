@@ -219,7 +219,7 @@ if (adminCommand != null)
 {
     Environment.ExitCode = await SetInstanceSecretCommand.RunAsync(adminCommand,
         app.Services.GetRequiredService<IOptions<TrustOptions>>().Value.AllowedCallers.Select(c => c.EnvironmentId),
-        app.Services.GetRequiredService<IInstanceSecretStore>(), app.Services.GetRequiredService<ISecretResolver>(), Console.Out, CancellationToken.None);
+        app.Services.GetRequiredService<IHostConfigProvider>(), app.Services.GetRequiredService<IInstanceSecretStore>(), app.Services.GetRequiredService<ISecretResolver>(), Console.Out, CancellationToken.None);
     return;
 }
 

@@ -1,3 +1,4 @@
+using System.Xml;
 using System.Xml.Linq;
 
 namespace BrokerForge.Connections;
@@ -20,8 +21,14 @@ public static class DesignCarrier
     public static string Unwrap(string xml, string source)
     {
         XDocument doc;
-        try { doc = XDocument.Parse(xml); }
-        catch (System.Xml.XmlException e) { throw new DesignFormatException($"{source}: not valid XML ({e.Message})"); }
+        // A web resource is written by whoever can customise the environment: no DTD, so no entity expansion or external fetch.
+        var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
+        try
+        {
+            using var reader = XmlReader.Create(new StringReader(xml), settings);
+            doc = XDocument.Load(reader);
+        }
+        catch (XmlException e) { throw new DesignFormatException($"{source}: not valid XML ({e.Message})"); }
 
         var root = doc.Root!;
         if (root.Name.LocalName != Root || root.Name.Namespace != XNamespace.None)

@@ -84,6 +84,16 @@ public class DesignSerializerTests
         Assert.Contains("design.xml", e.Message);
     }
 
+    [Theory]
+    [InlineData("<!DOCTYPE brokerforgeDesign [<!ENTITY x \"y\">]><brokerforgeDesign formatVersion=\"1\"><![CDATA[{}]]></brokerforgeDesign>")]
+    [InlineData("<!DOCTYPE brokerforgeDesign SYSTEM \"http://contoso.example/x.dtd\"><brokerforgeDesign formatVersion=\"1\"><![CDATA[{}]]></brokerforgeDesign>")]
+    public void UnwrapRefusesDtd(string xml)
+    {
+        var e = Assert.Throws<DesignFormatException>(() => DesignCarrier.Unwrap(xml, "design.xml"));
+        Assert.Contains("design.xml", e.Message);
+        Assert.Contains("DTD", e.Message);
+    }
+
     [Fact]
     public void TextContainingCdataEndSurvives()
     {

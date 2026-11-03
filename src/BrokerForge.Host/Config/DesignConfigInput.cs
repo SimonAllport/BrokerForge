@@ -10,17 +10,19 @@ namespace BrokerForge.Host.Config;
 /// </summary>
 public static class DesignConfigInput
 {
-    /// <summary>The <see cref="DesignAuth"/> string fields an environment's <c>bf_&lt;Instance&gt;_Auth</c> may override, by JSON name.</summary>
+    /// <summary>
+    /// The <see cref="DesignAuth"/> string fields an environment's <c>bf_&lt;Instance&gt;_Auth</c> may override, by JSON
+    /// name. Not <c>mode</c> or <c>asyncContext</c>: who the source sees the call as is the design's, approved with it,
+    /// and an environment variable must not change it (final review I2).
+    /// </summary>
     private static readonly Dictionary<string, Action<AuthOptions, string>> Overrides = new(StringComparer.Ordinal)
     {
-        ["mode"] = (a, v) => a.Mode = v,
         ["staticKind"] = (a, v) => a.StaticKind = v,
         ["headerName"] = (a, v) => a.HeaderName = v,
         ["queryParam"] = (a, v) => a.QueryParam = v,
         ["username"] = (a, v) => a.Username = v,
         ["scope"] = (a, v) => a.Scope = v,
         ["ssoKind"] = (a, v) => a.SsoKind = v,
-        ["asyncContext"] = (a, v) => a.AsyncContext = v,
     };
 
     /// <param name="designScopes">The scopes the environment's designs may use in ServiceAccount or Impersonate mode (<see cref="DesignScopeRules"/>).</param>

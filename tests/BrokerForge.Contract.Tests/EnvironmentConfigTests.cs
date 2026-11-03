@@ -66,7 +66,20 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
     private sealed class Counter { public int Value; }
 
     private readonly FakeDesigns _designs = new();
-    private readonly InMemoryInstanceSecretStore _secrets = new();
+    private readonly UnreadableSecrets _secretStore = new(new InMemoryInstanceSecretStore());
+    private InMemoryInstanceSecretStore _secrets => _secretStore.Inner;
+
+    /// <summary>The host's instance secret store: <see cref="_secrets"/>, unless <see cref="Unreadable"/> makes every read fail as undecryptable.</summary>
+    private sealed class UnreadableSecrets(InMemoryInstanceSecretStore inner) : IInstanceSecretStore
+    {
+        public InMemoryInstanceSecretStore Inner => inner;
+        public bool Unreadable { get; set; }
+        public Task<string?> GetAsync(string environmentId, string instance, string name, CancellationToken ct) =>
+            Unreadable ? throw new CredentialUnreadableException($"Instance secret {name} of {instance} could not be decrypted.") : inner.GetAsync(environmentId, instance, name, ct);
+        public Task SetAsync(string environmentId, string instance, string name, string value, CancellationToken ct) => inner.SetAsync(environmentId, instance, name, value, ct);
+        public Task<bool> ExistsAsync(string environmentId, string instance, string name, CancellationToken ct) => inner.ExistsAsync(environmentId, instance, name, ct);
+        public Task DeleteAsync(string environmentId, string instance, string name, CancellationToken ct) => inner.DeleteAsync(environmentId, instance, name, ct);
+    }
     private readonly Counter _sent = new();
     private readonly Counter _tokenCalls = new();
     private readonly List<IDisposable> _owned = new();
@@ -101,7 +114,7 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
         {
             ConnectTests.TestSignIn(s);
             s.AddSingleton<IDesignSource>(_designs);
-            s.AddSingleton<IInstanceSecretStore>(_secrets);
+            s.AddSingleton<IInstanceSecretStore>(_secretStore);
             // Stands in for the host's managed identity, so no test reaches Azure.
             s.AddSingleton<Azure.Core.TokenCredential>(_hostIdentity);
             s.AddHttpClient("sources").AddHttpMessageHandler(() => new CountingHandler(_sent));
@@ -259,11 +272,9 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
         Assert.Equal(0, _tokenCalls.Value);
     }
 
-    [Fact]
-    public async Task ConnectCallbackWithMissingClientSecretShowsMessage()
+    /// <summary>Runs the connect page sign-in for alice up to the callback, and returns the callback's status and body.</summary>
+    private async Task<(HttpStatusCode Status, string Body)> ConnectCallback(HostFactory host)
     {
-        _designs.Add(EnvA, OAuthStoreDesign(), At(mock.BaseUrl));
-        var host = Host();
         var browser = host.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
         browser.DefaultRequestHeaders.Add(ConnectTests.OidHeader, Tickets.AliceOid);
         var path = $"/connect/{EnvA}/TicketsAPI";
@@ -279,12 +290,37 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
         Assert.Equal(HttpStatusCode.Redirect, signedIn.StatusCode);
 
         var callback = await browser.GetAsync(signedIn.Headers.Location!.PathAndQuery);
-        var body = await callback.Content.ReadAsStringAsync();
-        Assert.Equal(HttpStatusCode.InternalServerError, callback.StatusCode);
+        return (callback.StatusCode, await callback.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task ConnectCallbackWithMissingClientSecretShowsMessage()
+    {
+        _designs.Add(EnvA, OAuthStoreDesign(), At(mock.BaseUrl));
+        var (status, body) = await ConnectCallback(Host());
+        Assert.Equal(HttpStatusCode.InternalServerError, status);
         Assert.Contains("TicketsAPI", body);
         Assert.Contains("clientSecret", body);
+        Assert.Contains("not set", body);
         Assert.Equal(0, _tokenCalls.Value);
         Assert.DoesNotContain(Tickets.ClientSecret, body);
+    }
+
+    [Fact]
+    public async Task ConnectCallbackWithUnreadableClientSecretIs503()
+    {
+        _designs.Add(EnvA, OAuthStoreDesign(), At(mock.BaseUrl));
+        await _secrets.SetAsync(EnvA, "TicketsAPI", "clientSecret", Tickets.ClientSecret, default);
+        _secretStore.Unreadable = true;
+        var host = Host();
+        var (status, body) = await ConnectCallback(host);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, status);
+        Assert.Contains("TicketsAPI", body);
+        Assert.Contains("clientSecret", body);
+        Assert.Contains("unreadable", body);
+        Assert.Equal(0, _tokenCalls.Value);
+        Assert.DoesNotContain(Tickets.ClientSecret, body);
+        Assert.DoesNotContain(host.Logs, l => l.Contains(Tickets.ClientSecret));
     }
 
     [Fact]
@@ -370,6 +406,20 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
         Assert.Equal("ConfigurationError", error!.Error);
         Assert.Contains("colour", error.Message);
         Assert.Contains("WarehouseAPI", error.Message);
+    }
+
+    [Theory]
+    [InlineData("mode", "ServiceAccount")]
+    [InlineData("asyncContext", "TriggeringUser")]
+    public async Task ModeAndAsyncContextCannotBeOverridden(string key, string value)
+    {
+        _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl, (key, value)));
+        await KeyFor(EnvA);
+        var (status, _, error) = await Run(Host(), List("ext_item", "WarehouseAPI", EnvA));
+        Assert.Equal(500, status);
+        Assert.Equal("ConfigurationError", error!.Error);
+        Assert.Contains($"bf_WarehouseAPI_Auth in environment {EnvA} overrides `{key}`", error.Message);
+        Assert.Equal(0, _sent.Value);
     }
 
     [Fact]
