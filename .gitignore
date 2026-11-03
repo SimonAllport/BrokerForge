@@ -8,3 +8,6 @@ out/
 *.pfx
 .env
 appsettings.*.local.json
+
+# brainstorm mockups
+.superpowers/brainstorm/
