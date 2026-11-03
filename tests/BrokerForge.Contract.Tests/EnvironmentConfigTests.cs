@@ -117,8 +117,10 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
             s.AddSingleton<IInstanceSecretStore>(_secretStore);
             // Stands in for the host's managed identity, so no test reaches Azure.
             s.AddSingleton<Azure.Core.TokenCredential>(_hostIdentity);
+            // The connect app's client authentication, so tests can see where it is sent.
+            s.AddSingleton<BrokerForge.Auth.PerUser.IConnectAppClient>(new FakeConnectApp());
             s.AddHttpClient("sources").AddHttpMessageHandler(() => new CountingHandler(_sent));
-            s.AddHttpClient("tokens").AddHttpMessageHandler(() => new CountingHandler(_tokenCalls));
+            s.AddHttpClient("tokens").AddHttpMessageHandler(() => new CountingHandler(_tokenCalls)).AddHttpMessageHandler(() => new TokenTrap(_tokenPosts));
         });
         _owned.Add(host);
         return host;

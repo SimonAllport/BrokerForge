@@ -20,9 +20,9 @@ namespace BrokerForge.Host.Config;
 /// unreachable environment is not read on every request and a fixed design is picked up soon after.</item>
 /// </list>
 /// </summary>
-/// <param name="designScopes">The scopes each environment's designs may use in ServiceAccount or Impersonate mode; none when null.</param>
+/// <param name="designTrust">What the host allows each environment's designs (<see cref="DesignTrust"/>); nothing when null.</param>
 public sealed class CompositeConfigProvider(HostConfigStore files, IDesignSource? designs, TimeProvider time, TimeSpan ttl, ILogger? log = null,
-    Func<string, IReadOnlyCollection<string>>? designScopes = null) : IHostConfigProvider
+    Func<string, DesignTrust>? designTrust = null) : IHostConfigProvider
 {
     /// <summary>How long a store with failures is reused before the source is read again.</summary>
     public static readonly TimeSpan FailureCacheTime = TimeSpan.FromSeconds(30);
@@ -106,7 +106,7 @@ public sealed class CompositeConfigProvider(HostConfigStore files, IDesignSource
     /// </summary>
     private HostConfigStore Assemble(string environmentId, DesignLoad loaded)
     {
-        var scopes = designScopes?.Invoke(environmentId) ?? Array.Empty<string>();
+        var scopes = designTrust?.Invoke(environmentId) ?? DesignTrust.None;
         var failures = new List<string>(loaded.Failures);
         var candidates = loaded.Designs.OrderBy(d => d.Design.Instance, StringComparer.Ordinal).ToList();
         foreach (var twice in candidates.GroupBy(d => d.Design.Instance, StringComparer.Ordinal).Where(g => g.Count() > 1))

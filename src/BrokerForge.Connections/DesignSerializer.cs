@@ -92,7 +92,7 @@ public static class DesignSerializer
         var o = r.Object(el, p);
         r.Keys(o, p, ["authorizeUrl", "tokenUrl", "scopes", "clientId", "usesConnectApp"]);
         return new DesignOAuth(
-            r.Str(o, p, "authorizeUrl"), r.Str(o, p, "tokenUrl"), r.List(o, p, "scopes"),
+            r.OptStr(o, p, "authorizeUrl"), r.OptStr(o, p, "tokenUrl"), r.List(o, p, "scopes"),
             r.OptStr(o, p, "clientId"), r.Bool(o, p, "usesConnectApp"));
     }
 

@@ -195,7 +195,7 @@ builder.Services.AddSingleton<IHostConfigProvider>(sp =>
     if (ttl <= TimeSpan.Zero || ttl > TimeSpan.FromMinutes(5))
         throw new ConfigurationException("Host configuration is invalid:\n - Config:Designs:CacheSeconds must be between 1 and 300: a solution import must reach the host within 5 minutes");
     return new CompositeConfigProvider(HostConfigStore.FromConfiguration(configuration), sp.GetService<IDesignSource>(), sp.GetRequiredService<TimeProvider>(), ttl,
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger("BrokerForge.Config"), sp.GetRequiredService<IOptions<TrustOptions>>().Value.DesignScopesFor);
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger("BrokerForge.Config"), env => new DesignTrust(sp.GetRequiredService<IOptions<TrustOptions>>().Value.DesignScopesFor(env), sp.GetRequiredService<IOptions<TrustOptions>>().Value.TenantId));
 });
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IHostConfigProvider>().Files);
 builder.Services.AddSingleton<CallerGuard>();

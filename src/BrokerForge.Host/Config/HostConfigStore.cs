@@ -195,7 +195,7 @@ public sealed class HostConfigStore
         if (a.AsyncAuth == null || asyncContext != AsyncContext.ServiceIdentity)
             return null;
         var asyncPath = path + ":AsyncAuth";
-        if (!Enum.TryParse<AuthMode>(a.AsyncAuth.Mode, out var asyncMode) || asyncMode is not (AuthMode.ServiceAccount or AuthMode.Static))
+        if (!Enum.GetNames<AuthMode>().Contains(a.AsyncAuth.Mode, StringComparer.Ordinal) || !Enum.TryParse<AuthMode>(a.AsyncAuth.Mode, out var asyncMode) || asyncMode is not (AuthMode.ServiceAccount or AuthMode.Static))
         {
             problems.Add($"{asyncPath}:Mode must be ServiceAccount or Static");
             return null;
@@ -237,7 +237,8 @@ public sealed class HostConfigStore
             // A design instance without its base URL is Incomplete: its calls fail naming the variable to set.
             if (design is not { Incomplete.Count: > 0 } && (!Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out var baseUri) || baseUri.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(baseUri.Query)))
                 problems.Add($"{where}:BaseUrl must be an absolute http(s) URL without a query");
-            if (!Enum.TryParse<AuthMode>(o.Auth.Mode, out var mode))
+            // Exactly a name: Enum.TryParse would also take "0", " Static" or "Static, OAuth".
+            if (!Enum.GetNames<AuthMode>().Contains(o.Auth.Mode, StringComparer.Ordinal) || !Enum.TryParse<AuthMode>(o.Auth.Mode, out var mode))
             {
                 problems.Add($"{where}:Auth:Mode must be one of {string.Join(", ", Enum.GetNames<AuthMode>())}");
                 continue;

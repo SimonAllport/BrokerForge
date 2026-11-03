@@ -1,9 +1,12 @@
+using System.Net;
+using System.Web;
 using Azure.Core;
 using BrokerForge.Abstractions;
 using BrokerForge.Auth.Credentials;
 using BrokerForge.Connections;
 using BrokerForge.Contracts;
 using BrokerForge.Host.Ingress;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BrokerForge.Contract.Tests;
@@ -33,6 +36,42 @@ public partial class EnvironmentConfigTests
     }
 
     private readonly RecordingCredential _hostIdentity = new();
+    private readonly List<(Uri Url, string Body)> _tokenPosts = new();
+
+    /// <summary>
+    /// Records every token endpoint call with its form. Only the mock (loopback) is really called: anything else, such
+    /// as Entra, gets invalid_grant here, so no test reaches the internet.
+    /// </summary>
+    private sealed class TokenTrap(List<(Uri, string)> posts) : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var body = request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct);
+            lock (posts)
+                posts.Add((request.RequestUri!, body));
+            if (request.RequestUri!.IsLoopback)
+                return await base.SendAsync(request, ct);
+            return new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("{\"error\":\"invalid_grant\"}", System.Text.Encoding.UTF8, "application/json"),
+            };
+        }
+    }
+
+    private const string ConnectAssertion = "test-only-connect-app-assertion";
+
+    private sealed class FakeConnectApp : BrokerForge.Auth.PerUser.IConnectAppClient
+    {
+        public string ClientId => "connect-test-client";
+        public Task<IReadOnlyList<KeyValuePair<string, string>>> ClientAuthAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<KeyValuePair<string, string>>>(new[]
+            {
+                new KeyValuePair<string, string>("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
+                new KeyValuePair<string, string>("client_assertion", ConnectAssertion),
+            });
+    }
+
+    private static string EntraEndpoint(string what) => $"https://login.microsoftonline.com/{HostFactory.Tenant}/oauth2/v2.0/{what}";
 
     private HostFactory ScopedHost(params string[] designScopesForA)
     {
@@ -45,10 +84,12 @@ public partial class EnvironmentConfigTests
         Auth = new DesignAuth("ServiceAccount", null, null, null, null, scope, null, null, null, Array.Empty<string>()),
     };
 
-    private ConnectionDesign ImpersonateDesign(params string[] scopes) => TicketsDesign() with
+    private ConnectionDesign ImpersonateDesign(params string[] scopes) => ImpersonateDesignAt(null, null, scopes);
+
+    private ConnectionDesign ImpersonateDesignAt(string? authorizeUrl, string? tokenUrl, params string[] scopes) => TicketsDesign() with
     {
         Auth = new DesignAuth("Impersonate", null, null, null, null, null, null, null,
-            new DesignOAuth("https://login.contoso.example/authorize", "https://login.contoso.example/token", scopes, null, true), Array.Empty<string>()),
+            new DesignOAuth(authorizeUrl, tokenUrl, scopes, null, true), Array.Empty<string>()),
     };
 
     private static void AssertRefused((int Status, CanonicalResponse? Response, ErrorPayload? Error) result, params string[] parts)
@@ -180,5 +221,109 @@ public partial class EnvironmentConfigTests
         using var host = new HostFactory(mock.BaseUrl, extra: new Dictionary<string, string?> { ["Trust:AllowedCallers:0:DesignScopes:0"] = reserved });
         var ex = Assert.Throws<ConfigurationException>(() => host.CreateClient());
         Assert.Contains($"DesignScopes lists {reserved}", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("2")]
+    [InlineData(" ServiceAccount")]
+    [InlineData("ServiceAccount ")]
+    [InlineData("serviceaccount")]
+    [InlineData("ServiceAccount, Static")]
+    public async Task DesignModeMustBeAnExactModeName(string mode)
+    {
+        var design = ServiceAccountDesign("https://vault.azure.net/.default");
+        _designs.Add(EnvA, design with { Auth = design.Auth with { Mode = mode } }, At(mock.BaseUrl));
+        var result = await Run(ScopedHost(AllowedScope), List("ext_item", "WarehouseAPI", EnvA));
+        AssertRefused(result, "WarehouseAPI", "auth.mode");
+        Assert.Empty(_hostIdentity.Scopes);
+        Assert.Equal(0, _sent.Value);
+    }
+
+    [Theory]
+    [InlineData("inventory.contoso.example/.default")]
+    [InlineData("https://contoso inventory/.default")]
+    [InlineData("http://inventory.contoso.example/.default")]
+    [InlineData("https://user@inventory.contoso.example/.default")]
+    [InlineData("ftp://inventory.contoso.example/.default")]
+    [InlineData("11111111-0000-0000-0000-000000000000/.default")]
+    public async Task DesignScopeThatIsNotAnHttpsOrApiUriRefused(string scope)
+    {
+        _designs.Add(EnvA, ServiceAccountDesign(scope), At(mock.BaseUrl));
+        var result = await Run(ScopedHost(AllowedScope), List("ext_item", "WarehouseAPI", EnvA));
+        AssertRefused(result, "WarehouseAPI", scope, "must be an absolute https:// or api:// URI");
+        Assert.Empty(_hostIdentity.Scopes);
+    }
+
+    [Theory]
+    [InlineData("https://tokens.contoso.example/token", null)]
+    [InlineData(null, "https://login.contoso.example/authorize")]
+    public async Task ImpersonateDesignWithTokenUrlRefused(string? tokenUrl, string? authorizeUrl)
+    {
+        var scope = Tickets.EntraAudience + "/user_impersonation";
+        _designs.Add(EnvA, ImpersonateDesignAt(authorizeUrl, tokenUrl, scope), At(mock.BaseUrl));
+        var result = await Run(ScopedHost(scope), List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
+        AssertRefused(result, "TicketsAPI", "usesConnectApp", tokenUrl != null ? "tokenUrl" : "authorizeUrl");
+        Assert.Empty(_tokenPosts);
+    }
+
+    [Fact]
+    public async Task ImpersonateDesignUsesTenantEntraEndpoints()
+    {
+        var scope = Tickets.EntraAudience + "/user_impersonation";
+        _designs.Add(EnvA, ImpersonateDesign(scope, "offline_access"), At(mock.BaseUrl));
+        var host = ScopedHost(scope);
+
+        // The connect page sends the browser to the tenant's Entra authorize endpoint.
+        var browser = host.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
+        browser.DefaultRequestHeaders.Add(ConnectTests.OidHeader, Tickets.AliceOid);
+        var path = $"/connect/{EnvA}/TicketsAPI";
+        var html = await (await browser.GetAsync(path)).Content.ReadAsStringAsync();
+        var token = HttpUtility.HtmlDecode(AntiforgeryField().Match(html).Groups[1].Value);
+        var start = await browser.PostAsync(path + "/start", new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token }));
+        Assert.True(start.StatusCode == HttpStatusCode.Redirect, await start.Content.ReadAsStringAsync());
+        Assert.StartsWith(EntraEndpoint("authorize") + "?", start.Headers.Location!.ToString());
+
+        // A refresh posts the connect app's credential to the tenant's Entra token endpoint only.
+        await host.Services.GetRequiredService<IUserCredentialStore>().SaveAsync($"{Guid.Parse(EnvA):N}_TicketsAPI", Tickets.AliceOid,
+            new UserCredential(CredentialKind.Impersonate, CredentialStatus.Connected, Tickets.EntraToken(Tickets.AliceOid), "entra-rt",
+                DateTimeOffset.UtcNow.AddSeconds(-5), null, null, DateTimeOffset.UtcNow), default);
+        var (status, _, error) = await Run(host, List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
+        Assert.Equal(401, status);
+        Assert.Equal(nameof(ConnectionRequiredException), error!.Error);
+        var post = Assert.Single(_tokenPosts);
+        Assert.Equal(EntraEndpoint("token"), post.Url.ToString());
+        Assert.Contains("client_id=connect-test-client", post.Body);
+        Assert.Contains("client_assertion=" + ConnectAssertion, post.Body);
+    }
+
+    [Fact]
+    public async Task HostCredentialNeverPostedToNonEntraUrl()
+    {
+        // An OAuth design (its own client) refreshes at its own token URL with its own stored secret only.
+        _designs.Add(EnvA, OAuthStoreDesign(), At(mock.BaseUrl));
+        await _secrets.SetAsync(EnvA, "TicketsAPI", "clientSecret", Tickets.ClientSecret, default);
+        var host = ScopedHost();
+        await ExpiredAliceToken(host);
+        var (status, _, error) = await Run(host, List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
+        Assert.True(status == 200, error?.Message);
+
+        Assert.NotEmpty(_tokenPosts);
+        foreach (var (url, body) in _tokenPosts.Where(p => p.Url.Host != "login.microsoftonline.com"))
+        {
+            Assert.DoesNotContain("connect-test-client", body);
+            Assert.DoesNotContain("client_assertion", body);
+            Assert.DoesNotContain("bf-test-connect-secret", body);
+            Assert.DoesNotContain(ConnectAssertion, body);
+        }
+    }
+
+    [Fact]
+    public async Task OAuthDesignTokenUrlMustBeHttps()
+    {
+        var design = TicketsDesign();
+        _designs.Add(EnvA, design with { Auth = design.Auth with { OAuth = design.Auth.OAuth! with { TokenUrl = "http://tokens.contoso.example/token" } } }, At(mock.BaseUrl));
+        var result = await Run(ScopedHost(), List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
+        AssertRefused(result, "TicketsAPI", "tokenUrl", "https");
     }
 }

@@ -37,6 +37,8 @@ public sealed class TrustOptions
                     yield return $"Trust:AllowedCallers entry for environment {c.EnvironmentId}: DesignScopes lists {scope}, a sign-in scope that names no resource; list the resource's scope";
                 else if (DesignScopeRules.Reserved(scope) is { } service)
                     yield return $"Trust:AllowedCallers entry for environment {c.EnvironmentId}: DesignScopes lists {scope}, which is for {service}; a connection design may never use it";
+                else if (!DesignScopeRules.WellFormed(scope))
+                    yield return $"Trust:AllowedCallers entry for environment {c.EnvironmentId}: DesignScopes lists {scope}, which must be an absolute https:// or api:// URI";
         if (designs)
             foreach (var c in AllowedCallers.Where(c => string.IsNullOrWhiteSpace(c.OrgUrl)))
                 yield return $"Trust:AllowedCallers entry for environment {c.EnvironmentId} needs OrgUrl when Config:Designs:Enabled is true";

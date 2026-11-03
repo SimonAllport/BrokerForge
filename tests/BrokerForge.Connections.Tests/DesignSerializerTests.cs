@@ -65,6 +65,22 @@ public class DesignSerializerTests
     }
 
     [Fact]
+    public void OAuthUrlsAreOptional()
+    {
+        var d = Sample() with
+        {
+            Auth = Sample().Auth with { Mode = "Impersonate", OAuth = new DesignOAuth(null, null, new[] { "api://contoso/.default" }, null, true) },
+        };
+        var json = DesignSerializer.Serialize(d);
+        Assert.DoesNotContain("authorizeUrl", json);
+        Assert.DoesNotContain("tokenUrl", json);
+        var back = DesignSerializer.Parse(json, "design.xml");
+        Assert.Null(back.Auth.OAuth!.AuthorizeUrl);
+        Assert.Null(back.Auth.OAuth.TokenUrl);
+        Assert.Equal(json, DesignSerializer.Serialize(back));
+    }
+
+    [Fact]
     public void WrapUnwrapRoundTrip()
     {
         var json = DesignSerializer.Serialize(Sample());

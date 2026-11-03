@@ -24,6 +24,15 @@ public interface IDesignSource
     Task<DesignLoad> LoadAsync(string environmentId, CancellationToken ct);
 }
 
+/// <summary>
+/// What the host allows one environment's designs: the scopes they may use in ServiceAccount or Impersonate mode
+/// (<c>Trust:AllowedCallers[i]:DesignScopes</c>) and the tenant whose Entra endpoints connect-app designs use.
+/// </summary>
+public sealed record DesignTrust(IReadOnlyCollection<string> Scopes, string TenantId)
+{
+    public static readonly DesignTrust None = new(Array.Empty<string>(), "");
+}
+
 /// <summary>What <see cref="IDesignSource.LoadAsync"/> read: the usable designs, and why each other one was left out.</summary>
 public sealed record DesignLoad(IReadOnlyList<(ConnectionDesign Design, EnvironmentSettings Settings)> Designs, IReadOnlyList<string> Failures)
 {

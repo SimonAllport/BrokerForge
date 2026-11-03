@@ -37,6 +37,10 @@ public sealed partial class TokenEndpointClient(HttpClient http, ISecretResolver
         var form = new List<KeyValuePair<string, string>>(grant) { Pair("scope", string.Join(' ', resource.Scopes)) };
         if (resource.UsesConnectApp)
         {
+            // The connect app's credential (and the user's code) goes to Entra and nowhere else, whatever configured the URL.
+            if (!(Uri.TryCreate(resource.TokenUrl, UriKind.Absolute, out var url) && url.Scheme == Uri.UriSchemeHttps
+                  && url.IsDefaultPort && url.UserInfo.Length == 0 && url.Host == "login.microsoftonline.com"))
+                throw new ConfigurationException($"OAuthResources:{resource.Name} uses the connect app, whose credential is sent only to https://login.microsoftonline.com/; its TokenUrl is {resource.TokenUrl}.");
             if (connectApp == null)
                 throw new ConfigurationException($"OAuthResources:{resource.Name} uses the connect app, but the connect app is not configured (Connect settings).");
             form.Add(Pair("client_id", connectApp.ClientId));

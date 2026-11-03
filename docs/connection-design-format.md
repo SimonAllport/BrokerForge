@@ -45,7 +45,7 @@ Root:
 
 | Key | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `mode` | string | yes | Authentication mode. |
+| `mode` | string | yes | Authentication mode: exactly `ServiceAccount`, `Static`, `Impersonate`, `Sso` or `OAuth` (case-sensitive, no spaces, no numbers). |
 | `staticKind` | string | no | Static mode: how the secret is sent. |
 | `headerName` | string | no | Static header name. |
 | `queryParam` | string | no | Static query parameter name. |
@@ -60,8 +60,8 @@ Root:
 
 | Key | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `authorizeUrl` | string | yes | |
-| `tokenUrl` | string | yes | |
+| `authorizeUrl` | string | no | The source's own authorize endpoint, https. Must be absent when `usesConnectApp` is true: the host then uses `https://login.microsoftonline.com/<Trust:TenantId>/oauth2/v2.0/authorize`. |
+| `tokenUrl` | string | no | The source's own token endpoint, https. Must be absent when `usesConnectApp` is true: the host then uses `https://login.microsoftonline.com/<Trust:TenantId>/oauth2/v2.0/token`. Only the design's own `clientSecret` instance secret is ever sent to it. |
 | `scopes` | array of string | yes | |
 | `clientId` | string | no | |
 | `usesConnectApp` | boolean | yes | True when the host's connect app is the OAuth client. |
@@ -86,4 +86,4 @@ Secret values are never part of either; they stay in Key Vault or the host's enc
 
 ## Tokens minted through the host
 
-ServiceAccount (the host's managed identity) and Impersonate (a user's Entra token through the host's connect app) send a token to the design's base URL. A design may use either only with a scope that the host lists for its environment in `Trust:AllowedCallers[i]:DesignScopes`; the list is empty by default, so such a design is refused until the host's administrator adds the scope. For ServiceAccount the scope is `auth.scope` (after any `bf_<Instance>_Auth` override); for Impersonate every scope in `auth.oauth.scopes` except the sign-in scopes `openid`, `profile`, `email` and `offline_access`, and at least one other scope is required. Scopes for Azure management, Key Vault, Storage, Dataverse and Microsoft Graph are always refused, and a bare scope such as `User.Read` counts as Microsoft Graph. A refused design is a configuration problem naming the instance, the scope and the environment.
+ServiceAccount (the host's managed identity) and Impersonate (a user's Entra token through the host's connect app) send a token to the design's base URL. A design may use either only with a scope that the host lists for its environment in `Trust:AllowedCallers[i]:DesignScopes`; the list is empty by default, so such a design is refused until the host's administrator adds the scope. For ServiceAccount the scope is `auth.scope` (after any `bf_<Instance>_Auth` override); for Impersonate every scope in `auth.oauth.scopes` except the sign-in scopes `openid`, `profile`, `email` and `offline_access`, and at least one other scope is required. Scopes for Azure management, Key Vault, Storage, Dataverse and Microsoft Graph are always refused, and a bare scope such as `User.Read` counts as Microsoft Graph. Each scope must be an absolute `https://` or `api://` URI with no user info, query or fragment; any other spelling (a bare host, a bare app ID, another scheme) is refused. A refused design is a configuration problem naming the instance, the scope and the environment.

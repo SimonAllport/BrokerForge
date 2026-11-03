@@ -1,3 +1,4 @@
+using BrokerForge.Abstractions;
 using BrokerForge.Connections;
 
 namespace BrokerForge.Host.Config;
@@ -25,10 +26,11 @@ public static class DesignConfigInput
         ["ssoKind"] = (a, v) => a.SsoKind = v,
     };
 
-    /// <param name="designScopes">The scopes the environment's designs may use in ServiceAccount or Impersonate mode (<see cref="DesignScopeRules"/>).</param>
+    /// <param name="trust">What the host allows the environment's designs (<see cref="DesignTrust"/>); nothing when null.</param>
     public static ConfigInput Merge(ConfigInput files, string environmentId, IEnumerable<(ConnectionDesign Design, EnvironmentSettings Settings)> designs,
-        IReadOnlyCollection<string>? designScopes = null)
+        DesignTrust? trust = null)
     {
+        trust ??= DesignTrust.None;
         var input = Copy(files);
         input.EnvironmentId = environmentId;
         var designTables = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -84,9 +86,15 @@ public static class DesignConfigInput
                     set(auth, value);
                 else
                     input.Problems.Add($"bf_{name}_Auth in environment {environmentId} overrides `{key}`, which is not an auth setting of instance {name} (use one of {string.Join(", ", Overrides.Keys)})");
-            // After the overrides, so an environment cannot override its way to a scope it may not use.
-            input.Problems.AddRange(DesignScopeRules.Problems(name, environmentId, auth.Mode, auth.Scope, design.Auth.OAuth?.Scopes,
-                designScopes ?? Array.Empty<string>()));
+            // Exactly a mode name: Enum.TryParse would also take "0", " ServiceAccount" or "Static, OAuth", and the scope
+            // check below must run on the mode the host will use.
+            if (!Enum.GetNames<AuthMode>().Contains(auth.Mode, StringComparer.Ordinal))
+                input.Problems.Add($"Instance {name} in environment {environmentId}: auth.mode `{auth.Mode}` must be exactly one of {string.Join(", ", Enum.GetNames<AuthMode>())}");
+            else
+                // After the overrides, so an environment cannot override its way to a scope it may not use.
+                input.Problems.AddRange(DesignScopeRules.Problems(name, environmentId, Enum.Parse<AuthMode>(auth.Mode), auth.Scope, design.Auth.OAuth?.Scopes, trust.Scopes));
+            if (design.Auth.OAuth is { } endpoints)
+                input.Problems.AddRange(EndpointProblems(name, environmentId, endpoints, trust.TenantId));
             var secrets = design.Auth.SecretNames.ToDictionary(n => n, n => "store:" + n, StringComparer.Ordinal);
             if (auth.Mode == "Static" && design.Auth.SecretNames.Count > 0)
                 auth.SecretRef = "store:" + design.Auth.SecretNames[0];
@@ -101,8 +109,9 @@ public static class DesignConfigInput
             if (design.Auth.OAuth is { } o)
                 input.OAuthResources[name] = new OAuthResourceOptions
                 {
-                    AuthorizeUrl = o.AuthorizeUrl,
-                    TokenUrl = o.TokenUrl,
+                    // The connect app's credential and the user's code go only to the tenant's Entra endpoints.
+                    AuthorizeUrl = o.UsesConnectApp ? EntraEndpoint(trust.TenantId, "authorize") : o.AuthorizeUrl ?? "",
+                    TokenUrl = o.UsesConnectApp ? EntraEndpoint(trust.TenantId, "token") : o.TokenUrl ?? "",
                     Scopes = o.Scopes.ToList(),
                     ClientId = o.ClientId,
                     UsesConnectApp = o.UsesConnectApp,
@@ -122,6 +131,31 @@ public static class DesignConfigInput
             input.SchemaTexts[name] = design.Schema;
         }
         return input;
+    }
+
+    private static string EntraEndpoint(string tenantId, string what) =>
+        $"https://login.microsoftonline.com/{Uri.EscapeDataString(tenantId)}/oauth2/v2.0/{what}";
+
+    /// <summary>
+    /// A design with <c>usesConnectApp</c> names no endpoint: the host posts its connect app's credential, and the user's
+    /// code and PKCE verifier, so they must go to Entra. A design with its own client keeps its endpoints, over https
+    /// (http only to loopback, for local runs), and is sent only its own <c>store:clientSecret</c>.
+    /// </summary>
+    private static IEnumerable<string> EndpointProblems(string name, string environmentId, DesignOAuth o, string tenantId)
+    {
+        if (o.UsesConnectApp)
+        {
+            foreach (var (key, value) in new[] { ("authorizeUrl", o.AuthorizeUrl), ("tokenUrl", o.TokenUrl) })
+                if (value != null)
+                    yield return $"Instance {name} in environment {environmentId} uses the connect app (usesConnectApp), so auth.oauth.{key} must be absent: the host uses its tenant's Entra endpoints";
+            if (!Guid.TryParse(tenantId, out _))
+                yield return $"Instance {name} in environment {environmentId} uses the connect app, which needs Trust:TenantId as a GUID for the Entra endpoints";
+            yield break;
+        }
+        foreach (var (key, value) in new[] { ("authorizeUrl", o.AuthorizeUrl), ("tokenUrl", o.TokenUrl) })
+            if (!(Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.UserInfo.Length == 0
+                  && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))))
+                yield return $"Instance {name} in environment {environmentId}: auth.oauth.{key} must be an absolute https URL";
     }
 
     /// <summary>The file input is shared by every environment, so each one builds on its own copy.</summary>

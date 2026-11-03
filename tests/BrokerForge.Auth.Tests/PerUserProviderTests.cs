@@ -102,7 +102,8 @@ public class PerUserProviderTests
 
     private static readonly OAuthResource Tickets = new("Tickets", "https://tk.example/tk/oauth/authorize", "https://tk.example/tk/oauth/token",
         new[] { "tickets.read" }, "bf-tickets", "env:BF_TEST_TK_CLIENT_SECRET", false);
-    private static readonly OAuthResource Entra = new("Entra", "https://login.example/authorize", "https://login.example/token",
+    private static readonly OAuthResource Entra = new("Entra", "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000001/oauth2/v2.0/authorize",
+        "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000001/oauth2/v2.0/token",
         new[] { "api://tickets/user_impersonation", "offline_access" }, null, null, true);
 
     private readonly InMemoryUserCredentialStore _store = new();
@@ -340,6 +341,32 @@ public class PerUserProviderTests
         Assert.Equal("mi-assertion", form["client_assertion"]);
         Assert.False(form.ContainsKey("client_secret"));
         Assert.Equal("api://tickets/user_impersonation offline_access", form["scope"]);
+    }
+
+    [Theory]
+    [InlineData("https://tokens.contoso.example/token")]
+    [InlineData("http://login.microsoftonline.com/t/oauth2/v2.0/token")]
+    [InlineData("https://login.microsoftonline.com.contoso.example/t/oauth2/v2.0/token")]
+    public async Task TokenClient_ConnectAppCredentialOnlyGoesToEntra(string tokenUrl)
+    {
+        var app = new CountingConnectApp();
+        var client = new TokenEndpointClient(new HttpClient(_tokens), new FixedSecrets(), app, new FixedTime(Now));
+        var resource = Entra with { TokenUrl = tokenUrl };
+        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => client.RefreshAsync(resource, Instance(new AuthConfig(AuthMode.Impersonate, OAuthResource: "Entra")), "rt-1", default));
+        Assert.Contains("https://login.microsoftonline.com/", ex.Message);
+        Assert.Empty(_tokens.Forms);
+        Assert.Equal(0, app.Calls);
+    }
+
+    private sealed class CountingConnectApp : IConnectAppClient
+    {
+        public int Calls;
+        public string ClientId => "connect-app-id";
+        public Task<IReadOnlyList<KeyValuePair<string, string>>> ClientAuthAsync(CancellationToken ct)
+        {
+            Interlocked.Increment(ref Calls);
+            return Task.FromResult<IReadOnlyList<KeyValuePair<string, string>>>(new[] { new KeyValuePair<string, string>("client_assertion", "mi-assertion") });
+        }
     }
 
     [Fact]

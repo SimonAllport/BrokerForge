@@ -29,9 +29,13 @@ public sealed record DesignAuth(
     [property: System.Text.Json.Serialization.JsonPropertyName("oauth")] DesignOAuth? OAuth,
     IReadOnlyList<string> SecretNames);
 
+/// <summary>
+/// AuthorizeUrl and TokenUrl are the source's own (https), and must be absent when UsesConnectApp is true: the host
+/// then uses its tenant's Entra endpoints, so the connect app's credential never goes to a URL the design chose.
+/// </summary>
 public sealed record DesignOAuth(
-    string AuthorizeUrl,
-    string TokenUrl,
+    string? AuthorizeUrl,
+    string? TokenUrl,
     IReadOnlyList<string> Scopes,
     string? ClientId,
     bool UsesConnectApp);

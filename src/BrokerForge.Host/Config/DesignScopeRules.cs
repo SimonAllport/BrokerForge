@@ -1,3 +1,5 @@
+using BrokerForge.Abstractions;
+
 namespace BrokerForge.Host.Config;
 
 /// <summary>
@@ -67,16 +69,27 @@ public static class DesignScopeRules
     }
 
     /// <summary>
-    /// The problems with a design instance's auth: for ServiceAccount its scope, for Impersonate the scopes of its OAuth
-    /// resource. Other modes use no token minted through the host and have none.
+    /// A scope a design or the DesignScopes list may name: an absolute <c>https://</c> or <c>api://</c> URI with a host,
+    /// no user info, query, fragment or surrounding space. Anything else (a bare host, a bare app ID, another scheme) is
+    /// refused rather than guessed at, so the reserved-audience check cannot be sidestepped by an odd spelling.
     /// </summary>
-    public static IEnumerable<string> Problems(string instance, string environmentId, string mode, string? scope, IReadOnlyList<string>? oauthScopes,
+    public static bool WellFormed(string scope) =>
+        scope.Length > 0 && !scope.Any(char.IsWhiteSpace)
+        && Uri.TryCreate(scope, UriKind.Absolute, out var uri)
+        && uri.Scheme is "https" or "api"
+        && uri.Host.Length > 0 && uri.UserInfo.Length == 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0;
+
+    /// <summary>
+    /// The problems with a design instance's auth, on its parsed mode: for ServiceAccount its scope, for Impersonate the
+    /// scopes of its OAuth resource. Other modes use no token minted through the host and have none.
+    /// </summary>
+    public static IEnumerable<string> Problems(string instance, string environmentId, AuthMode mode, string? scope, IReadOnlyList<string>? oauthScopes,
         IReadOnlyCollection<string> allowed)
     {
         IEnumerable<string> scopes;
-        if (mode == "ServiceAccount")
+        if (mode == AuthMode.ServiceAccount)
             scopes = string.IsNullOrWhiteSpace(scope) ? Array.Empty<string>() : new[] { scope };
-        else if (mode == "Impersonate" && oauthScopes != null)
+        else if (mode == AuthMode.Impersonate && oauthScopes != null)
         {
             if (oauthScopes.All(s => string.IsNullOrWhiteSpace(s) || IsSignIn(s)))
             {
@@ -91,7 +104,9 @@ public static class DesignScopeRules
         {
             if (Reserved(s) is { } service)
                 yield return $"Instance {instance} in environment {environmentId} uses {mode} with scope `{s}`, which is for {service}: a connection design may never use it, because the token would go to the design's base URL";
-            else if (!allowed.Contains(s.Trim(), StringComparer.OrdinalIgnoreCase))
+            else if (!WellFormed(s))
+                yield return $"Instance {instance} in environment {environmentId} uses {mode} with scope `{s}`, which must be an absolute https:// or api:// URI such as api://contoso-inventory/.default";
+            else if (!allowed.Contains(s, StringComparer.OrdinalIgnoreCase))
                 yield return $"Instance {instance} uses {mode} with scope `{s}`, which Trust:AllowedCallers does not list in DesignScopes for environment {environmentId}: a connection design may use a token minted through the host only for a scope listed there";
         }
     }
