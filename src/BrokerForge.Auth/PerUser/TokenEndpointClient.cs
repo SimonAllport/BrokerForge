@@ -21,18 +21,18 @@ public sealed partial class TokenEndpointClient(HttpClient http, ISecretResolver
     [GeneratedRegex("^[a-z_]{1,64}$")]
     private static partial Regex ErrorCode();
 
-    public Task<TokenSet> RedeemCodeAsync(OAuthResource resource, string code, string verifier, string redirectUri, CancellationToken ct) =>
-        PostAsync(resource, new[]
+    public Task<TokenSet> RedeemCodeAsync(OAuthResource resource, ServiceInstance instance, string code, string verifier, string redirectUri, CancellationToken ct) =>
+        PostAsync(resource, instance, new[]
         {
             Pair("grant_type", "authorization_code"), Pair("code", code), Pair("code_verifier", verifier), Pair("redirect_uri", redirectUri),
         }, ct);
 
-    public Task<TokenSet> RefreshAsync(OAuthResource resource, string refreshToken, CancellationToken ct) =>
-        PostAsync(resource, new[] { Pair("grant_type", "refresh_token"), Pair("refresh_token", refreshToken) }, ct);
+    public Task<TokenSet> RefreshAsync(OAuthResource resource, ServiceInstance instance, string refreshToken, CancellationToken ct) =>
+        PostAsync(resource, instance, new[] { Pair("grant_type", "refresh_token"), Pair("refresh_token", refreshToken) }, ct);
 
     private static KeyValuePair<string, string> Pair(string k, string v) => new(k, v);
 
-    private async Task<TokenSet> PostAsync(OAuthResource resource, KeyValuePair<string, string>[] grant, CancellationToken ct)
+    private async Task<TokenSet> PostAsync(OAuthResource resource, ServiceInstance instance, KeyValuePair<string, string>[] grant, CancellationToken ct)
     {
         var form = new List<KeyValuePair<string, string>>(grant) { Pair("scope", string.Join(' ', resource.Scopes)) };
         if (resource.UsesConnectApp)
@@ -46,7 +46,7 @@ public sealed partial class TokenEndpointClient(HttpClient http, ISecretResolver
         {
             form.Add(Pair("client_id", resource.ClientId!));
             if (resource.ClientSecretRef != null)
-                form.Add(Pair("client_secret", await secrets.GetAsync(SecretRef.Parse(resource.ClientSecretRef), ct)));
+                form.Add(Pair("client_secret", await secrets.GetAsync(SecretRef.Parse(resource.ClientSecretRef), instance, ct)));
         }
 
         HttpResponseMessage response;

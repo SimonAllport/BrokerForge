@@ -183,7 +183,7 @@ public static partial class ConnectEndpoints
             return Refused("This sign-in was not started in this browser, or has already been used. Start again from the connect page.");
         if (UserObjectId(http) != state.UserObjectId)
         {
-            log.LogWarning("Connect callback for {Instance} refused: started by another user", state.Instance);
+            log.LogWarning("Connect callback for {Instance} in environment {EnvironmentId} refused: started by another user", state.Instance, state.EnvironmentId);
             return Refused("This sign-in was started by another user. Start again from the connect page.");
         }
         var (found, config) = await Find(http, configs, state.EnvironmentId, state.Instance, ct);
@@ -197,7 +197,7 @@ public static partial class ConnectEndpoints
         TokenSet set;
         try
         {
-            set = await tokens.RedeemCodeAsync(config.OAuthResource(si.Auth.OAuthResource!), code, state.Verifier, config.ConnectCallbackUrl, ct);
+            set = await tokens.RedeemCodeAsync(config.OAuthResource(si.Auth.OAuthResource!), si, code, state.Verifier, config.ConnectCallbackUrl, ct);
         }
         catch (RefreshRejectedException)
         {
@@ -205,12 +205,12 @@ public static partial class ConnectEndpoints
         }
         catch (CredentialUnavailableException ex)
         {
-            log.LogWarning("Connect for {Instance} user {UserObjectId} failed: {Reason}", si.Name, state.UserObjectId, ex.Message);
+            log.LogWarning("Connect for {Instance} in environment {EnvironmentId} user {UserObjectId} failed: {Reason}", si.Name, si.EnvironmentId, state.UserObjectId, ex.Message);
             return ConnectPages.Message(502, "Connection not saved", "The source's sign-in service did not answer properly. Try again later.");
         }
         await store.SaveAsync(CredentialPartition.For(si), state.UserObjectId,
             new UserCredential(KindFor(si.Auth.Mode), CredentialStatus.Connected, set.AccessToken, set.RefreshToken, set.ExpiresAt, null, null, time.GetUtcNow()), ct);
-        log.LogInformation("Connected {Mode} for {Instance} user {UserObjectId}", si.Auth.Mode, si.Name, state.UserObjectId);
+        log.LogInformation("Connected {Mode} for {Instance} in environment {EnvironmentId} user {UserObjectId}", si.Auth.Mode, si.Name, si.EnvironmentId, state.UserObjectId);
         return SeeOther(PagePath(si));
     }
 
@@ -234,7 +234,7 @@ public static partial class ConnectEndpoints
         if (basic && (username!.Length is 0 or > MaxUsername || username.IndexOfAny(new[] { '\r', '\n', ':' }) >= 0))
             return Refused($"Enter a username of 1 to {MaxUsername} characters without a colon.");
         await store.SaveAsync(CredentialPartition.For(si), user, new UserCredential(CredentialKind.Sso, CredentialStatus.Connected, null, null, null, username, secret, time.GetUtcNow()), ct);
-        loggers.CreateLogger("BrokerForge.Connect").LogInformation("Connected Sso for {Instance} user {UserObjectId}", si.Name, user);
+        loggers.CreateLogger("BrokerForge.Connect").LogInformation("Connected Sso for {Instance} in environment {EnvironmentId} user {UserObjectId}", si.Name, si.EnvironmentId, user);
         return SeeOther(PagePath(si));
     }
 
@@ -248,7 +248,7 @@ public static partial class ConnectEndpoints
         if (!await AntiforgeryValid(http, antiforgery))
             return Refused("The form has expired. Open the connect page again.");
         await store.DeleteAsync(CredentialPartition.For(si), user, ct);
-        loggers.CreateLogger("BrokerForge.Connect").LogInformation("Disconnected {Instance} user {UserObjectId}", si.Name, user);
+        loggers.CreateLogger("BrokerForge.Connect").LogInformation("Disconnected {Instance} in environment {EnvironmentId} user {UserObjectId}", si.Name, si.EnvironmentId, user);
         return SeeOther(PagePath(si));
     }
 

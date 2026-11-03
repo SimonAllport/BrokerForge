@@ -156,6 +156,8 @@ if (builder.Configuration["Connect:ClientId"] is { Length: > 0 } connectClientId
         : new ManagedIdentityConnectAppClient(connectClientId, new ManagedIdentityCredential(builder.Configuration["AZURE_CLIENT_ID"])));
 builder.Services.AddSingleton<IUserCredentialStore>(sp => CredentialStores.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<HostConfigStore>(),
     sp.GetService<IDesignSource>() != null, sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IDataProtectionProvider>()));
+builder.Services.AddSingleton<IInstanceSecretStore>(sp => CredentialStores.CreateInstanceSecrets(sp.GetRequiredService<IConfiguration>(),
+    sp.GetService<IDesignSource>() != null, sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IDataProtectionProvider>()));
 builder.Services.AddSingleton(sp => new TokenEndpointClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("tokens"),
     sp.GetRequiredService<ISecretResolver>(), sp.GetService<IConnectAppClient>(), sp.GetRequiredService<TimeProvider>()));
 // An instance's OAuth resource is looked up in its own environment's configuration; the connect base URL is the host's own.
@@ -195,6 +197,7 @@ var store = app.Services.GetRequiredService<HostConfigStore>();
 app.Logger.LogInformation("Loaded descriptors: {Descriptors}", string.Join(", ", store.DescriptorNames));
 app.Services.GetRequiredService<PageTokenKey>();
 app.Services.GetRequiredService<IUserCredentialStore>();
+app.Services.GetRequiredService<IInstanceSecretStore>();
 
 app.UseForwardedHeaders();
 app.UseAuthentication();

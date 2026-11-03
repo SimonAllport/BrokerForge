@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace BrokerForge.Auth.Credentials;
 
 /// <summary>
@@ -18,8 +20,11 @@ public sealed class InMemoryInstanceSecretStore : IInstanceSecretStore
 {
     private readonly Dictionary<(string, string, string), string> _values = new();
 
-    private static (string, string, string) Key(string environmentId, string instance, string name) =>
-        (Guid.TryParse(environmentId, out var env) ? env.ToString("D") : throw new ArgumentException("An environment ID is a GUID.", nameof(environmentId)), instance, name);
+    private static (string, string, string) Key(string environmentId, string instance, string name)
+    {
+        var (env, i, n) = InstanceSecretKeys.Check(environmentId, instance, name);
+        return (env.ToString("D"), i, n);
+    }
 
     public Task<string?> GetAsync(string environmentId, string instance, string name, CancellationToken ct)
     {
@@ -45,5 +50,23 @@ public sealed class InMemoryInstanceSecretStore : IInstanceSecretStore
         lock (_values)
             _values.Remove(Key(environmentId, instance, name));
         return Task.CompletedTask;
+    }
+}
+
+internal static partial class InstanceSecretKeys
+{
+    [GeneratedRegex("^[A-Za-z0-9]+$")]
+    private static partial Regex Plain();
+
+    /// <summary>The validated key: the environment ID as a GUID, then instance and secret name (letters and digits, as <c>store:</c> names are).</summary>
+    public static (Guid Environment, string Instance, string Name) Check(string environmentId, string instance, string name)
+    {
+        if (!Guid.TryParse(environmentId, out var env))
+            throw new ArgumentException("An environment ID is a GUID.", nameof(environmentId));
+        if (!Plain().IsMatch(instance))
+            throw new ArgumentException("A service instance name is letters and digits.", nameof(instance));
+        if (!Plain().IsMatch(name))
+            throw new ArgumentException("A secret name is letters and digits.", nameof(name));
+        return (env, instance, name);
     }
 }

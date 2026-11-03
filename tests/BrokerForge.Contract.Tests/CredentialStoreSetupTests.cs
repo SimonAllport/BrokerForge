@@ -1,4 +1,7 @@
 using BrokerForge.Abstractions;
+using BrokerForge.Auth.Credentials;
+using BrokerForge.Host.Config;
+using Microsoft.Extensions.Configuration;
 
 namespace BrokerForge.Contract.Tests;
 
@@ -44,6 +47,24 @@ public class CredentialStoreSetupTests(MockApiFixture mock)
     {
         using var host = new HostFactory(mock.BaseUrl, extra: PerUser(("Credentials:InMemory", "true")));
         Assert.NotNull(host.CreateClient());
+    }
+
+    [Fact]
+    public void InstanceSecrets_DesignsNeedTheTableUnlessInMemoryAsked()
+    {
+        IConfiguration Config(params (string, string?)[] settings) => new ConfigurationBuilder().AddInMemoryCollection(settings.ToDictionary(s => s.Item1, s => s.Item2)).Build();
+        var credential = new Azure.Identity.DefaultAzureCredential();
+        var protection = new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider();
+
+        var ex = Assert.Throws<ConfigurationException>(() => CredentialStores.CreateInstanceSecrets(Config(), true, credential, protection));
+        Assert.Contains("Credentials:TableEndpoint", ex.Message);
+        Assert.IsType<InMemoryInstanceSecretStore>(CredentialStores.CreateInstanceSecrets(Config(("Credentials:InMemory", "true")), true, credential, protection));
+        Assert.IsType<InMemoryInstanceSecretStore>(CredentialStores.CreateInstanceSecrets(Config(), false, credential, protection));
+        Assert.IsType<TableInstanceSecretStore>(CredentialStores.CreateInstanceSecrets(
+            Config(("Credentials:TableEndpoint", "https://acct.table.core.windows.net"), ("DataProtection:BlobUri", "https://acct.blob.core.windows.net/k/k.xml"), ("DataProtection:KeyId", "https://kv.vault.azure.net/keys/k")),
+            true, credential, protection));
+        Assert.Contains("DataProtection:BlobUri", Assert.Throws<ConfigurationException>(() =>
+            CredentialStores.CreateInstanceSecrets(Config(("Credentials:TableEndpoint", "https://acct.table.core.windows.net")), true, credential, protection)).Message);
     }
 
     [Fact]

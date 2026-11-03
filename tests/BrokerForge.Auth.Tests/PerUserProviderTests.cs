@@ -345,7 +345,7 @@ public class PerUserProviderTests
     [Fact]
     public async Task TokenClient_RedeemCode_SendsPkceVerifierAndRedirect()
     {
-        var set = await Client().RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default);
+        var set = await Client().RedeemCodeAsync(Tickets, OAuthInstance, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default);
         Assert.Equal(("at-2", "rt-2", Now.AddSeconds(3600)), (set.AccessToken, set.RefreshToken, set.ExpiresAt));
         var form = Assert.Single(_tokens.Forms);
         Assert.Equal(("authorization_code", "code-1", "verifier-1", "https://bf-host.example/connect/callback"),
@@ -356,7 +356,7 @@ public class PerUserProviderTests
     public async Task TokenClient_ExpiresInAsString_Accepted()
     {
         _tokens.Override = () => TokenEndpoint.Json(HttpStatusCode.OK, new { access_token = "at-s", refresh_token = "rt-s", expires_in = "3599", token_type = "Bearer" });
-        var set = await Client().RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default);
+        var set = await Client().RedeemCodeAsync(Tickets, OAuthInstance, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default);
         Assert.Equal(("at-s", Now.AddSeconds(3599)), (set.AccessToken, set.ExpiresAt));
     }
 
@@ -368,7 +368,7 @@ public class PerUserProviderTests
     {
         _tokens.Override = () => TokenEndpoint.Json(HttpStatusCode.OK, new { access_token = "at-s", expires_in = value });
         var ex = await Assert.ThrowsAsync<CredentialUnavailableException>(() =>
-            Client().RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default));
+            Client().RedeemCodeAsync(Tickets, OAuthInstance, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default));
         Assert.Contains("expires_in", ex.Message);
         Assert.DoesNotContain("at-s", ex.Message);
     }
@@ -379,7 +379,7 @@ public class PerUserProviderTests
         _tokens.Delays.Enqueue(5000);
         var client = new TokenEndpointClient(new HttpClient(_tokens) { Timeout = TimeSpan.FromMilliseconds(100) }, new FixedSecrets(), new FakeConnectApp(), new FixedTime(Now));
         var ex = await Assert.ThrowsAsync<CredentialUnavailableException>(() =>
-            client.RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default));
+            client.RedeemCodeAsync(Tickets, OAuthInstance, "code-1", "verifier-1", "https://bf-host.example/connect/callback", default));
         Assert.Contains("did not answer", ex.Message);
         Assert.DoesNotContain("code-1", ex.Message);
     }
@@ -390,7 +390,7 @@ public class PerUserProviderTests
         _tokens.Delays.Enqueue(5000);
         using var cancel = new CancellationTokenSource(100);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            Client().RedeemCodeAsync(Tickets, "code-1", "verifier-1", "https://bf-host.example/connect/callback", cancel.Token));
+            Client().RedeemCodeAsync(Tickets, OAuthInstance, "code-1", "verifier-1", "https://bf-host.example/connect/callback", cancel.Token));
     }
 
     [Fact]

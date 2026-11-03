@@ -53,6 +53,7 @@ public static partial class ExecuteEndpoint
         using var scope = log.BeginScope(new Dictionary<string, object>
         {
             ["correlationId"] = correlationId,
+            ["environmentId"] = request.EnvironmentId ?? "(none)",
             ["userObjectId"] = request.Caller?.UserObjectId ?? "(none)",
             ["async"] = request.Caller?.Async ?? false,
         });

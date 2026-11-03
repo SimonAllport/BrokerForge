@@ -99,6 +99,8 @@ public static class DesignConfigInput
                     Scopes = o.Scopes.ToList(),
                     ClientId = o.ClientId,
                     UsesConnectApp = o.UsesConnectApp,
+                    // A confidential client's secret is an instance secret like any other: kept in the host's store (HLD D-34).
+                    ClientSecretRef = !o.UsesConnectApp && design.Auth.SecretNames.Contains("clientSecret") ? "store:clientSecret" : null,
                 };
             if (design.ObjectMap is { } map)
                 input.ObjectMaps[map.Table] = new ObjectMapOptions

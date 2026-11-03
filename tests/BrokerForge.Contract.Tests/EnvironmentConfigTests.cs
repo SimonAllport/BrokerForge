@@ -200,6 +200,73 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
         Assert.Equal(0, _sent.Value);
     }
 
+    private ConnectionDesign OAuthStoreDesign() => TicketsDesign() with
+    {
+        Auth = TicketsDesign().Auth with { SecretNames = new[] { "clientSecret" } },
+    };
+
+    private async Task ExpiredAliceToken(HostFactory host)
+    {
+        var tokens = await Tickets.SignInAsync(mock.BaseUrl, "alice");
+        await host.Services.GetRequiredService<IUserCredentialStore>().SaveAsync($"{Guid.Parse(EnvA):N}_TicketsAPI", Tickets.AliceOid,
+            Tickets.OAuthCredential(tokens, DateTimeOffset.UtcNow.AddSeconds(-5)), default);
+    }
+
+    [Fact]
+    public async Task DesignOAuthClientSecretFromStore()
+    {
+        _designs.Add(EnvA, OAuthStoreDesign(), At(mock.BaseUrl));
+        await _secrets.SetAsync(EnvA, "TicketsAPI", "clientSecret", Tickets.ClientSecret, default);
+        var host = Host();
+        await ExpiredAliceToken(host);
+
+        // The refresh reaches the mock's token endpoint with the stored client secret, which the mock checks.
+        var (status, response, error) = await Run(host, List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
+        Assert.True(status == 200, error?.Message);
+        Assert.NotEmpty(response!.Rows);
+        var saved = await host.Services.GetRequiredService<IUserCredentialStore>().GetAsync($"{Guid.Parse(EnvA):N}_TicketsAPI", Tickets.AliceOid, default);
+        Assert.True(saved!.ExpiresAt > DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task MissingStoredClientSecretFailsBeforeTokenCall()
+    {
+        _designs.Add(EnvA, OAuthStoreDesign(), At(mock.BaseUrl));
+        var host = Host();
+        await ExpiredAliceToken(host);
+        var (status, _, error) = await Run(host, List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
+        Assert.Equal(500, status);
+        Assert.Equal("ConfigurationError", error!.Error);
+        Assert.Equal("Service instance TicketsAPI needs its key `clientSecret` in this environment: an administrator sets it on the BrokerForge secret page.", error.Message);
+        Assert.Equal(0, _sent.Value);
+    }
+
+    [Fact]
+    public async Task SecretValueNeverInMessages()
+    {
+        const string wrong = "bf-test-wrong-stored-value-7f3a";
+        // A wrong stored API key: the source refuses it.
+        _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl));
+        _designs.Add(EnvA, OAuthStoreDesign(), At(mock.BaseUrl));
+        _designs.Add(EnvB, Warehouse(), At(mock.BaseUrl));
+        await _secrets.SetAsync(EnvA, "WarehouseAPI", "apiKey", wrong, default);
+        await _secrets.SetAsync(EnvA, "TicketsAPI", "clientSecret", wrong, default);
+        var host = Host();
+        await ExpiredAliceToken(host);
+
+        var failures = new[]
+        {
+            await Run(host, List("ext_item", "WarehouseAPI", EnvA)),
+            await Run(host, List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid)),
+            // Missing key in another environment.
+            await Run(host, List("ext_item", "WarehouseAPI", EnvB)),
+        };
+        Assert.All(failures.Take(2), f => Assert.NotEqual(200, f.Status));
+        foreach (var f in failures)
+            Assert.DoesNotContain(wrong, System.Text.Json.JsonSerializer.Serialize(f.Error) + System.Text.Json.JsonSerializer.Serialize(f.Response));
+        Assert.DoesNotContain(host.Logs, line => line.Contains(wrong));
+    }
+
     [Fact]
     public async Task NameClashBetweenFilesAndDesignFails()
     {
@@ -307,6 +374,9 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
         var (status, response, error) = await Run(host, List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
         Assert.True(status == 200, error?.Message);
         Assert.NotEmpty(response!.Rows);
+        Assert.Contains(host.Logs, l => l.Contains($"Connected Sso for TicketsAPI in environment {EnvA} user {Tickets.AliceOid}"));
+        Assert.All(host.Logs.Where(l => l.Contains("Executing RetrieveMultiple")), l => Assert.Contains($"environmentId={EnvA}", l));
+        Assert.DoesNotContain(host.Logs, l => l.Contains(Tickets.AlicePassword));
     }
 
     [Fact]

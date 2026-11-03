@@ -79,7 +79,7 @@ public sealed class DelegatedTokenAuthProvider(
             TokenSet refreshed;
             try
             {
-                refreshed = await tokens.RefreshAsync(await resources(instance, ct), credential.RefreshToken, ct);
+                refreshed = await tokens.RefreshAsync(await resources(instance, ct), instance, credential.RefreshToken, ct);
             }
             catch (RefreshRejectedException)
             {
@@ -93,7 +93,7 @@ public sealed class DelegatedTokenAuthProvider(
                 if (!await store.SetStatusIfUnchangedAsync(key, user, CredentialStatus.Expired, row!.Version, ct)
                     && await NewerGrant(key, user, credential, ct) is { } last)
                     return Channel(last.AccessToken!);
-                log.LogWarning("The {Mode} refresh for {Instance} user {UserObjectId} was refused; marked expired", Mode, instance.Name, user);
+                log.LogWarning("The {Mode} refresh for {Instance} in environment {EnvironmentId} user {UserObjectId} was refused; marked expired", Mode, instance.Name, instance.EnvironmentId, user);
                 throw ConnectionRequired.Because(instance, "the stored token has expired and the source refused to refresh it", correlationId, connectUrl);
             }
 
@@ -111,7 +111,7 @@ public sealed class DelegatedTokenAuthProvider(
             {
                 if (await store.ReplaceIfUnchangedAsync(key, user, updated, version, ct))
                 {
-                    log.LogInformation("Refreshed the {Mode} token for {Instance} user {UserObjectId}", Mode, instance.Name, user);
+                    log.LogInformation("Refreshed the {Mode} token for {Instance} in environment {EnvironmentId} user {UserObjectId}", Mode, instance.Name, instance.EnvironmentId, user);
                     return Channel(refreshed.AccessToken);
                 }
                 var now = await store.GetVersionedAsync(key, user, ct);
