@@ -55,6 +55,7 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
     private readonly FakeDesigns _designs = new();
     private readonly InMemoryInstanceSecretStore _secrets = new();
     private readonly Counter _sent = new();
+    private readonly Counter _tokenCalls = new();
     private readonly List<IDisposable> _owned = new();
 
     public Task InitializeAsync() => mock.ResetAsync();
@@ -89,6 +90,7 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
             s.AddSingleton<IDesignSource>(_designs);
             s.AddSingleton<IInstanceSecretStore>(_secrets);
             s.AddHttpClient("sources").AddHttpMessageHandler(() => new CountingHandler(_sent));
+            s.AddHttpClient("tokens").AddHttpMessageHandler(() => new CountingHandler(_tokenCalls));
         });
         _owned.Add(host);
         return host;
@@ -239,6 +241,35 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
         Assert.Equal("ConfigurationError", error!.Error);
         Assert.Equal("Service instance TicketsAPI needs its key `clientSecret` in this environment: an administrator sets it on the BrokerForge secret page.", error.Message);
         Assert.Equal(0, _sent.Value);
+        Assert.Equal(0, _tokenCalls.Value);
+    }
+
+    [Fact]
+    public async Task ConnectCallbackWithMissingClientSecretShowsMessage()
+    {
+        _designs.Add(EnvA, OAuthStoreDesign(), At(mock.BaseUrl));
+        var host = Host();
+        var browser = host.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
+        browser.DefaultRequestHeaders.Add(ConnectTests.OidHeader, Tickets.AliceOid);
+        var path = $"/connect/{EnvA}/TicketsAPI";
+        var html = await (await browser.GetAsync(path)).Content.ReadAsStringAsync();
+        var token = HttpUtility.HtmlDecode(AntiforgeryField().Match(html).Groups[1].Value);
+        var start = await browser.PostAsync(path + "/start", new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token }));
+        Assert.Equal(HttpStatusCode.Redirect, start.StatusCode);
+        var form = HttpUtility.ParseQueryString(start.Headers.Location!.Query).AllKeys.ToDictionary(k => k!, k => HttpUtility.ParseQueryString(start.Headers.Location!.Query)[k]!);
+        form["user"] = "alice";
+        form["password"] = Tickets.Password("alice");
+        using var plain = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+        var signedIn = await plain.PostAsync(mock.BaseUrl + "/tk/oauth/authorize", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.Redirect, signedIn.StatusCode);
+
+        var callback = await browser.GetAsync(signedIn.Headers.Location!.PathAndQuery);
+        var body = await callback.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.InternalServerError, callback.StatusCode);
+        Assert.Contains("TicketsAPI", body);
+        Assert.Contains("clientSecret", body);
+        Assert.Equal(0, _tokenCalls.Value);
+        Assert.DoesNotContain(Tickets.ClientSecret, body);
     }
 
     [Fact]
@@ -262,6 +293,7 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
             await Run(host, List("ext_item", "WarehouseAPI", EnvB)),
         };
         Assert.All(failures.Take(2), f => Assert.NotEqual(200, f.Status));
+        Assert.Equal(new[] { 502, 500, 500 }, failures.Select(f => f.Status).ToArray());
         foreach (var f in failures)
             Assert.DoesNotContain(wrong, System.Text.Json.JsonSerializer.Serialize(f.Error) + System.Text.Json.JsonSerializer.Serialize(f.Response));
         Assert.DoesNotContain(host.Logs, line => line.Contains(wrong));

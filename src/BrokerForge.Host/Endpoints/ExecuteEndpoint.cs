@@ -53,7 +53,8 @@ public static partial class ExecuteEndpoint
         using var scope = log.BeginScope(new Dictionary<string, object>
         {
             ["correlationId"] = correlationId,
-            ["environmentId"] = request.EnvironmentId ?? "(none)",
+            // Caller-supplied and not yet validated: only a GUID (in its canonical form) goes into the log scope.
+            ["environmentId"] = Guid.TryParse(request.EnvironmentId, out var environment) ? environment.ToString("D") : "(none)",
             ["userObjectId"] = request.Caller?.UserObjectId ?? "(none)",
             ["async"] = request.Caller?.Async ?? false,
         });

@@ -32,7 +32,7 @@ public sealed class TableInstanceSecretStore(TableClient table, IDataProtectionP
         {
             return _protector.Unprotect(row.Value!.GetString("Payload"));
         }
-        catch (Exception ex) when (ex is CryptographicException or ArgumentException or InvalidOperationException or NullReferenceException)
+        catch (Exception ex) when (ex is CryptographicException or ArgumentException or InvalidOperationException)
         {
             // The key ring that protected the value is gone, or the row is damaged. No detail: it could hold ciphertext.
             throw new CredentialUnreadableException($"The stored secret `{name}` of {instance} could not be read ({ex.GetType().Name}); an administrator must set it again.");

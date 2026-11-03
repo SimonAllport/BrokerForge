@@ -203,6 +203,13 @@ public static partial class ConnectEndpoints
         {
             return Refused("The source refused the sign-in code. Start again from the connect page.");
         }
+        catch (Exception ex) when (ex is ConfigurationException or CredentialUnreadableException)
+        {
+            // The instance's stored client secret is not set or cannot be read: an administrator's job, and the message names no value.
+            log.LogWarning("Connect for {Instance} in environment {EnvironmentId} user {UserObjectId} failed: {Reason}", si.Name, si.EnvironmentId, state.UserObjectId, ex.Message);
+            return ConnectPages.Message(ex is ConfigurationException ? 500 : 503, "Connection not saved",
+                $"{si.Name} cannot be connected yet: its stored key `clientSecret` is {(ex is ConfigurationException ? "not set" : "unreadable")}. Ask an administrator to set it on the BrokerForge secret page.");
+        }
         catch (CredentialUnavailableException ex)
         {
             log.LogWarning("Connect for {Instance} in environment {EnvironmentId} user {UserObjectId} failed: {Reason}", si.Name, si.EnvironmentId, state.UserObjectId, ex.Message);
