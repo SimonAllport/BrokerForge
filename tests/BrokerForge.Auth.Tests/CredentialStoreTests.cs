@@ -172,7 +172,18 @@ public sealed class AzuriteFixture : IDisposable
     }
 }
 
-public sealed class TableCredentialStoreTests : CredentialStoreContract, IClassFixture<AzuriteFixture>
+/// <summary>
+/// One Azurite for every table test class. With a fixture per class, the class that started Azurite killed it when it
+/// finished, while another class that had found it running was still using it.
+/// </summary>
+[CollectionDefinition(Name)]
+public sealed class AzuriteCollection : ICollectionFixture<AzuriteFixture>
+{
+    public const string Name = "Azurite";
+}
+
+[Collection(AzuriteCollection.Name)]
+public sealed class TableCredentialStoreTests : CredentialStoreContract
 {
     private readonly TableClient _table;
 

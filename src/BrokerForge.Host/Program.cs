@@ -130,8 +130,13 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
 });
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull);
 
+// Design instances' requests (sources and token endpoints) go through the design egress rule (HLD D-34): their own
+// pool, which connects only to addresses that are not private unless the host is in Config:Designs:AllowedPrivateHosts.
+static string[] AllowedPrivateHosts(IServiceProvider sp) =>
+    sp.GetRequiredService<IConfiguration>().GetSection("Config:Designs:AllowedPrivateHosts").Get<string[]>() ?? [];
 builder.Services.AddHttpClient("sources", c => c.Timeout = Timeout.InfiniteTimeSpan)
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5), AllowAutoRedirect = false })
+    .ConfigurePrimaryHttpMessageHandler(sp => DesignEgress.Handler(
+        () => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5), AllowAutoRedirect = false }, AllowedPrivateHosts(sp)))
     // .NET 8's client logging writes the full request URI, and a query can carry a secret (principle 4).
     .RemoveAllLoggers();
 var azureCredential = new DefaultAzureCredential();
@@ -145,7 +150,7 @@ builder.Services.AddSingleton<IAuthProvider>(sp => new StaticAuthProvider(sp.Get
 builder.Services.AddSingleton<IAuthProvider>(sp => new ServiceAccountAuthProvider(sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
 // Per-user modes (HLD 9.1, D-25, D-28). Each provider serves only its own mode; none can reach another identity.
 builder.Services.AddHttpClient("tokens", c => c.Timeout = TimeSpan.FromSeconds(30))
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false })
+    .ConfigurePrimaryHttpMessageHandler(sp => DesignEgress.Handler(() => new SocketsHttpHandler { AllowAutoRedirect = false }, AllowedPrivateHosts(sp)))
     .RemoveAllLoggers();
 builder.Services.AddSingleton(TimeProvider.System);
 // Stored credentials, the connect cookie and OAuth state are protected with these keys (HLD D-25). They must
@@ -195,7 +200,8 @@ builder.Services.AddSingleton<IHostConfigProvider>(sp =>
     if (ttl <= TimeSpan.Zero || ttl > TimeSpan.FromMinutes(5))
         throw new ConfigurationException("Host configuration is invalid:\n - Config:Designs:CacheSeconds must be between 1 and 300: a solution import must reach the host within 5 minutes");
     return new CompositeConfigProvider(HostConfigStore.FromConfiguration(configuration), sp.GetService<IDesignSource>(), sp.GetRequiredService<TimeProvider>(), ttl,
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger("BrokerForge.Config"), env => new DesignTrust(sp.GetRequiredService<IOptions<TrustOptions>>().Value.DesignScopesFor(env), sp.GetRequiredService<IOptions<TrustOptions>>().Value.TenantId));
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger("BrokerForge.Config"), env => new DesignTrust(sp.GetRequiredService<IOptions<TrustOptions>>().Value.DesignScopesFor(env), sp.GetRequiredService<IOptions<TrustOptions>>().Value.TenantId,
+            AllowedPrivateHosts(sp), configuration.GetValue("Config:Designs:AllowLoopbackForTests", false)));
 });
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IHostConfigProvider>().Files);
 builder.Services.AddSingleton<CallerGuard>();

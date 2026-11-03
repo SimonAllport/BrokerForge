@@ -60,7 +60,7 @@ public sealed class DelegatedTokenAuthProvider(
 
         var credential = Usable(instance, await store.GetAsync(key, user, ct), correlationId);
         if (!ExpiresSoon(credential))
-            return Channel(credential.AccessToken!);
+            return Channel(instance, credential.AccessToken!);
 
         // The gate stops two calls on this replica refreshing at once. Across replicas, and against the user's
         // own disconnect or reconnect, every write below is conditional on the row version read here.
@@ -69,7 +69,7 @@ public sealed class DelegatedTokenAuthProvider(
             var row = await store.GetVersionedAsync(key, user, ct);
             credential = Usable(instance, row?.Credential, correlationId);
             if (!ExpiresSoon(credential))
-                return Channel(credential.AccessToken!);
+                return Channel(instance, credential.AccessToken!);
             if (credential.RefreshToken == null)
             {
                 await store.SetStatusIfUnchangedAsync(key, user, CredentialStatus.Expired, row!.Version, ct);
@@ -86,13 +86,13 @@ public sealed class DelegatedTokenAuthProvider(
                 // Refused because another replica used this refresh token first, or the user reconnected meanwhile:
                 // the row then holds a newer grant, and that grant is the answer.
                 if (await NewerGrant(key, user, credential, ct) is { } newer)
-                    return Channel(newer.AccessToken!);
+                    return Channel(instance, newer.AccessToken!);
                 await Task.Delay(_refusalGrace, ct);
                 if (await NewerGrant(key, user, credential, ct) is { } later)
-                    return Channel(later.AccessToken!);
+                    return Channel(instance, later.AccessToken!);
                 if (!await store.SetStatusIfUnchangedAsync(key, user, CredentialStatus.Expired, row!.Version, ct)
                     && await NewerGrant(key, user, credential, ct) is { } last)
-                    return Channel(last.AccessToken!);
+                    return Channel(instance, last.AccessToken!);
                 log.LogWarning("The {Mode} refresh for {Instance} in environment {EnvironmentId} user {UserObjectId} was refused; marked expired", Mode, instance.Name, instance.EnvironmentId, user);
                 throw ConnectionRequired.Because(instance, "the stored token has expired and the source refused to refresh it", correlationId, connectUrl);
             }
@@ -112,7 +112,7 @@ public sealed class DelegatedTokenAuthProvider(
                 if (await store.ReplaceIfUnchangedAsync(key, user, updated, version, ct))
                 {
                     log.LogInformation("Refreshed the {Mode} token for {Instance} in environment {EnvironmentId} user {UserObjectId}", Mode, instance.Name, instance.EnvironmentId, user);
-                    return Channel(refreshed.AccessToken);
+                    return Channel(instance, refreshed.AccessToken);
                 }
                 var now = await store.GetVersionedAsync(key, user, ct);
                 if (now == null)
@@ -121,7 +121,7 @@ public sealed class DelegatedTokenAuthProvider(
                 {
                     // The user reconnected, or another replica refreshed: keep that grant and discard this one.
                     if (Fresh(now.Credential))
-                        return Channel(now.Credential.AccessToken!);
+                        return Channel(instance, now.Credential.AccessToken!);
                     break;
                 }
                 version = now.Version;
@@ -149,9 +149,9 @@ public sealed class DelegatedTokenAuthProvider(
 
     private bool ExpiresSoon(UserCredential credential) => credential.ExpiresAt is not { } at || at - time.GetUtcNow() < RefreshWindow;
 
-    private HttpChannel Channel(string accessToken)
+    private HttpChannel Channel(ServiceInstance instance, string accessToken)
     {
         var header = new AuthenticationHeaderValue("Bearer", accessToken);
-        return new HttpChannel(http, request => request.Headers.Authorization = header, accessToken);
+        return new HttpChannel(http, instance, request => request.Headers.Authorization = header, accessToken);
     }
 }

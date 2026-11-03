@@ -107,6 +107,9 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
             ["Connect:ClientId"] = "connect-test-client",
             ["Connect:ClientSecretRef"] = "env:BF_TEST_CONNECT_SECRET",
             ["Credentials:InMemory"] = "true",
+            // The mock runs on loopback: the design egress rule is relaxed by name and flag, never switched off.
+            ["Config:Designs:AllowedPrivateHosts:0"] = "127.0.0.1",
+            ["Config:Designs:AllowLoopbackForTests"] = "true",
         };
         foreach (var (k, v) in edits)
             settings[k] = v;

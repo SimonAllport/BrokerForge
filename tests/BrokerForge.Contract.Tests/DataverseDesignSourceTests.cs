@@ -367,6 +367,7 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
             ["Credentials:InMemory"] = "true",
             ["Trust:AllowedCallers:0:OrgUrl"] = OrgA,
             ["Trust:AllowedCallers:1:OrgUrl"] = OrgB,
+            ["Config:Designs:AllowedPrivateHosts:0"] = "127.0.0.1",
         }, services: s =>
         {
             s.AddSingleton<IDataverseReader>(_dataverse);

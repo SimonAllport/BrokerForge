@@ -73,7 +73,8 @@ public sealed class InMemoryInstanceSecretStoreTests : InstanceSecretStoreContra
     protected override IInstanceSecretStore Store { get; } = new InMemoryInstanceSecretStore();
 }
 
-public sealed class TableInstanceSecretStoreTests : InstanceSecretStoreContract, IClassFixture<AzuriteFixture>
+[Collection(AzuriteCollection.Name)]
+public sealed class TableInstanceSecretStoreTests : InstanceSecretStoreContract
 {
     private readonly TableClient _table;
 

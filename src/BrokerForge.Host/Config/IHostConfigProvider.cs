@@ -28,7 +28,11 @@ public interface IDesignSource
 /// What the host allows one environment's designs: the scopes they may use in ServiceAccount or Impersonate mode
 /// (<c>Trust:AllowedCallers[i]:DesignScopes</c>) and the tenant whose Entra endpoints connect-app designs use.
 /// </summary>
-public sealed record DesignTrust(IReadOnlyCollection<string> Scopes, string TenantId)
+/// <param name="AllowedPrivateHosts">Config:Designs:AllowedPrivateHosts: exact host names a design may reach although they are
+/// private (and over http, for a base URL).</param>
+/// <param name="AllowLoopbackForTests">Config:Designs:AllowLoopbackForTests: OAuth design URLs may use http to loopback (tests only).</param>
+public sealed record DesignTrust(IReadOnlyCollection<string> Scopes, string TenantId, IReadOnlyCollection<string>? AllowedPrivateHosts = null,
+    bool AllowLoopbackForTests = false)
 {
     public static readonly DesignTrust None = new(Array.Empty<string>(), "");
 }

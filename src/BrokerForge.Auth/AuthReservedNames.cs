@@ -12,7 +12,9 @@ public static class AuthReservedNames
 {
     public static ReservedNames For(ServiceInstance instance)
     {
-        var headers = new List<string>();
+        // Headers that unlock a host's managed identity (Azure IMDS and the App Service / Container Apps identity
+        // endpoint): no descriptor may send them, whatever the instance.
+        var headers = new List<string> { "Metadata", "X-IDENTITY-HEADER" };
         var query = new List<string>();
         foreach (var auth in new[] { instance.Auth, instance.Auth.AsyncAuth })
         {

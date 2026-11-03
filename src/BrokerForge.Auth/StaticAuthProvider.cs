@@ -29,7 +29,7 @@ public sealed class StaticAuthProvider(ISecretResolver secrets, HttpClient http)
             "apiKeyHeader" or "apiKeyQuery" or "basic" => await Attach(instance, auth, ct),
             _ => throw Config(instance, $"Auth.StaticKind must be apiKeyHeader, apiKeyQuery or basic; got `{auth.StaticKind}`"),
         };
-        return new HttpChannel(http, attach.Attach, attach.Values);
+        return new HttpChannel(http, instance, attach.Attach, attach.Values);
     }
 
     private async Task<(Action<HttpRequestMessage>, string[])> Attach(ServiceInstance instance, AuthConfig auth, CancellationToken ct)

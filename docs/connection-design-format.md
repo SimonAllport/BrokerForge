@@ -79,7 +79,7 @@ Root:
 
 No key in the design is per-environment. Those values are `EnvironmentSettings(BaseUrl, AuthOverrides)` and are supplied as Dataverse environment variables:
 
-- `bf_<Instance>_BaseUrl`: the source base URL.
+- `bf_<Instance>_BaseUrl`: the source base URL. It must be https and may not point at a loopback, link-local, private or carrier-grade NAT address, by literal or by what its name resolves to, unless the host's administrator lists the host in `Config:Designs:AllowedPrivateHosts` (a listed host may also use http). The same rule applies to `auth.oauth` URLs.
 - `bf_<Instance>_Auth`: JSON object of `AuthOverrides` (string to string). Each key replaces the `auth` string field of the same name: `staticKind`, `headerName`, `queryParam`, `username`, `scope` or `ssoKind`. `mode` and `asyncContext` cannot be overridden: who the source sees the call as belongs to the design that was approved, not to an environment variable. Any other key, `mode` and `asyncContext` included, is a configuration problem naming the key and the instance, and the design is left out of that environment.
 
 Secret values are never part of either; they stay in Key Vault or the host's encrypted store.

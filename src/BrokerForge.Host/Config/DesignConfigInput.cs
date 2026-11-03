@@ -94,7 +94,10 @@ public static class DesignConfigInput
                 // After the overrides, so an environment cannot override its way to a scope it may not use.
                 input.Problems.AddRange(DesignScopeRules.Problems(name, environmentId, Enum.Parse<AuthMode>(auth.Mode), auth.Scope, design.Auth.OAuth?.Scopes, trust.Scopes));
             if (design.Auth.OAuth is { } endpoints)
-                input.Problems.AddRange(EndpointProblems(name, environmentId, endpoints, trust.TenantId));
+                input.Problems.AddRange(EndpointProblems(name, environmentId, endpoints, trust));
+            if (!string.IsNullOrWhiteSpace(settings.BaseUrl)
+                && UrlProblem($"bf_{name}_BaseUrl in environment {environmentId}", settings.BaseUrl.Trim(), trust, oauth: false) is { } baseProblem)
+                input.Problems.Add(baseProblem);
             var secrets = design.Auth.SecretNames.ToDictionary(n => n, n => "store:" + n, StringComparer.Ordinal);
             if (auth.Mode == "Static" && design.Auth.SecretNames.Count > 0)
                 auth.SecretRef = "store:" + design.Auth.SecretNames[0];
@@ -141,8 +144,9 @@ public static class DesignConfigInput
     /// code and PKCE verifier, so they must go to Entra. A design with its own client keeps its endpoints, over https
     /// (http only to loopback, for local runs), and is sent only its own <c>store:clientSecret</c>.
     /// </summary>
-    private static IEnumerable<string> EndpointProblems(string name, string environmentId, DesignOAuth o, string tenantId)
+    private static IEnumerable<string> EndpointProblems(string name, string environmentId, DesignOAuth o, DesignTrust trust)
     {
+        var tenantId = trust.TenantId;
         if (o.UsesConnectApp)
         {
             foreach (var (key, value) in new[] { ("authorizeUrl", o.AuthorizeUrl), ("tokenUrl", o.TokenUrl) })
@@ -153,9 +157,29 @@ public static class DesignConfigInput
             yield break;
         }
         foreach (var (key, value) in new[] { ("authorizeUrl", o.AuthorizeUrl), ("tokenUrl", o.TokenUrl) })
-            if (!(Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.UserInfo.Length == 0
-                  && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))))
-                yield return $"Instance {name} in environment {environmentId}: auth.oauth.{key} must be an absolute https URL";
+            if (UrlProblem($"Instance {name} in environment {environmentId}: auth.oauth.{key}", value, trust, oauth: true) is { } problem)
+                yield return problem;
+    }
+
+    /// <summary>
+    /// The design egress rule at merge time (HLD D-34; at connect time it is <see cref="BrokerForge.Auth.DesignEgress"/>): an
+    /// absolute https URL without user info, whose host is not a literal loopback, link-local or private address. A
+    /// host in Config:Designs:AllowedPrivateHosts may be private, and a base URL to it may use http; an OAuth URL may use
+    /// http (and loopback) only to loopback with Config:Designs:AllowLoopbackForTests.
+    /// </summary>
+    private static string? UrlProblem(string what, string? value, DesignTrust trust, bool oauth)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.UserInfo.Length > 0 || uri.DnsSafeHost.Length == 0)
+            return $"{what} must be an absolute https URL";
+        var host = uri.DnsSafeHost;
+        var listed = (trust.AllowedPrivateHosts ?? Array.Empty<string>()).Contains(host, StringComparer.OrdinalIgnoreCase);
+        var testLoopback = oauth && trust.AllowLoopbackForTests && uri.IsLoopback;
+        var httpAllowed = oauth ? testLoopback : listed;
+        if (uri.Scheme != Uri.UriSchemeHttps && !(uri.Scheme == Uri.UriSchemeHttp && httpAllowed))
+            return $"{what} must be an absolute https URL (http only for a host listed in Config:Designs:AllowedPrivateHosts{(oauth ? ", and for an OAuth URL only to loopback in tests" : "")})";
+        if (System.Net.IPAddress.TryParse(host, out var address) && BrokerForge.Auth.DesignEgress.IsPrivate(address) && !listed && !testLoopback)
+            return $"{what} points at private address {host}; list it in Config:Designs:AllowedPrivateHosts to allow";
+        return null;
     }
 
     /// <summary>The file input is shared by every environment, so each one builds on its own copy.</summary>

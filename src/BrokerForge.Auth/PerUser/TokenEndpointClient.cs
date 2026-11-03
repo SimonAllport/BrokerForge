@@ -56,7 +56,10 @@ public sealed partial class TokenEndpointClient(HttpClient http, ISecretResolver
         HttpResponseMessage response;
         try
         {
-            response = await http.PostAsync(resource.TokenUrl, new FormUrlEncodedContent(form), ct);
+            using var request = new HttpRequestMessage(HttpMethod.Post, resource.TokenUrl) { Content = new FormUrlEncodedContent(form) };
+            // A design instance's token URL goes through the design egress rule (DesignEgress).
+            DesignEgress.Mark(request, instance);
+            response = await http.SendAsync(request, ct);
         }
         catch (HttpRequestException ex)
         {

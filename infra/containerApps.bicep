@@ -205,6 +205,8 @@ resource host 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'Trust__AllowedCallers__0__OrgUrl', value: orgUrl }
             // Connection designs (HLD D-34) are read from that environment; their keys live in the credential table.
             { name: 'Config__Designs__Enabled', value: 'true' }
+            // WarehouseAPI's design targets the internal Orders/Inventory mock, which resolves to a private address.
+            { name: 'Config__Designs__AllowedPrivateHosts__0', value: mock.properties.configuration.ingress.fqdn }
             { name: 'Credentials__TableEndpoint', value: credentialTableEndpoint }
             { name: 'DataProtection__BlobUri', value: keyRingBlobUri }
             { name: 'DataProtection__KeyId', value: dataProtectionKeyUri }

@@ -43,11 +43,11 @@ public sealed class SsoAuthProvider(IUserCredentialStore store, Func<ServiceInst
             throw ConnectionRequired.Because(instance, "the stored credential contains a character it cannot be sent with", correlationId, connectUrl);
 
         if (auth.SsoKind == "apiKeyHeader")
-            return new HttpChannel(http, request => request.Headers.TryAddWithoutValidation(auth.HeaderName!, secret), secret);
+            return new HttpChannel(http, instance, request => request.Headers.TryAddWithoutValidation(auth.HeaderName!, secret), secret);
         if (credential.Username == null)
             throw ConnectionRequired.Because(instance, "the stored credential has no username", correlationId, connectUrl);
         var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(credential.Username + ":" + secret));
         var basic = new AuthenticationHeaderValue("Basic", encoded);
-        return new HttpChannel(http, request => request.Headers.Authorization = basic, secret, encoded);
+        return new HttpChannel(http, instance, request => request.Headers.Authorization = basic, secret, encoded);
     }
 }
