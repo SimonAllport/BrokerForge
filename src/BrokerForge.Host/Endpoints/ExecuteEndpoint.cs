@@ -98,14 +98,14 @@ public static partial class ExecuteEndpoint
         }
     }
 
+    /// <summary>" (design v7)" for an instance built from a connection design, so each call names the approved version it ran (spec 6).</summary>
+    private static string DesignLabel(ServiceInstance instance) => instance.DesignVersion is { } v ? $" (design v{v})" : "";
+
     /// <summary>
     /// A RetrieveMultiple whose only condition is primary key eq one GUID, on a table with a Retrieve
     /// operation. The platform sends these for Web API upserts and record lookups (phase 1 findings); the
     /// source answers them through the Retrieve descriptor, so nothing is filtered in the host.
     /// </summary>
-    /// <summary>" (design v7)" for an instance built from a connection design, so each call names the approved version it ran (spec 6).</summary>
-    private static string DesignLabel(ServiceInstance instance) => instance.DesignVersion is { } v ? $" (design v{v})" : "";
-
     private static CanonicalRequest? PrimaryKeyLookup(CanonicalRequest request, RequestRouter router, HostConfigStore config)
     {
         if (request.Message != Messages.RetrieveMultiple || !router.HasOperation(config, request.Table, Messages.Retrieve))

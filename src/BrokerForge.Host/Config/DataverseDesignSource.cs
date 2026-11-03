@@ -14,7 +14,8 @@ namespace BrokerForge.Host.Config;
 /// prefix, and the environment variables <c>bf_&lt;Instance&gt;_BaseUrl</c> and <c>bf_&lt;Instance&gt;_Auth</c> (the
 /// current value, else the default). The org URL is the environment's <see cref="AllowedCaller.OrgUrl"/>.
 /// A design that cannot be read fails the whole environment with every problem listed; Dataverse that cannot be read
-/// at all is a <see cref="DesignSourceUnavailableException"/>, so the provider can keep serving the last good store.
+/// at all is a <see cref="DesignSourceUnavailableException"/> when the failure is transient, so the provider can keep
+/// serving the last good store, and a <see cref="ConfigurationException"/> with the same text otherwise.
 /// </summary>
 public sealed partial class DataverseDesignSource(IOptions<TrustOptions> trust, IDataverseReader reader) : IDesignSource
 {
@@ -86,7 +87,9 @@ public sealed partial class DataverseDesignSource(IOptions<TrustOptions> trust, 
         }
         catch (DataverseUnavailableException ex)
         {
-            throw new DesignSourceUnavailableException($"Could not read connection designs for environment {environmentId} from Dataverse: {ex.Message}.");
+            var message = $"Could not read connection designs for environment {environmentId} from Dataverse: {ex.Message}.";
+            // Only a failure that may pass by itself lets the provider keep serving the last good store.
+            throw ex.Transient ? new DesignSourceUnavailableException(message) : new ConfigurationException(message);
         }
     }
 
@@ -116,7 +119,9 @@ public sealed partial class DataverseDesignSource(IOptions<TrustOptions> trust, 
             var instance = match.Groups["instance"].Value;
             if (design.Instance != instance)
             {
-                problems.Add($"{name} holds the design of instance {design.Instance}; the name must use the instance name");
+                problems.Add(string.Equals(design.Instance, instance, StringComparison.OrdinalIgnoreCase)
+                    ? $"{name}: the instance in the name, {instance}, differs in case from the design's instance {design.Instance}"
+                    : $"{name} holds the design of instance {design.Instance}; the name must use the instance name");
                 return null;
             }
             return (name, design);

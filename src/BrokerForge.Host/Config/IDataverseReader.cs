@@ -12,5 +12,12 @@ public interface IDataverseReader
     Task<JsonDocument> GetAsync(string orgUrl, string relativeUrl, CancellationToken ct);
 }
 
-/// <summary>Dataverse could not be read. The message is the reason only (for example <c>HTTP 403 (Forbidden)</c>); it never holds a token.</summary>
-public sealed class DataverseUnavailableException(string reason) : Exception(reason);
+/// <summary>
+/// Dataverse could not be read. The message is the reason only (for example <c>HTTP 403 (Forbidden)</c>); it never holds a
+/// token. <see cref="Transient"/> is true only for what may pass by itself: no token, network errors, timeouts, 408, 429
+/// and 5xx. Anything else (another status, an answer of the wrong shape) means the request or the setup is wrong.
+/// </summary>
+public sealed class DataverseUnavailableException(string reason, bool transient) : Exception(reason)
+{
+    public bool Transient { get; } = transient;
+}

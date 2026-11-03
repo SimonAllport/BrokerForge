@@ -9,10 +9,11 @@ namespace BrokerForge.Host.Config;
 /// <list type="bullet">
 /// <item>A build that fails is cached for <see cref="FailureCacheTime"/> (or <c>ttl</c> if shorter), so a broken or
 /// unreachable environment is not read again on every request; a fixed design is picked up after that.</item>
-/// <item>When the source cannot be read at all (<see cref="DesignSourceUnavailableException"/>), the last good store
+/// <item>When the source cannot be read for a transient reason (<see cref="DesignSourceUnavailableException"/>), the last good store
 /// is served, with a warning on every request, until one more <c>ttl</c> has passed after it expired. Then, or with
 /// no good store, every request gets a <see cref="ConfigurationException"/> with the source's message.</item>
-/// <item>A design that is wrong is never covered by an older store: the environment fails until it is fixed.</item>
+/// <item>A design that is wrong, or a read that fails for a lasting reason (such as 400 or 403), is never covered by an
+/// older store: the environment fails until it is fixed.</item>
 /// </list>
 /// </summary>
 public sealed class CompositeConfigProvider(HostConfigStore files, IDesignSource? designs, TimeProvider time, TimeSpan ttl, ILogger? log = null) : IHostConfigProvider

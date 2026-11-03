@@ -34,13 +34,14 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         public Dictionary<string, List<object>> Variables { get; } = new();
         public List<(string Org, string Url)> Calls { get; } = new();
         public string? Down { get; set; }
+        public bool DownTransient { get; set; } = true;
 
         public Task<JsonDocument> GetAsync(string orgUrl, string relativeUrl, CancellationToken ct)
         {
             lock (Calls)
                 Calls.Add((orgUrl, relativeUrl));
             if (Down != null)
-                throw new DataverseUnavailableException(Down);
+                throw new DataverseUnavailableException(Down, DownTransient);
             var rows = relativeUrl.StartsWith("webresourceset?", StringComparison.Ordinal) ? WebResources.GetValueOrDefault(orgUrl)
                 : relativeUrl.StartsWith("environmentvariabledefinitions?", StringComparison.Ordinal) ? Variables.GetValueOrDefault(orgUrl)
                 : throw new InvalidOperationException("unexpected read " + relativeUrl);
@@ -164,6 +165,14 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
     }
 
     [Fact]
+    public async Task InstanceDifferingOnlyInCaseIsNamed()
+    {
+        _dataverse.Design(OrgA, "ext_/brokerforge/warehouseapi/design.xml", EnvironmentConfigTests.Warehouse());
+        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => Source().LoadAsync(EnvA, default));
+        Assert.Contains("ext_/brokerforge/warehouseapi/design.xml: the instance in the name, warehouseapi, differs in case from the design's instance WarehouseAPI", ex.Message);
+    }
+
+    [Fact]
     public async Task WrongWebResourceTypeFails()
     {
         _dataverse.Raw(OrgA, "ext_/brokerforge/WarehouseAPI/design.xml", DesignCarrier.Wrap(DesignSerializer.Serialize(EnvironmentConfigTests.Warehouse())), type: 3);
@@ -240,6 +249,35 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         time.Now = start + TimeSpan.FromMinutes(10.1);
         var ex = await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
         Assert.Equal($"Could not read connection designs for environment {EnvA} from Dataverse: HTTP 503 (ServiceUnavailable).", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("HTTP 403 (Forbidden): Principal user is missing prvReadWebResource privilege")]
+    public Task DataverseForbiddenWarmFailsAtOnce(string reason) => WarmFailsAtOnce(reason);
+
+    [Theory]
+    [InlineData("HTTP 400 (BadRequest): Could not find a property named 'nme'")]
+    public Task DataverseBadRequestWarmFailsAtOnce(string reason) => WarmFailsAtOnce(reason);
+
+    /// <summary>Only a transient failure may serve the last good store; anything else is wrong and fails the first call after the TTL.</summary>
+    private async Task WarmFailsAtOnce(string reason)
+    {
+        _dataverse.Design(OrgA, "ext_/brokerforge/WarehouseAPI/design.xml", EnvironmentConfigTests.Warehouse());
+        var time = new ConnectTests.MutableTime();
+        var log = new ListLogger();
+        var provider = Provider(time, log);
+        await provider.ForEnvironmentAsync(EnvA, default);
+
+        _dataverse.Down = reason;
+        _dataverse.DownTransient = false;
+        time.Now += TimeSpan.FromMinutes(6);
+        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
+        Assert.Equal($"Could not read connection designs for environment {EnvA} from Dataverse: {reason}.", ex.Message);
+        Assert.DoesNotContain(log.Lines, l => l.Level == LogLevel.Warning);
+        // Still cached for the failure period, so Dataverse is not read again at once.
+        var calls = _dataverse.Calls.Count;
+        await Assert.ThrowsAsync<ConfigurationException>(() => provider.ForEnvironmentAsync(EnvA, default));
+        Assert.Equal(calls, _dataverse.Calls.Count);
     }
 
     [Fact]
@@ -331,9 +369,12 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
     private sealed class FakeCredential : TokenCredential
     {
         public List<string> Scopes { get; } = new();
+        public bool Fail { get; init; }
         public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken) => throw new NotSupportedException();
         public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
         {
+            if (Fail)
+                throw new Azure.Identity.AuthenticationFailedException("ManagedIdentityCredential authentication unavailable.");
             Scopes.AddRange(requestContext.Scopes);
             return ValueTask.FromResult(new AccessToken("dataverse-test-token", DateTimeOffset.UtcNow.AddHours(1)));
         }
@@ -377,6 +418,7 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
         var ex = await Assert.ThrowsAsync<DataverseUnavailableException>(() =>
             new DataverseReader(new FakeCredential(), new HttpClient(handler)).GetAsync(OrgA, "webresourceset", default));
         Assert.Contains("next page link is not under " + OrgA, ex.Message);
+        Assert.False(ex.Transient);
         Assert.Single(handler.Requests);
     }
 
@@ -385,10 +427,41 @@ public class DataverseDesignSourceTests(MockApiFixture mock)
     [InlineData(HttpStatusCode.Forbidden, "HTTP 403 (Forbidden): Principal user is missing prvReadWebResource privilege")]
     public async Task ReaderFailureNamesTheStatus(HttpStatusCode status, string reason)
     {
+        await ReaderFailureIsClassified(status, reason, transient: false);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, false)]
+    [InlineData(HttpStatusCode.NotFound, false)]
+    [InlineData(HttpStatusCode.RequestTimeout, true)]
+    [InlineData(HttpStatusCode.TooManyRequests, true)]
+    [InlineData(HttpStatusCode.InternalServerError, true)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, true)]
+    public Task ReaderStatusTransience(HttpStatusCode status, bool transient) =>
+        ReaderFailureIsClassified(status, $"HTTP {(int)status} ({status})", transient);
+
+    [Fact]
+    public async Task ReaderNetworkAndTokenFailuresAreTransientAndShapeErrorsAreNot()
+    {
+        var down = await Assert.ThrowsAsync<DataverseUnavailableException>(() =>
+            new DataverseReader(new FakeCredential(), new HttpClient(new Pages(_ => throw new HttpRequestException("connection refused")))).GetAsync(OrgA, "x", default));
+        Assert.True(down.Transient);
+        var token = await Assert.ThrowsAsync<DataverseUnavailableException>(() =>
+            new DataverseReader(new FakeCredential { Fail = true }, new HttpClient(new Pages(_ => Json("{}")))).GetAsync(OrgA, "x", default));
+        Assert.True(token.Transient);
+        var shape = await Assert.ThrowsAsync<DataverseUnavailableException>(() =>
+            new DataverseReader(new FakeCredential(), new HttpClient(new Pages(_ => Json("{}")))).GetAsync(OrgA, "x", default));
+        Assert.False(shape.Transient);
+        Assert.Contains("has no value array", shape.Message);
+    }
+
+    private static async Task ReaderFailureIsClassified(HttpStatusCode status, string reason, bool transient)
+    {
         var body = status == HttpStatusCode.Forbidden ? "{\"error\":{\"code\":\"0x80040220\",\"message\":\"Principal user is missing prvReadWebResource privilege\"}}" : "";
         var handler = new Pages(_ => Json(body, status));
         var ex = await Assert.ThrowsAsync<DataverseUnavailableException>(() =>
             new DataverseReader(new FakeCredential(), new HttpClient(handler)).GetAsync(OrgA, "webresourceset", default));
         Assert.Equal(reason, ex.Message);
+        Assert.Equal(transient, ex.Transient);
     }
 }

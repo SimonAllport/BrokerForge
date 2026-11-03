@@ -22,15 +22,15 @@ public sealed class DataverseReader(TokenCredential credential, HttpClient http)
         {
             using var doc = await Page(org, url, ct);
             if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("value", out var value) || value.ValueKind != JsonValueKind.Array)
-                throw new DataverseUnavailableException($"the answer to {relativeUrl} has no value array");
+                throw new DataverseUnavailableException($"the answer to {relativeUrl} has no value array", transient: false);
             rows.AddRange(value.EnumerateArray().Select(e => e.GetRawText()));
             if (!doc.RootElement.TryGetProperty("@odata.nextLink", out var next) || next.ValueKind != JsonValueKind.String)
                 break;
             url = next.GetString()!;
             if (!url.StartsWith(org + "/", StringComparison.OrdinalIgnoreCase))
-                throw new DataverseUnavailableException($"the next page link is not under {org}");
+                throw new DataverseUnavailableException($"the next page link is not under {org}", transient: false);
             if (page == MaxPages)
-                throw new DataverseUnavailableException($"{relativeUrl} has more than {MaxPages} pages");
+                throw new DataverseUnavailableException($"{relativeUrl} has more than {MaxPages} pages", transient: false);
         }
         return JsonDocument.Parse("{\"value\":[" + string.Join(",", rows) + "]}");
     }
@@ -44,7 +44,7 @@ public sealed class DataverseReader(TokenCredential credential, HttpClient http)
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            throw new DataverseUnavailableException($"no token for {org}/.default ({FirstLine(ex.Message)})");
+            throw new DataverseUnavailableException($"no token for {org}/.default ({FirstLine(ex.Message)})", transient: true);
         }
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
@@ -58,24 +58,25 @@ public sealed class DataverseReader(TokenCredential credential, HttpClient http)
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new DataverseUnavailableException($"timed out after {http.Timeout.TotalSeconds:0} s");
+            throw new DataverseUnavailableException($"timed out after {http.Timeout.TotalSeconds:0} s", transient: true);
         }
         catch (HttpRequestException ex)
         {
-            throw new DataverseUnavailableException($"unreachable ({FirstLine(ex.Message)})");
+            throw new DataverseUnavailableException($"unreachable ({FirstLine(ex.Message)})", transient: true);
         }
         using (response)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
-                throw new DataverseUnavailableException($"HTTP {(int)response.StatusCode} ({response.StatusCode})" + ErrorMessage(body));
+                throw new DataverseUnavailableException($"HTTP {(int)response.StatusCode} ({response.StatusCode})" + ErrorMessage(body),
+                    transient: (int)response.StatusCode is 408 or 429 or >= 500);
             try
             {
                 return JsonDocument.Parse(body);
             }
             catch (JsonException)
             {
-                throw new DataverseUnavailableException($"HTTP {(int)response.StatusCode} with a body that is not JSON");
+                throw new DataverseUnavailableException($"HTTP {(int)response.StatusCode} with a body that is not JSON", transient: false);
             }
         }
     }
