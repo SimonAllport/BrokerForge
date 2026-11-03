@@ -16,13 +16,13 @@ The design is stored in a Dataverse web resource of type 4 (XML), named `<prefix
 
 ### The `]]>` rule
 
-CDATA ends at the first `]]>`, and OpenAPI or YAML text can contain it. `DesignSerializer.Serialize` therefore replaces every `]]>` in the JSON with `]]>`. That sequence can only occur inside a JSON string, and it decodes to the same text, so the text survives Serialize, Wrap, Unwrap and Parse unchanged. `Wrap` refuses JSON that still contains `]]>`. The serializer otherwise uses relaxed escaping, so `<`, `>`, `&` and quotes in YAML stay readable.
+CDATA ends at the first `]]>`, and OpenAPI or YAML text can contain it. `DesignSerializer.Serialize` therefore writes the `>` of every `]]>` as the JSON escape for U+003E: the two characters `]]` followed by the six characters backslash, `u`, `0`, `0`, `3`, `E` (in C# source `"]]\\u003E"`). That sequence can only occur inside a JSON string. `Parse` accepts it because any JSON parser decodes the escape back to `>`, so the text survives Serialize, Wrap, Unwrap and Parse unchanged. `Wrap` refuses JSON that still contains a raw `]]>`. The serializer otherwise uses relaxed escaping, so `<`, `>`, `&` and quotes in YAML stay readable.
 
 ## Serialization rules
 
 - camelCase keys, indented with two spaces, `\n` line endings, null values omitted.
 - Object keys in the declaration order below; dictionary keys sorted ordinally. Re-saving an unchanged design produces no diff.
-- `Parse(json, source)` throws `DesignFormatException` naming `source` and the JSON path for an unknown key, a missing required key, a wrong type, a `formatVersion` other than 1, and any property under `auth` named `secret`, `password`, `clientSecret`, `apiKeyValue` or `value` (the message never includes the value).
+- `Parse(json, source)` throws `DesignFormatException` naming `source` and the JSON path for an unknown key, a missing required key, a wrong type, a `formatVersion` other than 1, a duplicate key in any object or dictionary, and any property under `auth` named `secret`, `password`, `clientSecret`, `apiKeyValue` or `value` (the message never includes the value).
 
 ## Keys
 

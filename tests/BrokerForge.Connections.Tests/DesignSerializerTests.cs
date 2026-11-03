@@ -95,4 +95,21 @@ public class DesignSerializerTests
         Assert.Equal(text, back.OpenApi);
         Assert.Equal(json, DesignSerializer.Serialize(back));
     }
+
+    [Fact]
+    public void SerializedOutputEscapesCdataEnd()
+    {
+        var json = DesignSerializer.Serialize(Sample("a ]]> b"));
+        Assert.Contains("]]\\u003E", json);
+        Assert.DoesNotContain("]]>", json);
+    }
+
+    [Fact]
+    public void DuplicateDescriptorKeyFails()
+    {
+        var json = DesignSerializer.Serialize(Sample()).Replace("\"GetOrder\": \"name: GetOrder\\n\",", "\"GetOrder\": \"name: GetOrder\\n\", \"GetOrder\": \"x\",");
+        var e = Assert.Throws<DesignFormatException>(() => DesignSerializer.Parse(json, "design.xml"));
+        Assert.Contains("$.descriptors.GetOrder", e.Message);
+        Assert.Contains("design.xml", e.Message);
+    }
 }

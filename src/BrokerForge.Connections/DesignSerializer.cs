@@ -111,7 +111,10 @@ public static class DesignSerializer
         public Dictionary<string, JsonElement> Object(JsonElement el, string path)
         {
             if (el.ValueKind != JsonValueKind.Object) throw Fail(path, "expected an object");
-            return el.EnumerateObject().ToDictionary(p => p.Name, p => p.Value, StringComparer.Ordinal);
+            var d = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var p in el.EnumerateObject())
+                if (!d.TryAdd(p.Name, p.Value)) throw Fail($"{path}.{p.Name}", "duplicate key");
+            return d;
         }
 
         public void Keys(Dictionary<string, JsonElement> o, string path, string[] known)
@@ -166,7 +169,10 @@ public static class DesignSerializer
             if (v.ValueKind != JsonValueKind.Object) throw Fail($"{path}.{key}", "expected an object");
             var map = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var p in v.EnumerateObject())
-                map[p.Name] = p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString()! : throw Fail($"{path}.{key}.{p.Name}", "expected a string");
+            {
+                var value = p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString()! : throw Fail($"{path}.{key}.{p.Name}", "expected a string");
+                if (!map.TryAdd(p.Name, value)) throw Fail($"{path}.{key}.{p.Name}", "duplicate key");
+            }
             return map;
         }
     }
