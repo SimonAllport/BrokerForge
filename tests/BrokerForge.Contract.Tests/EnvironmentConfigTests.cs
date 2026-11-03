@@ -310,6 +310,52 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
     }
 
     [Fact]
+    public async Task TwoDesignsMappingSameTableFail()
+    {
+        _designs.Add(EnvA, Warehouse(), At(mock.BaseUrl));
+        _designs.Add(EnvA, Warehouse("StockAPI"), At(mock.BaseUrl));
+        var (status, _, error) = await Run(Host(), List("ext_item", "WarehouseAPI", EnvA));
+        Assert.Equal(500, status);
+        Assert.Equal("ConfigurationError", error!.Error);
+        Assert.Contains($"Table ext_item is mapped by both connection designs WarehouseAPI and StockAPI in environment {EnvA}", error.Message);
+
+        var twice = DesignConfigInput.Merge(new ConfigInput(), EnvA, new[] { (Warehouse(), At("https://a.example")), (Warehouse(), At("https://b.example")) });
+        Assert.Contains($"Instance WarehouseAPI has two connection designs in environment {EnvA}", Assert.Throws<ConfigurationException>(() => new HostConfigStore(twice)).Message);
+    }
+
+    [Fact]
+    public async Task ConnectForUnknownEnvironmentIs404WithoutLoading()
+    {
+        const string unknown = "00000000-0000-0000-0000-00000000000c";
+        _designs.Add(unknown, TicketsDesign(), At(mock.BaseUrl));
+        var browser = Host().CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
+        browser.DefaultRequestHeaders.Add(ConnectTests.OidHeader, Tickets.AliceOid);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await browser.GetAsync($"/connect/{unknown}/TicketsAPI")).StatusCode);
+        Assert.Equal(0, _designs.Loads);
+    }
+
+    [Fact]
+    public async Task PerUserCredentialDoesNotCrossEnvironments()
+    {
+        var sso = TicketsDesign() with { Auth = new DesignAuth("Sso", null, null, null, null, null, "basic", null, null, Array.Empty<string>()) };
+        _designs.Add(EnvA, sso, At(mock.BaseUrl));
+        _designs.Add(EnvB, sso, At(mock.BaseUrl));
+        var host = Host();
+        var credential = new UserCredential(CredentialKind.Sso, CredentialStatus.Connected, null, null, null, "alice", Tickets.AlicePassword, DateTimeOffset.UtcNow);
+        await host.Services.GetRequiredService<IUserCredentialStore>().SaveAsync($"{Guid.Parse(EnvA):N}_TicketsAPI", Tickets.AliceOid, credential, default);
+
+        var b = await Run(host, List("ext_ticket", "TicketsAPI", EnvB, Tickets.AliceOid));
+        Assert.Equal(401, b.Status);
+        Assert.Equal(nameof(ConnectionRequiredException), b.Error!.Error);
+        Assert.Equal($"{Tickets.ConnectBase}/connect/{EnvB}/TicketsAPI", b.Error.ConnectUrl);
+
+        var a = await Run(host, List("ext_ticket", "TicketsAPI", EnvA, Tickets.AliceOid));
+        Assert.True(a.Status == 200, a.Error?.Message);
+        Assert.NotEmpty(a.Response!.Rows);
+    }
+
+    [Fact]
     public async Task ProviderCachesPerEnvironmentUntilTtlOrInvalidate()
     {
         var time = new ConnectTests.MutableTime();

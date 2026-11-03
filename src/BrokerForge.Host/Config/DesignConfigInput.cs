@@ -27,6 +27,7 @@ public static class DesignConfigInput
     {
         var input = Copy(files);
         input.EnvironmentId = environmentId;
+        var designTables = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (design, settings) in designs)
         {
             var name = design.Instance;
@@ -47,8 +48,15 @@ public static class DesignConfigInput
                 Clash($"OAuth resource {name} (of instance {name})");
             if (design.ObjectMap is { } m && files.ObjectMaps.ContainsKey(m.Table))
                 Clash($"Table {m.Table} (of instance {name})");
+            if (design.ObjectMap is { } t && designTables.TryGetValue(t.Table, out var owner))
+            {
+                input.Problems.Add($"Table {t.Table} is mapped by both connection designs {owner} and {name} in environment {environmentId}");
+                clash = true;
+            }
             if (clash)
                 continue;
+            if (design.ObjectMap is { } own)
+                designTables[own.Table] = name;
 
             var incomplete = new List<string>();
             if (string.IsNullOrWhiteSpace(settings.BaseUrl))

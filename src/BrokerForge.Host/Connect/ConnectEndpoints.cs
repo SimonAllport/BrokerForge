@@ -4,8 +4,10 @@ using BrokerForge.Auth;
 using BrokerForge.Auth.Credentials;
 using BrokerForge.Auth.PerUser;
 using BrokerForge.Host.Config;
+using BrokerForge.Host.Ingress;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Options;
 
 namespace BrokerForge.Host.Connect;
 
@@ -49,12 +51,16 @@ public static partial class ConnectEndpoints
 
     /// <summary>
     /// The per-user instance a page is for, and the configuration it comes from: the files without an environment,
-    /// else that environment's designs only (a host-settings instance never answers under an environment).
+    /// else that environment's designs only (a host-settings instance never answers under an environment). Only an
+    /// environment in Trust:AllowedCallers is loaded, so a typed GUID cannot make the host read or cache anything.
     /// </summary>
-    private static async Task<(ServiceInstance? Instance, HostConfigStore Config)> Find(IHostConfigProvider configs, string? environmentId, string name, CancellationToken ct)
+    private static async Task<(ServiceInstance? Instance, HostConfigStore Config)> Find(HttpContext http, IHostConfigProvider configs, string? environmentId, string name, CancellationToken ct)
     {
         if (environmentId == null)
             return (PerUser(configs.Files, name), configs.Files);
+        var trust = http.RequestServices.GetRequiredService<IOptions<TrustOptions>>().Value;
+        if (!trust.AllowedCallers.Any(c => Guid.TryParse(c.EnvironmentId, out var allowed) && allowed == Guid.Parse(environmentId)))
+            return (null, configs.Files);
         var config = await configs.ForEnvironmentAsync(environmentId, ct);
         return (PerUser(config, name) is { EnvironmentId: not null } si ? si : null, config);
     }
@@ -92,7 +98,7 @@ public static partial class ConnectEndpoints
 
     private static async Task<IResult> Status(string instance, HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IAntiforgery antiforgery, CancellationToken ct)
     {
-        if ((await Find(configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
+        if ((await Find(http, configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
             return NotFound(instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
@@ -127,7 +133,7 @@ public static partial class ConnectEndpoints
     private static async Task<IResult> Start(string instance, HttpContext http, IHostConfigProvider configs, IAntiforgery antiforgery,
         IDataProtectionProvider protection, TimeProvider time, IServiceProvider services, CancellationToken ct)
     {
-        var (found, config) = await Find(configs, EnvironmentOf(http), instance, ct);
+        var (found, config) = await Find(http, configs, EnvironmentOf(http), instance, ct);
         if (found is not { } si)
             return NotFound(instance);
         if (UserObjectId(http) is not { } user)
@@ -180,7 +186,7 @@ public static partial class ConnectEndpoints
             log.LogWarning("Connect callback for {Instance} refused: started by another user", state.Instance);
             return Refused("This sign-in was started by another user. Start again from the connect page.");
         }
-        var (found, config) = await Find(configs, state.EnvironmentId, state.Instance, ct);
+        var (found, config) = await Find(http, configs, state.EnvironmentId, state.Instance, ct);
         if (found is not { Auth.Mode: AuthMode.OAuth or AuthMode.Impersonate } si)
             return NotFound(state.Instance);
         if (q["error"].ToString() is { Length: > 0 } error)
@@ -211,7 +217,7 @@ public static partial class ConnectEndpoints
     private static async Task<IResult> SaveSso(string instance, HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IAntiforgery antiforgery,
         TimeProvider time, ILoggerFactory loggers, CancellationToken ct)
     {
-        if ((await Find(configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
+        if ((await Find(http, configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
             return NotFound(instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
@@ -235,7 +241,7 @@ public static partial class ConnectEndpoints
     private static async Task<IResult> Disconnect(string instance, HttpContext http, IHostConfigProvider configs, IUserCredentialStore store, IAntiforgery antiforgery,
         ILoggerFactory loggers, CancellationToken ct)
     {
-        if ((await Find(configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
+        if ((await Find(http, configs, EnvironmentOf(http), instance, ct)).Instance is not { } si)
             return NotFound(instance);
         if (UserObjectId(http) is not { } user)
             return NoIdentity();
