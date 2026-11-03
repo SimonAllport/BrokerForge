@@ -139,7 +139,7 @@ public class CustomApiTests(MockApiFixture mock) : HostTestBase(mock)
                 settings[$"Instances:{instance}:Auth:Mode"] = "ServiceAccount";
                 settings[$"Instances:{instance}:Auth:Scope"] = "api://x/.default";
             }
-            var ex = Assert.Throws<ConfigurationException>(() => new HostConfigStore(new ConfigurationBuilder().AddInMemoryCollection(settings).Build()));
+            var ex = Assert.Throws<ConfigurationException>(() => HostConfigStore.FromConfiguration(new ConfigurationBuilder().AddInMemoryCollection(settings).Build()));
             Assert.Contains("ext_EchoLookup", ex.Message);
             Assert.Contains("AlphaAPI/echoLookup.yaml", ex.Message);
             Assert.Contains("BetaAPI/echoLookup.yaml", ex.Message);
@@ -169,7 +169,7 @@ public class CustomApiTests(MockApiFixture mock) : HostTestBase(mock)
                 ["Instances:AlphaAPI:Auth:Mode"] = "ServiceAccount",
                 ["Instances:AlphaAPI:Auth:Scope"] = "api://x/.default",
             };
-            var ex = Assert.Throws<ConfigurationException>(() => new HostConfigStore(new ConfigurationBuilder().AddInMemoryCollection(settings).Build()));
+            var ex = Assert.Throws<ConfigurationException>(() => HostConfigStore.FromConfiguration(new ConfigurationBuilder().AddInMemoryCollection(settings).Build()));
             Assert.Contains("AlphaAPI", ex.Message);
             Assert.Contains("schema", ex.Message);
         }

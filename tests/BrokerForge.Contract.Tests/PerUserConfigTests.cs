@@ -46,7 +46,7 @@ public class PerUserConfigTests : IDisposable
     }
 
     private static HostConfigStore Load(Dictionary<string, string?> settings) =>
-        new(new ConfigurationBuilder().AddInMemoryCollection(settings).Build());
+        HostConfigStore.FromConfiguration(new ConfigurationBuilder().AddInMemoryCollection(settings).Build());
 
     private static string Problems(Dictionary<string, string?> settings) =>
         Assert.Throws<ConfigurationException>(() => Load(settings)).Message;

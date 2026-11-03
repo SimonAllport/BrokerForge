@@ -35,19 +35,23 @@ public sealed class HostConfigStore
     /// <summary>An unbound Custom API: the instance and descriptor that serve it, and its declared parameters.</summary>
     public sealed record ResolvedCustomApi(ServiceInstance Instance, OperationDescriptor Descriptor, CustomApiSchema Schema);
 
-    public HostConfigStore(IConfiguration configuration)
+    public HostConfigStore(ConfigInput input)
     {
         var problems = new List<string>();
-        LoadOAuthResources(configuration.GetSection("OAuthResources"), problems);
-        _connectBaseUrl = configuration["Connect:PublicBaseUrl"]?.TrimEnd('/');
-        _connectClientId = configuration["Connect:ClientId"];
-        LoadInstances(configuration.GetSection("Instances"), problems);
-        LoadSchemas(configuration["Config:SchemasPath"], problems);
-        LoadDescriptors(configuration["Config:DescriptorsPath"], problems);
-        LoadMaps(configuration.GetSection("ObjectMaps"), problems);
+        LoadOAuthResources(input.OAuthResources, problems);
+        _connectBaseUrl = input.ConnectBaseUrl?.TrimEnd('/');
+        _connectClientId = input.ConnectClientId;
+        LoadInstances(input.Instances, problems);
+        problems.AddRange(input.Problems);
+        LoadSchemas(input.SchemaTexts, problems);
+        problems.AddRange(input.DescriptorProblems);
+        LoadDescriptors(input.DescriptorTexts, problems);
+        LoadMaps(input.ObjectMaps, problems);
         if (problems.Count > 0)
             throw new ConfigurationException("Host configuration is invalid:" + string.Concat(problems.Select(p => "\n - " + p)));
     }
+
+    public static HostConfigStore FromConfiguration(IConfiguration configuration) => new(FileConfigInput.Read(configuration));
 
     public IReadOnlyCollection<string> DescriptorNames => _descriptors.Keys.Select(k => $"{k.Instance}/{k.Operation}").ToList();
 
@@ -75,12 +79,11 @@ public sealed class HostConfigStore
     public string ConnectCallbackUrl =>
         (_connectBaseUrl ?? throw new ConfigurationException("Connect:PublicBaseUrl is not set.")) + "/connect/callback";
 
-    private void LoadOAuthResources(IConfigurationSection section, List<string> problems)
+    private void LoadOAuthResources(Dictionary<string, OAuthResourceOptions> resources, List<string> problems)
     {
-        foreach (var s in section.GetChildren())
+        foreach (var (key, o) in resources)
         {
-            var o = s.Get<OAuthResourceOptions>() ?? new OAuthResourceOptions();
-            var where = $"OAuthResources:{s.Key}";
+            var where = $"OAuthResources:{key}";
             foreach (var (name, value) in new[] { ("AuthorizeUrl", o.AuthorizeUrl), ("TokenUrl", o.TokenUrl) })
                 if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http"))
                     problems.Add($"{where}:{name} must be an absolute http(s) URL");
@@ -98,7 +101,7 @@ public sealed class HostConfigStore
             if (o.ClientSecretRef != null)
                 try { SecretRef.Parse(o.ClientSecretRef); }
                 catch (FormatException ex) { problems.Add($"{where}: {ex.Message}"); }
-            _oauthResources[s.Key] = new OAuthResource(s.Key, o.AuthorizeUrl, o.TokenUrl, o.Scopes, o.ClientId, o.ClientSecretRef, o.UsesConnectApp);
+            _oauthResources[key] = new OAuthResource(key, o.AuthorizeUrl, o.TokenUrl, o.Scopes, o.ClientId, o.ClientSecretRef, o.UsesConnectApp);
         }
     }
 
@@ -159,23 +162,15 @@ public sealed class HostConfigStore
         return new AuthConfig(asyncMode, x.StaticKind, x.HeaderName, x.QueryParam, x.Username, x.SecretRef, x.Scope);
     }
 
-    private void LoadSchemas(string? root, List<string> problems)
+    private void LoadSchemas(Dictionary<string, string> texts, List<string> problems)
     {
-        if (string.IsNullOrWhiteSpace(root))
-            return;
-        if (!Directory.Exists(root))
-        {
-            problems.Add($"Config:SchemasPath `{root}` is not a directory");
-            return;
-        }
         foreach (var instance in _instances.Keys)
         {
-            var file = Path.Combine(root, instance + ".yaml");
-            if (!File.Exists(file))
+            if (!texts.TryGetValue(instance, out var text))
                 continue;
             try
             {
-                _schemas[instance] = SchemaParser.Parse(File.ReadAllText(file), $"schemas/{instance}.yaml");
+                _schemas[instance] = SchemaParser.Parse(text, $"schemas/{instance}.yaml");
             }
             catch (SchemaException ex)
             {
@@ -184,12 +179,11 @@ public sealed class HostConfigStore
         }
     }
 
-    private void LoadInstances(IConfigurationSection section, List<string> problems)
+    private void LoadInstances(Dictionary<string, InstanceOptions> instances, List<string> problems)
     {
-        foreach (var s in section.GetChildren())
+        foreach (var (key, o) in instances)
         {
-            var o = s.Get<InstanceOptions>() ?? new InstanceOptions();
-            var where = $"Instances:{s.Key}";
+            var where = $"Instances:{key}";
             if (o.BrokerType != "rest")
                 problems.Add($"{where}:BrokerType must be rest in phase 1");
             if (!Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out var baseUri) || baseUri.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(baseUri.Query))
@@ -204,8 +198,8 @@ public sealed class HostConfigStore
                 try { SecretRef.Parse(reference!); }
                 catch (FormatException ex) { problems.Add($"{where}: {ex.Message}"); }
 
-            _instances[s.Key] = new ServiceInstance(
-                s.Key, o.BrokerType, o.BaseUrl.TrimEnd('/'),
+            _instances[key] = new ServiceInstance(
+                key, o.BrokerType, o.BaseUrl.TrimEnd('/'),
                 new AuthConfig(mode, o.Auth.StaticKind, o.Auth.HeaderName, o.Auth.QueryParam, o.Auth.Username, o.Auth.SecretRef, o.Auth.Scope,
                     o.Auth.OAuthResource, o.Auth.SsoKind,
                     Enum.TryParse<AsyncContext>(o.Auth.AsyncContext, out var ac) ? ac : AsyncContext.TriggeringUser, asyncAuth),
@@ -213,27 +207,20 @@ public sealed class HostConfigStore
         }
     }
 
-    private void LoadDescriptors(string? root, List<string> problems)
+    private void LoadDescriptors(Dictionary<(string Instance, string File), string> texts, List<string> problems)
     {
-        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
-        {
-            problems.Add($"Config:DescriptorsPath `{root}` is not a directory");
-            return;
-        }
         var sources = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var instance in _instances.Values)
         {
-            var dir = Path.Combine(root, instance.Name);
-            if (!Directory.Exists(dir))
-                continue;
             var reserved = AuthReservedNames.For(instance);
             var schema = _schemas.GetValueOrDefault(instance.Name);
-            foreach (var file in Directory.GetFiles(dir, "*.yaml").Order(StringComparer.Ordinal))
+            foreach (var (file, text) in texts.Where(t => t.Key.Instance == instance.Name)
+                         .Select(t => (t.Key.File, t.Value)).OrderBy(t => t.File, StringComparer.Ordinal))
             {
-                var source = $"{instance.Name}/{Path.GetFileName(file)}";
+                var source = $"{instance.Name}/{file}";
                 try
                 {
-                    var d = DescriptorParser.Parse(File.ReadAllText(file), source);
+                    var d = DescriptorParser.Parse(text, source);
                     problems.AddRange(DescriptorValidator.Validate(d, reserved, d.CustomApi != null ? schema : null).Select(e => $"{source}: {e}"));
                     if (!_descriptors.TryAdd((instance.Name, d.Operation), d))
                         problems.Add($"{source}: operation {d.Operation} is declared twice for {instance.Name}");
@@ -269,12 +256,11 @@ public sealed class HostConfigStore
         _customApis[api] = new ResolvedCustomApi(instance, d, declared);
     }
 
-    private void LoadMaps(IConfigurationSection section, List<string> problems)
+    private void LoadMaps(Dictionary<string, ObjectMapOptions> maps, List<string> problems)
     {
-        foreach (var s in section.GetChildren())
+        foreach (var (key, o) in maps)
         {
-            var o = s.Get<ObjectMapOptions>() ?? new ObjectMapOptions();
-            var where = $"ObjectMaps:{s.Key}";
+            var where = $"ObjectMaps:{key}";
             if (!_instances.ContainsKey(o.ServiceInstance))
             {
                 problems.Add($"{where}:ServiceInstance `{o.ServiceInstance}` is not configured");
@@ -304,52 +290,10 @@ public sealed class HostConfigStore
                     problems.Add($"{where}:Operations:{message}: no descriptor {operation} for {o.ServiceInstance}");
                 else if (d.Binds != message)
                     problems.Add($"{where}:Operations:{message}: {operation} binds {d.Binds}");
-                else if (d.Table != null && d.Table != s.Key)
+                else if (d.Table != null && d.Table != key)
                     problems.Add($"{where}:Operations:{message}: {operation} is for table {d.Table}");
             }
-            _maps[s.Key] = new ResolvedMap(new ObjectMap(o.ServiceInstance, s.Key, o.KeyStrategy, o.KeyKind, o.Operations), keys);
+            _maps[key] = new ResolvedMap(new ObjectMap(o.ServiceInstance, key, o.KeyStrategy, o.KeyKind, o.Operations), keys);
         }
-    }
-
-    private sealed class InstanceOptions
-    {
-        public string BrokerType { get; set; } = "";
-        public string BaseUrl { get; set; } = "";
-        public AuthOptions Auth { get; set; } = new();
-        public Dictionary<string, string> Config { get; set; } = new();
-        public Dictionary<string, string> Secrets { get; set; } = new();
-    }
-
-    private sealed class AuthOptions
-    {
-        public string Mode { get; set; } = "";
-        public string? StaticKind { get; set; }
-        public string? HeaderName { get; set; }
-        public string? QueryParam { get; set; }
-        public string? Username { get; set; }
-        public string? SecretRef { get; set; }
-        public string? Scope { get; set; }
-        public string? OAuthResource { get; set; }
-        public string? SsoKind { get; set; }
-        public string? AsyncContext { get; set; }
-        public AuthOptions? AsyncAuth { get; set; }
-    }
-
-    private sealed class OAuthResourceOptions
-    {
-        public string AuthorizeUrl { get; set; } = "";
-        public string TokenUrl { get; set; } = "";
-        public List<string> Scopes { get; set; } = new();
-        public string? ClientId { get; set; }
-        public string? ClientSecretRef { get; set; }
-        public bool UsesConnectApp { get; set; }
-    }
-
-    private sealed class ObjectMapOptions
-    {
-        public string ServiceInstance { get; set; } = "";
-        public string KeyStrategy { get; set; } = "reversible";
-        public string KeyKind { get; set; } = "";
-        public Dictionary<string, string> Operations { get; set; } = new();
     }
 }

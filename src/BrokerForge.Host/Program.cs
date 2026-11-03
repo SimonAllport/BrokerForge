@@ -165,7 +165,7 @@ foreach (var mode in new[] { AuthMode.OAuth, AuthMode.Impersonate })
 builder.Services.AddSingleton<IAuthProvider>(sp => new SsoAuthProvider(sp.GetRequiredService<IUserCredentialStore>(),
     sp.GetRequiredService<HostConfigStore>().ConnectUrl, sp.GetRequiredService<IHttpClientFactory>().CreateClient("sources")));
 builder.Services.AddSingleton<IBroker, RestBroker>();
-builder.Services.AddSingleton<HostConfigStore>();
+builder.Services.AddSingleton(sp => HostConfigStore.FromConfiguration(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<CallerGuard>();
 builder.Services.AddSingleton<RequestRouter>();
 builder.Services.AddSingleton(sp => PageTokenKey.LoadAsync(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<ISecretResolver>()).GetAwaiter().GetResult());
