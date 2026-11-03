@@ -1,3 +1,5 @@
+using BrokerForge.Host.Config;
+
 namespace BrokerForge.Host.Ingress;
 
 /// <summary>
@@ -27,10 +29,24 @@ public sealed class TrustOptions
         foreach (var env in AllowedCallers.Where(c => Guid.TryParse(c.EnvironmentId, out _)).GroupBy(c => Guid.Parse(c.EnvironmentId))
                      .Where(g => g.Select(c => c.OrgUrl?.Trim().TrimEnd('/')).Where(o => !string.IsNullOrEmpty(o)).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1))
             yield return $"Trust:AllowedCallers gives environment {env.Key} more than one OrgUrl";
+        foreach (var c in AllowedCallers)
+            foreach (var scope in c.DesignScopes)
+                if (string.IsNullOrWhiteSpace(scope))
+                    yield return $"Trust:AllowedCallers entry for environment {c.EnvironmentId}: DesignScopes has an empty entry";
+                else if (DesignScopeRules.IsSignIn(scope))
+                    yield return $"Trust:AllowedCallers entry for environment {c.EnvironmentId}: DesignScopes lists {scope}, a sign-in scope that names no resource; list the resource's scope";
+                else if (DesignScopeRules.Reserved(scope) is { } service)
+                    yield return $"Trust:AllowedCallers entry for environment {c.EnvironmentId}: DesignScopes lists {scope}, which is for {service}; a connection design may never use it";
         if (designs)
             foreach (var c in AllowedCallers.Where(c => string.IsNullOrWhiteSpace(c.OrgUrl)))
                 yield return $"Trust:AllowedCallers entry for environment {c.EnvironmentId} needs OrgUrl when Config:Designs:Enabled is true";
     }
+
+    /// <summary>The scopes connection designs in an environment may use in ServiceAccount or Impersonate mode (HLD D-34): every entry for it, combined.</summary>
+    public IReadOnlyCollection<string> DesignScopesFor(string environmentId) =>
+        AllowedCallers.Where(c => Guid.TryParse(c.EnvironmentId, out var id) && Guid.TryParse(environmentId, out var wanted) && id == wanted)
+            .SelectMany(c => c.DesignScopes).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 }
 
 public sealed class AllowedCaller
@@ -40,4 +56,11 @@ public sealed class AllowedCaller
 
     /// <summary>The environment's Dataverse URL, where the host reads its connection designs. Required when Config:Designs:Enabled is true.</summary>
     public string? OrgUrl { get; set; }
+
+    /// <summary>
+    /// The Entra scopes a connection design in this environment may use in ServiceAccount or Impersonate mode
+    /// (HLD D-34). Empty by default, which refuses such designs. Azure management, Key Vault, Storage, Dataverse and
+    /// Microsoft Graph scopes are refused here at startup.
+    /// </summary>
+    public List<string> DesignScopes { get; set; } = new();
 }

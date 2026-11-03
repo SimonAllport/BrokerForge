@@ -89,6 +89,8 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
             ConnectTests.TestSignIn(s);
             s.AddSingleton<IDesignSource>(_designs);
             s.AddSingleton<IInstanceSecretStore>(_secrets);
+            // Stands in for the host's managed identity, so no test reaches Azure.
+            s.AddSingleton<Azure.Core.TokenCredential>(_hostIdentity);
             s.AddHttpClient("sources").AddHttpMessageHandler(() => new CountingHandler(_sent));
             s.AddHttpClient("tokens").AddHttpMessageHandler(() => new CountingHandler(_tokenCalls));
         });

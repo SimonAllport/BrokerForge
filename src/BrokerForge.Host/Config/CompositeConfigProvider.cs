@@ -16,7 +16,9 @@ namespace BrokerForge.Host.Config;
 /// older store: the environment fails until it is fixed.</item>
 /// </list>
 /// </summary>
-public sealed class CompositeConfigProvider(HostConfigStore files, IDesignSource? designs, TimeProvider time, TimeSpan ttl, ILogger? log = null) : IHostConfigProvider
+/// <param name="designScopes">The scopes each environment's designs may use in ServiceAccount or Impersonate mode; none when null.</param>
+public sealed class CompositeConfigProvider(HostConfigStore files, IDesignSource? designs, TimeProvider time, TimeSpan ttl, ILogger? log = null,
+    Func<string, IReadOnlyCollection<string>>? designScopes = null) : IHostConfigProvider
 {
     /// <summary>How long a failed build is reused before the source is read again.</summary>
     public static readonly TimeSpan FailureCacheTime = TimeSpan.FromSeconds(30);
@@ -79,7 +81,7 @@ public sealed class CompositeConfigProvider(HostConfigStore files, IDesignSource
     {
         // Not the caller's token: the build is shared, and one caller giving up must not fail the others.
         var loaded = await designs!.LoadAsync(environmentId, CancellationToken.None);
-        var store = new HostConfigStore(DesignConfigInput.Merge(files.Input, environmentId, loaded));
+        var store = new HostConfigStore(DesignConfigInput.Merge(files.Input, environmentId, loaded, designScopes?.Invoke(environmentId)));
         _lastGood[environmentId] = new Good(store, started + ttl);
         return store;
     }

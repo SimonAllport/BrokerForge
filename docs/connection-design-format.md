@@ -83,3 +83,7 @@ No key in the design is per-environment. Those values are `EnvironmentSettings(B
 - `bf_<Instance>_Auth`: JSON object of `AuthOverrides` (string to string). Each key replaces the `auth` string field of the same name: `mode`, `staticKind`, `headerName`, `queryParam`, `username`, `scope`, `ssoKind` or `asyncContext`. Any other key is a configuration error naming the key and the instance.
 
 Secret values are never part of either; they stay in Key Vault or the host's encrypted store.
+
+## Tokens minted through the host
+
+ServiceAccount (the host's managed identity) and Impersonate (a user's Entra token through the host's connect app) send a token to the design's base URL. A design may use either only with a scope that the host lists for its environment in `Trust:AllowedCallers[i]:DesignScopes`; the list is empty by default, so such a design is refused until the host's administrator adds the scope. For ServiceAccount the scope is `auth.scope` (after any `bf_<Instance>_Auth` override); for Impersonate every scope in `auth.oauth.scopes` except the sign-in scopes `openid`, `profile`, `email` and `offline_access`, and at least one other scope is required. Scopes for Azure management, Key Vault, Storage, Dataverse and Microsoft Graph are always refused, and a bare scope such as `User.Read` counts as Microsoft Graph. A refused design is a configuration problem naming the instance, the scope and the environment.

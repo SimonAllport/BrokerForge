@@ -23,7 +23,9 @@ public static class DesignConfigInput
         ["asyncContext"] = (a, v) => a.AsyncContext = v,
     };
 
-    public static ConfigInput Merge(ConfigInput files, string environmentId, IEnumerable<(ConnectionDesign Design, EnvironmentSettings Settings)> designs)
+    /// <param name="designScopes">The scopes the environment's designs may use in ServiceAccount or Impersonate mode (<see cref="DesignScopeRules"/>).</param>
+    public static ConfigInput Merge(ConfigInput files, string environmentId, IEnumerable<(ConnectionDesign Design, EnvironmentSettings Settings)> designs,
+        IReadOnlyCollection<string>? designScopes = null)
     {
         var input = Copy(files);
         input.EnvironmentId = environmentId;
@@ -80,6 +82,9 @@ public static class DesignConfigInput
                     set(auth, value);
                 else
                     input.Problems.Add($"bf_{name}_Auth in environment {environmentId} overrides `{key}`, which is not an auth setting of instance {name} (use one of {string.Join(", ", Overrides.Keys)})");
+            // After the overrides, so an environment cannot override its way to a scope it may not use.
+            input.Problems.AddRange(DesignScopeRules.Problems(name, environmentId, auth.Mode, auth.Scope, design.Auth.OAuth?.Scopes,
+                designScopes ?? Array.Empty<string>()));
             var secrets = design.Auth.SecretNames.ToDictionary(n => n, n => "store:" + n, StringComparer.Ordinal);
             if (auth.Mode == "Static" && design.Auth.SecretNames.Count > 0)
                 auth.SecretRef = "store:" + design.Auth.SecretNames[0];
