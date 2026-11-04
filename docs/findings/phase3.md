@@ -1,6 +1,6 @@
 # Phase 3 findings: per-user security
 
-Live results against the dev environment (`rg-brokerforge-dev`, org `orgeb8d0d95`), 2 November 2026.
+Live results against the dev environment (`rg-brokerforge-dev`, org in `~/.brokerforge/spike-ids.env`), 2 November 2026.
 Plan: `docs/superpowers/plans/2026-11-01-phase3-per-user-security.md`. Decisions: HLD D-25 to D-33.
 The async signal was verified separately on 1 November (`docs/findings/phase3-spike.md`).
 
@@ -90,9 +90,12 @@ would need a second az profile signed in as B.
 Not covered live: SSO (contract tests only, D-32) and `Auth:AsyncContext: ServiceIdentity`, which no dev source
 configures. The async signal itself (`async=true` with the triggering user) was verified live in the spike.
 Also not verified: a Power Automate flow calling a per-user Custom API (it needs a flow connection signed in
-interactively), and how the connect error renders in a model-driven view or canvas gallery. A flow that reads a
-per-user virtual table never gets the async rule: the data provider plug-in runs synchronously, so `async` is false
-and the flow's connection user needs their own credential (HLD 9.3).
+interactively), and how the connect error renders in a canvas gallery. (In a model-driven list, checked later on
+2 November while recording the how-to guide: a red banner above the grid with the full message and the connect URL,
+code 2147746405; the URL is plain text, not a link. Opening a record on a form shows the same message in a
+"Business Process Error" dialog.) A flow that reads a per-user virtual table never gets the async
+rule: the data provider plug-in runs synchronously, so `async` is false and the flow's connection user needs their
+own credential (HLD 9.3).
 
 ## 10. Impersonation borrowed the impersonated user's credential (found live, fixed)
 
@@ -137,3 +140,13 @@ The whole-branch review's minors were fixed before merge (e8d7015, 2c7d1ee), eac
   `/v2/orders`. Orders and Inventory acceptance pass; A's Impersonate read still returns Ticket 1 to Ticket 7.
   A's OAuth credential came from the old mock's in-memory sign-in state, so it now fails as expired until A
   connects again; the OAuth connect flow against the new app has contract-test evidence only.
+
+## 12. A token the source no longer accepts is a SourceException, not a connect prompt (open)
+
+Found 2 November while recording the how-to guide. The Tickets mock keeps its tokens in memory, so when its app
+scales to zero and restarts every issued token is gone. A's stored access token was still within its lifetime by the
+host's clock, so the host sent it, the mock answered 401, and the read failed with `SourceException: Source returned
+HTTP 401 for operation listTickets`. A real source revoking a token behaves the same way. The user is told to call an
+administrator when connecting again would fix it. Closest honest fix: on a 401 from a per-user source, refresh once
+(if there is a refresh token) and retry; if that fails, mark the credential expired and throw
+`ConnectionRequiredException` with the connect URL. Not fixed yet.

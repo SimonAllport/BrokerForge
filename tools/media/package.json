@@ -1,0 +1,18 @@
+{
+  "name": "brokerforge-media",
+  "private": true,
+  "description": "Records the how-to video and screenshots, and builds the Word guide. See README.md.",
+  "type": "module",
+  "scripts": {
+    "capture": "node capture.mjs",
+    "signin": "node signin.mjs",
+    "record": "node record.mjs",
+    "guide": "node build-guide.mjs"
+  },
+  "devDependencies": {
+    "docx": "9.10.0",
+    "marked": "18.1.0",
+    "playwright": "1.64.0"
+  },
+  "engines": { "node": ">=22" }
+}
