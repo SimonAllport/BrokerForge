@@ -110,7 +110,7 @@ public static class DraftCommand
         foreach (var (k, v) in answers)
             file[k] = v;
         foreach (var q in open)
-            file[q.Key] = "";
+            file.TryAdd(q.Key, "");
         file["_about"] = open.Select(q => $"{q.Key}: {q.Text}" + (q.Choices.Count > 0 ? $" Choices: {string.Join(" | ", q.Choices.Select(c => $"{c.Value} ({c.Label})"))}." : "")
             + (q.Error != null ? $" Refused: {q.Error}." : "")).ToList();
         return JsonSerializer.Serialize(file, new JsonSerializerOptions { WriteIndented = true }) + "\n";

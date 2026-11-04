@@ -17,8 +17,10 @@ public static class DraftService
     /// </summary>
     public const int MaxDefinitionLength = 2_000_000;
 
-    public static DraftReview Review(string definition, DraftOptions options, IReadOnlyDictionary<string, string> answers)
+    public static DraftReview Review(string? definition, DraftOptions options, IReadOnlyDictionary<string, string>? answers)
     {
+        definition ??= "";
+        answers ??= new Dictionary<string, string>();
         if (definition.Length > MaxDefinitionLength)
             return Failed($"The definition is {definition.Length} characters; the most BrokerForge reads is {MaxDefinitionLength}.", answers);
         if (string.IsNullOrWhiteSpace(definition))

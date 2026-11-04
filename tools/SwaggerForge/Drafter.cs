@@ -89,6 +89,7 @@ public static class Drafter
 
             var endpoints = new List<EndpointReview>();
             var drafted = new List<Drafted>();
+            var waiting = false;
             foreach (var (path, item, method, op) in ops)
             {
                 var name = OperationName(op.OperationId) ?? $"{method} {path}";
@@ -108,9 +109,10 @@ public static class Drafter
                     foreach (var (status, response) in op.Responses)
                         Heuristics.Check(JsonSchema(response.Content), $"response {status}", verified: _verified);
 
-                    if (resource == null && candidates.Count > 1 && candidates.Select(c => Role(c, path, method)).FirstOrDefault(IsTableRole) is { } waiting)
+                    if (resource == null && candidates.Count > 1 && candidates.Select(c => Role(c, path, method)).FirstOrDefault(IsTableRole) is { } waitingRole)
                     {
-                        endpoints.Add(new EndpointReview(name, method, path, Becomes(waiting, name), EndpointStatus.NeedsAnswers, null,
+                        waiting = true;
+                        endpoints.Add(new EndpointReview(name, method, path, Becomes(waitingRole, name), EndpointStatus.NeedsAnswers, null,
                             _tableQuestions.Where(q => q.Key == "table.collection").ToList(), Array.Empty<string>()));
                         continue;
                     }
@@ -168,7 +170,11 @@ public static class Drafter
             }
             endpoints = endpoints.OrderBy(e => e.Path, StringComparer.Ordinal).ThenBy(e => e.Method, StringComparer.Ordinal).ToList();
 
-            var table = resource == null && candidates.Count < 2 ? null : new TableProposal(resource?.Collection, _table, _tableDisplay, _tableCollection, _keyPath, _primaryName,
+            // With only Custom APIs in use there is no table, so its questions are not asked.
+            var tableUnused = drafted.Count > 0 && !waiting && !drafted.Any(d => d.TableBound) && (resource != null || candidates.Count > 1);
+            if (tableUnused)
+                _notes.Add("No table endpoint is in use, so no table is drafted.");
+            var table = tableUnused || (resource == null && candidates.Count < 2) ? null : new TableProposal(resource?.Collection, _table, _tableDisplay, _tableCollection, _keyPath, _primaryName,
                 (_fields ?? new()).Select(f => new ColumnProposal(f.SourcePath, f.Column, f.DisplayName, f.Type)).ToList(), _tableQuestions);
 
             var used = endpoints.Where(e => e.Status != EndpointStatus.NotUsed && e.Status != EndpointStatus.Unsupported).ToList();
@@ -377,7 +383,7 @@ public static class Drafter
             }
 
             // Names the admin may edit. A proposal or answer that is not a usable name, or that collides, is refused on its
-            // question: every answered name in a clash, or, when none is answered, every proposal after the first.
+            // question: every answered name in a clash, and every proposal in it after the first.
             var named = new List<(Field Field, Question Name, Question Display)>();
             string? ColumnCheck(string v) => NameCheck(v) ?? (v == _table + "id" ? $"is the table's own key column {v}" : null);
             foreach (var f in fields)
@@ -391,7 +397,7 @@ public static class Drafter
             foreach (var clash in named.Where(x => x.Name.Error == null).GroupBy(x => x.Name.Value, StringComparer.Ordinal).Where(g => g.Count() > 1).ToList())
             {
                 var members = clash.ToList();
-                var blame = members.Any(m => m.Name.Answer != null) ? members.Where(m => m.Name.Answer != null) : members.Skip(1);
+                var blame = members.Where(m => m.Name.Answer != null).Concat(members.Where(m => m.Name.Answer == null).Skip(1));
                 foreach (var m in blame.ToList())
                 {
                     var i = named.FindIndex(x => x.Field.SourcePath == m.Field.SourcePath);

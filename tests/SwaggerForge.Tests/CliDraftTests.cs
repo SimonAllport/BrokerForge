@@ -57,6 +57,27 @@ public class CliDraftTests
     }
 
     [Fact]
+    public void Cli_Draft_RefusedAnswer_KeptInQuestionsFile()
+    {
+        var root = Directory.CreateTempSubdirectory("bf-draft-");
+        try
+        {
+            var answers = Path.Combine(root.FullName, "answers.json");
+            File.WriteAllText(answers, """{ "op.listOrders.paging": "sideways" }""");
+            var output = new StringWriter();
+            var code = DraftCommand.Run(new[] { DrafterTests.Fixture("orders-openapi.yaml"), "--instance", "OrdersAPI", "--prefix", "ext", "--out", "out", "--root", root.FullName, "--answers", answers }, output);
+            Assert.True(code == 3, output.ToString());
+            var questions = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root.FullName, "out", "OrdersAPI-questions.json"))).RootElement;
+            Assert.Equal("sideways", questions.GetProperty("op.listOrders.paging").GetString());
+            Assert.Contains(questions.GetProperty("_about").EnumerateArray(), l => l.GetString()!.StartsWith("op.listOrders.paging:") && l.GetString()!.Contains("Refused"));
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
+
+    [Fact]
     public void Cli_Draft_WithoutAnswers_WritesQuestionsAndExit3()
     {
         var root = Directory.CreateTempSubdirectory("bf-draft-");

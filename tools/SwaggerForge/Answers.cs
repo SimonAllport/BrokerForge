@@ -29,7 +29,7 @@ internal sealed class Answers(IReadOnlyDictionary<string, string> given)
     {
         _asked.Add(key);
         var question = new Question(key, text, kind, choices, required, proposed, null, null);
-        if (!given.TryGetValue(key, out var answer) || answer.Length == 0)
+        if (!given.TryGetValue(key, out var answer) || string.IsNullOrEmpty(answer))
             return question;
         return check(answer) is { } error ? question with { Error = error } : question with { Answer = answer };
     }

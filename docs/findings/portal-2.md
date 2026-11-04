@@ -74,6 +74,14 @@ It also found endpoints that ended Invalid with no question to fix them:
 
 The other findings were PUT and PATCH both becoming Save, an integer enum taking the whole table out, and notes hidden until the review was ready. All are fixed, each with a test that failed first (`tests/SwaggerForge.Tests/ReviewFixTests.cs`). PUT and PATCH now ask a question: new answer keys `table.list`, `table.open`, `table.new`, `table.save` and `table.delete`.
 
+The five minor findings were fixed afterwards, each test-first:
+
+- a clash between an answered name and two proposals now refuses the second proposal too;
+- with only Custom APIs in use, no table is proposed, so no table question stays open beside a ready result;
+- a null definition counts as empty, and a null answers map or answer counts as none;
+- the questions file keeps a refused answer for the admin to correct, instead of blanking it;
+- the answer-keys doc says when `op.<op>.value.<param>` is asked for retrieve, write and delete.
+
 ## 5. Tests
 
-`dotnet test tests/SwaggerForge.Tests`: 78 tests. The full solution and `bf validate descriptors --schemas schemas` (17 descriptors) pass.
+`dotnet test tests/SwaggerForge.Tests`: 82 tests. The full solution and `bf validate descriptors --schemas schemas` (17 descriptors) pass.

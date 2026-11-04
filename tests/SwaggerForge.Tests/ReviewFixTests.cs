@@ -200,6 +200,42 @@ public class ReviewFixTests
     }
 
     [Fact]
+    public void Review_AnsweredNameClashesWithTwoProposals_ProposalsStillRefused()
+    {
+        var text = Widgets().Replace("        name: { type: string, maxLength: 50 }\n", "        name: { type: string, maxLength: 50 }\n        first-name: { type: string, maxLength: 20 }\n        firstName: { type: string, maxLength: 20 }\n");
+        var r = Review(text, ("column.$.name.name", "ext_firstname"));
+        Assert.Null(r.Result);
+        var unrefused = r.Table!.Questions.Where(q => q.Key.StartsWith("column.") && q.Key.EndsWith(".name") && q.Error == null);
+        Assert.All(unrefused.GroupBy(q => q.Value), g => Assert.Single(g));
+    }
+
+    [Fact]
+    public void Review_OnlyActionsInUse_NoTableQuestionsLeftOpen()
+    {
+        const string ops = """
+              /widgets/{id}/archive:
+                post:
+                  operationId: archiveWidget
+                  parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+                  responses: { "200": { description: ok, content: { application/json: { schema: { type: object, properties: { archivedAt: { type: string } } } } } } }
+            """;
+        var text = Widgets(itemOps: ops).Replace("        name: { type: string, maxLength: 50 }\n", "        name: { type: string, maxLength: 50 }\n        price: { type: number }\n");
+        var r = Review(text, ("op.listWidgets.use", "no"), ("op.getWidget.use", "no"));
+        Assert.True(r.Ready, string.Join("; ", r.Endpoints.Select(e => $"{e.Operation} {e.Status} {e.Reason} {string.Join(",", e.Questions.Where(q => q.Open).Select(q => q.Key))}")));
+        Assert.DoesNotContain(All(r), q => q.Open);
+        Assert.Contains(r.Notes, n => n.Contains("no table"));
+    }
+
+    [Fact]
+    public void Review_NullDefinitionOrAnswers_NoThrow()
+    {
+        Assert.Single(DraftService.Review(null!, DraftServiceTests.Options, new Dictionary<string, string>()).Problems);
+        Assert.Null(DraftService.Review(Widgets(), DraftServiceTests.Options, null!).Result);
+        var r = DraftService.Review(Widgets(), DraftServiceTests.Options, new Dictionary<string, string> { ["op.listWidgets.paging"] = null!, ["op.listWidgets.sortStable"] = "yes" });
+        Assert.True(All(r).Single(q => q.Key == "op.listWidgets.paging").Open);
+    }
+
+    [Fact]
     public void Review_WaitingForCollection_EndpointShowsTheQuestion()
     {
         var two = Widgets().Replace("paths:\n", "paths:\n  /gadgets/{id}:\n    get:\n      operationId: getGadget\n      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]\n      responses: { \"200\": { description: ok, content: { application/json: { schema: { $ref: \"#/components/schemas/Widget\" } } } } }\n");

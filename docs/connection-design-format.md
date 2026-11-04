@@ -99,7 +99,7 @@ Root:
 | `op.<op>.sort` | `none`, `asc`, `-{field}` or `{field} desc` | a `sort`, `orderBy` or `order_by` parameter |
 | `op.<op>.sort.<path>` | the source's sort field, 1–100 characters, no spaces | optional, once the sort isn't `none`; at least one is needed |
 | `op.<op>.sortStable` | `yes` or `no` | every list |
-| `op.<op>.value.<param>` | 1–200 characters, sent as a static value | a path parameter that isn't the record key, or a required query parameter that matches no column |
+| `op.<op>.value.<param>` | 1–200 characters, sent as a static value | a path parameter that isn't the record key; on a list, a required query parameter that matches no column; on a retrieve, write or delete, every required query parameter |
 | `op.<op>.error.<status>` | `NotFound`, `Conflict`, `Forbidden`, `Validation` or `Fail` | a documented status other than 2xx, 403, 404, 409 and 422 |
 | `op.<op>.error.<status>.message` | a string path of the error body, or `none`; with no documented body, an optional JSONPath such as `$.error.detail` | a status that maps to `Validation` |
 

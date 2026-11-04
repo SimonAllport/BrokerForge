@@ -36,7 +36,8 @@ public sealed record TableProposal(string? Collection, string LogicalName, strin
 /// <summary>
 /// What the admin reviews (spec 5, screen 2). <see cref="Result"/> is set only when nothing is open: no problems, at least
 /// one endpoint in use, and every endpoint in use Ready. <see cref="UnusedAnswers"/> are answer keys no question asked.
-/// <see cref="Notes"/> say what was not drafted and why, whether or not the review is ready.
+/// <see cref="Notes"/> say what was not drafted and why, whether or not the review is ready. <see cref="Table"/> is null
+/// when the definition has no collection, and when only Custom APIs are in use.
 /// </summary>
 public sealed record DraftReview(TableProposal? Table, IReadOnlyList<EndpointReview> Endpoints, IReadOnlyList<string> Problems,
     IReadOnlyList<string> UnusedAnswers, DraftResult? Result, IReadOnlyList<string> Notes)
