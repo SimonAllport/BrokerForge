@@ -1,11 +1,14 @@
 namespace BrokerForge.SwaggerForge;
 
-/// <summary><see cref="Prefix"/> is the publisher prefix (ext); <see cref="Table"/> the logical name of the table to draft (ext_item).</summary>
-public sealed record DraftOptions(string ServiceInstance, string Prefix, string Table);
+/// <summary>
+/// <see cref="Prefix"/> is the publisher prefix (ext). <see cref="ReservedNames"/> are the header and query names the
+/// connection's authentication sends; a definition parameter with one of them is left to the authentication.
+/// </summary>
+public sealed record DraftOptions(string ServiceInstance, string Prefix, IReadOnlyList<string>? ReservedNames = null);
 
 /// <summary>
 /// The drafted schema file and descriptors (operation name to YAML), what was skipped and why, and
-/// <see cref="Notes"/>: defaults and choices a person must review before the draft is used.
+/// <see cref="Notes"/>: what was not drafted and why.
 /// </summary>
 public sealed record DraftResult(
     string SchemaYaml,

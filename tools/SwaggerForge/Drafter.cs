@@ -18,30 +18,51 @@ public static class Drafter
 
     private sealed record Resource(string Collection, string Item, string IdParam);
 
-    public static DraftResult Draft(OpenApiDocument doc, DraftOptions o)
-    {
-        var run = new Run(doc, o);
-        return run.Execute();
-    }
+    internal static DraftReview Draft(OpenApiDocument doc, DraftOptions o, Answers answers) => new Run(doc, o, answers).Execute();
 
-    private sealed class Run(OpenApiDocument doc, DraftOptions o)
+    private static readonly Choice[] UseChoices = { new("yes", "Use it"), new("no", "Leave it out") };
+
+    private sealed class Run(OpenApiDocument doc, DraftOptions o, Answers answers)
     {
         private readonly List<SkippedOperation> _skipped = new();
         private readonly List<string> _notes = new();
-        private readonly SortedDictionary<string, string> _descriptors = new(StringComparer.Ordinal);
-        private readonly YamlMap _customApis = new();
+        private readonly List<string> _problems = new();
+        private (string Name, YamlMap Map)? _lastApi;
+        private readonly List<Question> _tableQuestions = new();
+        private List<Question> _q = new();
         private List<Field>? _fields;
+        private string? _tableUnsupported;
         private string? _keyPath;
         private string? _primaryName;
+        private string _table = "";
 
-        public DraftResult Execute()
+        private sealed record Drafted(string Operation, string Method, string Path, string Becomes, bool TableBound, List<Question> Questions, string Yaml, (string Name, YamlMap Map)? Api);
+
+        public DraftReview Execute()
         {
             var resource = FindResource();
+            if (resource != null)
+            {
+                _table = Heuristics.Column(o.Prefix, Singular(resource.Collection.Split('/')[^1]));
+                try
+                {
+                    Fields(ItemSchema(resource));
+                }
+                catch (UnsupportedShapeException ex)
+                {
+                    _tableUnsupported = ex.Message;
+                }
+            }
+
             var ops = doc.Paths.SelectMany(p => p.Value.Operations.Select(op => (Path: p.Key, Item: p.Value, Method: op.Key.ToString().ToUpperInvariant(), Op: op.Value)))
                 .OrderBy(x => x.Path, StringComparer.Ordinal).ThenBy(x => x.Method, StringComparer.Ordinal).ToList();
 
+            var endpoints = new List<EndpointReview>();
+            var drafted = new List<Drafted>();
             foreach (var (path, item, method, op) in ops)
             {
+                var name = string.IsNullOrEmpty(op.OperationId) ? $"{method} {path}" : char.ToLowerInvariant(op.OperationId[0]) + op.OperationId[1..];
+                var becomes = "Not drafted";
                 try
                 {
                     if (string.IsNullOrEmpty(op.OperationId))
@@ -53,8 +74,30 @@ public static class Drafter
                     foreach (var (status, response) in op.Responses)
                         Heuristics.Check(JsonSchema(response.Content), $"response {status}");
 
-                    var name = char.ToLowerInvariant(op.OperationId[0]) + op.OperationId[1..];
                     var role = Role(resource, path, method);
+                    becomes = role switch
+                    {
+                        "RetrieveMultiple" => "List",
+                        "Retrieve" => "Open",
+                        "Create" => "New",
+                        "Update" => "Save",
+                        "Delete" => "Delete",
+                        "CustomApi" => "Action: " + Heuristics.Humanise(name),
+                        _ => becomes,
+                    };
+                    var tableBound = role is "RetrieveMultiple" or "Retrieve" or "Create" or "Update" or "Delete";
+                    if (tableBound && _tableUnsupported != null)
+                        throw new UnsupportedShapeException(_tableUnsupported);
+
+                    _q = new List<Question>();
+                    var use = answers.Choice($"op.{name}.use", $"Use {method} {path}?", UseChoices, required: false, proposed: "yes");
+                    _q.Add(use);
+                    if (use.Value == "no")
+                    {
+                        endpoints.Add(new EndpointReview(name, method, path, becomes, EndpointStatus.NotUsed, null, _q, Array.Empty<string>()));
+                        continue;
+                    }
+                    _lastApi = null;
                     var yaml = role switch
                     {
                         "RetrieveMultiple" => List(name, path, op, parameters),
@@ -65,42 +108,58 @@ public static class Drafter
                         "CustomApi" => CustomApi(name, path, op, parameters),
                         _ => throw new UnsupportedShapeException(role),
                     };
-                    _descriptors[name] = yaml;
+                    drafted.Add(new Drafted(name, method, path, becomes, tableBound, _q, yaml, _lastApi));
                 }
                 catch (UnsupportedShapeException ex)
                 {
                     _skipped.Add(new SkippedOperation(method, path, ex.Message));
+                    endpoints.Add(new EndpointReview(name, method, path, becomes, EndpointStatus.Unsupported, ex.Message, Array.Empty<Question>(), Array.Empty<string>()));
                 }
             }
 
-            var schemaYaml = SchemaYaml();
-            Verify(schemaYaml);
-            return new DraftResult(schemaYaml, _descriptors, _skipped, _notes);
+            var tableOpen = _tableQuestions.Any(q => q.Open);
+            var ready = drafted.Where(d => !d.Questions.Any(q => q.Open) && !(d.TableBound && tableOpen)).ToList();
+            var schemaYaml = SchemaYaml(ready.Any(d => d.TableBound), ready.Where(d => d.Api != null).Select(d => d.Api!.Value));
+            var errors = ready.Count == 0 ? new Dictionary<string, IReadOnlyList<string>>()
+                : Check(schemaYaml, ready.ToDictionary(d => d.Operation, d => d.Yaml), o);
+            foreach (var d in drafted)
+            {
+                var status = !ready.Contains(d) ? EndpointStatus.NeedsAnswers
+                    : errors.TryGetValue(d.Operation, out var e) && e.Count > 0 ? EndpointStatus.Invalid : EndpointStatus.Ready;
+                endpoints.Add(new EndpointReview(d.Operation, d.Method, d.Path, d.Becomes, status, null, d.Questions,
+                    status == EndpointStatus.Invalid ? errors[d.Operation] : Array.Empty<string>()));
+            }
+            endpoints = endpoints.OrderBy(e => e.Path, StringComparer.Ordinal).ThenBy(e => e.Method, StringComparer.Ordinal).ToList();
+
+            var table = resource == null ? null : new TableProposal(resource.Collection, _table, Heuristics.Humanise(_table[(o.Prefix.Length + 1)..]),
+                Heuristics.Humanise(_table[(o.Prefix.Length + 1)..]) + "s", _keyPath, _primaryName,
+                (_fields ?? new()).Select(f => new ColumnProposal(f.SourcePath, f.Column, f.DisplayName, f.Type)).ToList(), _tableQuestions);
+
+            var used = endpoints.Where(e => e.Status != EndpointStatus.NotUsed && e.Status != EndpointStatus.Unsupported).ToList();
+            DraftResult? result = null;
+            if (_problems.Count == 0 && used.Count > 0 && used.All(e => e.Status == EndpointStatus.Ready))
+                result = new DraftResult(schemaYaml, new SortedDictionary<string, string>(ready.ToDictionary(d => d.Operation, d => d.Yaml), StringComparer.Ordinal),
+                    _skipped, _notes);
+            return new DraftReview(table, endpoints, _problems, answers.Unused(), result);
         }
 
         // ---- resource and roles ----
 
-        /// <summary>The collection whose name, singular, is the table name without its prefix (orders for ext_order); or the only one.</summary>
+        /// <summary>The collection with an item path (orders for /orders/{id}) that becomes the table.</summary>
         private Resource? FindResource()
         {
             var candidates = new List<Resource>();
-            foreach (var path in doc.Paths.Keys)
+            foreach (var path in doc.Paths.Keys.Order(StringComparer.Ordinal))
             {
                 var segments = path.TrimEnd('/').Split('/');
                 var last = segments[^1];
                 if (last.StartsWith('{') && last.EndsWith('}') && segments.Length > 1 && !segments[^2].StartsWith('{'))
                     candidates.Add(new Resource(string.Join("/", segments[..^1]), path, last[1..^1]));
             }
-            var wanted = o.Table[(o.Prefix.Length + 1)..];
-            var named = candidates.Where(c => Singular(c.Collection.Split('/')[^1]) == wanted).ToList();
-            if (named.Count == 1)
-                return named[0];
             if (candidates.Count == 1)
-            {
-                _notes.Add($"Table {o.Table} is drafted from {candidates[0].Collection}, the only collection with an item path.");
                 return candidates[0];
-            }
-            _notes.Add($"No single collection matches table {o.Table}, so no virtual table operations were drafted.");
+            _notes.Add(candidates.Count == 0 ? "No collection has an item path, so no virtual table operations were drafted."
+                : "More than one collection has an item path, so no virtual table operations were drafted.");
             return null;
         }
 
@@ -266,7 +325,7 @@ public static class Drafter
             var fields = Fields(itemSchema);
             var query = parameters.Where(p => p.In == ParameterLocation.Query).ToDictionary(p => p.Name, StringComparer.Ordinal);
 
-            var root = Header(name, "RetrieveMultiple", o.Table);
+            var root = Header(name, "RetrieveMultiple", _table);
             var request = root.Map("request").Add("method", "GET").Add("path", path);
             var paging = Paging(query, responseSchema, container, out var pagingParams);
 
@@ -375,7 +434,7 @@ public static class Drafter
         private string Retrieve(string name, string path, OpenApiOperation op, List<OpenApiParameter> parameters, Resource r)
         {
             var fields = Fields(SuccessSchema(op) ?? throw new UnsupportedShapeException("no response schema for the retrieve"));
-            var root = Header(name, "Retrieve", o.Table);
+            var root = Header(name, "Retrieve", _table);
             var request = root.Map("request").Add("method", "GET").Add("path", path);
             CheckPathParams(path, parameters, request, r.IdParam, name);
             var response = root.Map("response").Add("rows", "$").Add("key", _keyPath!);
@@ -392,7 +451,7 @@ public static class Drafter
             if (body.Type != "object")
                 throw new UnsupportedShapeException("the request body is not an object");
 
-            var root = Header(name, binds, o.Table);
+            var root = Header(name, binds, _table);
             var request = root.Map("request").Add("method", MethodOf(path, op)).Add("path", path);
             CheckPathParams(path, parameters, request, binds == "Update" ? r.IdParam : null, name);
 
@@ -458,7 +517,7 @@ public static class Drafter
 
         private string Delete(string name, string path, OpenApiOperation op, List<OpenApiParameter> parameters, Resource r)
         {
-            var root = Header(name, "Delete", o.Table);
+            var root = Header(name, "Delete", _table);
             var request = root.Map("request").Add("method", "DELETE").Add("path", path);
             CheckPathParams(path, parameters, request, r.IdParam, name);
             Errors(root, op);
@@ -546,7 +605,8 @@ public static class Drafter
             root.Map("response").Add("outputs", outputs);
             Errors(root, op);
 
-            var declaredApi = _customApis.Map(api).Add("displayName", Heuristics.Humanise(name));
+            var declaredApi = new YamlMap().Add("displayName", Heuristics.Humanise(name));
+            _lastApi = (api, declaredApi);
             if (inputs.Count > 0)
                 declaredApi.Add("inputs", inputs);
             declaredApi.Add("outputs", declaredOutputs);
@@ -590,13 +650,13 @@ public static class Drafter
 
         // ---- schema file and verification ----
 
-        private string SchemaYaml()
+        private string SchemaYaml(bool table, IEnumerable<(string Name, YamlMap Map)> apis)
         {
             var root = new YamlMap();
-            if (_fields != null && _descriptors.Values.Any(y => y.Contains("\ntable: ", StringComparison.Ordinal)))
+            if (table && _fields != null)
             {
-                var bare = o.Table[(o.Prefix.Length + 1)..];
-                root.Add("table", o.Table).Add("displayName", Heuristics.Humanise(bare)).Add("displayCollectionName", Heuristics.Humanise(bare) + "s")
+                var bare = _table[(o.Prefix.Length + 1)..];
+                root.Add("table", _table).Add("displayName", Heuristics.Humanise(bare)).Add("displayCollectionName", Heuristics.Humanise(bare) + "s")
                     .Add("externalName", bare).Add("primaryName", _primaryName!);
                 var columns = root.Map("columns");
                 foreach (var f in _fields)
@@ -615,27 +675,45 @@ public static class Drafter
                     c.Add("displayName", f.DisplayName);
                 }
             }
-            if (_customApis.Count > 0)
-                root.Add("customApis", _customApis);
+            var declared = new YamlMap();
+            foreach (var (name, map) in apis.OrderBy(a => a.Name, StringComparer.Ordinal))
+                declared.Add(name, map);
+            if (declared.Count > 0)
+                root.Add("customApis", declared);
             return root.Count == 0 ? "" : root.ToString();
         }
+    }
 
-        /// <summary>A draft that fails its own validation is a SwaggerForge bug, so it fails the run rather than reaching review.</summary>
-        private void Verify(string schemaYaml)
+    /// <summary>
+    /// Validates drafted descriptors against the drafted schema file: operation name to its errors (empty when valid).
+    /// A schema file that does not parse is an error on every operation. Never throws for invalid content.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, IReadOnlyList<string>> Check(string schemaYaml, IReadOnlyDictionary<string, string> descriptors, DraftOptions o)
+    {
+        var result = new SortedDictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        SourceSchema schema;
+        try
         {
-            if (schemaYaml.Length == 0)
+            schema = SchemaParser.Parse(schemaYaml, $"{o.ServiceInstance}.yaml");
+        }
+        catch (SchemaException ex)
+        {
+            foreach (var name in descriptors.Keys)
+                result[name] = new[] { "schema: " + ex.Message };
+            return result;
+        }
+        var reserved = ReservedNames.For(o.ReservedNames ?? Array.Empty<string>());
+        foreach (var (name, yaml) in descriptors)
+        {
+            try
             {
-                if (_descriptors.Count > 0)
-                    throw new InvalidOperationException("SwaggerForge drafted descriptors but no schema.");
-                return;
+                result[name] = DescriptorValidator.Validate(DescriptorParser.Parse(yaml, name + ".yaml"), reserved, schema).Select(e => e.ToString()).ToList();
             }
-            var schema = SchemaParser.Parse(schemaYaml, $"{o.ServiceInstance}.yaml");
-            foreach (var (name, yaml) in _descriptors)
+            catch (DescriptorException ex)
             {
-                var errors = DescriptorValidator.Validate(DescriptorParser.Parse(yaml, name + ".yaml"), ReservedNames.For(Array.Empty<string>()), schema);
-                if (errors.Count > 0)
-                    throw new InvalidOperationException($"SwaggerForge drafted an invalid descriptor {name}: {string.Join("; ", errors)}");
+                result[name] = new[] { ex.Message };
             }
         }
+        return result;
     }
 }

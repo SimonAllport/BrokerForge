@@ -26,10 +26,23 @@ public class DrafterTests
         return doc;
     }
 
-    private static DraftResult Orders(Func<string, string>? edit = null) =>
-        Drafter.Draft(Read("orders-openapi.yaml", edit), new DraftOptions("OrdersAPI", "ext", "ext_order"));
+    /// <summary>The answers each fixture needs to be ready, with the drafter's own names (no renames).</summary>
+    internal static IReadOnlyDictionary<string, string> AnswersFor(string fixture) => fixture switch
+    {
+        _ => new Dictionary<string, string>(),
+    };
 
-    private static DraftResult Widgets() => Drafter.Draft(Read("unsupported.yaml"), new DraftOptions("WidgetsAPI", "ext", "ext_widget"));
+    /// <summary>The result of a ready review; fails the test with the open endpoints when it is not ready.</summary>
+    internal static DraftResult Ready(DraftReview r) =>
+        r.Result ?? throw new Xunit.Sdk.XunitException("not ready: " + string.Join("; ", r.Problems.Concat(
+            r.Endpoints.Where(e => e.Status is not (EndpointStatus.Ready or EndpointStatus.NotUsed or EndpointStatus.Unsupported))
+                .Select(e => $"{e.Operation} {e.Status} [{string.Join(", ", e.Questions.Where(q => q.Open).Select(q => q.Key).Concat(e.Problems))}]"))
+            .Concat(r.Table?.Questions.Where(q => q.Open).Select(q => $"table {q.Key} {q.Error}") ?? Array.Empty<string>())));
+
+    private static DraftResult Orders(Func<string, string>? edit = null) =>
+        Ready(DraftServiceTests.Review("orders-openapi.yaml", edit: edit));
+
+    private static DraftResult Widgets() => Ready(DraftServiceTests.Review("unsupported.yaml"));
 
     private static OperationDescriptor Descriptor(DraftResult r, string operation) => DescriptorParser.Parse(r.Descriptors[operation], operation + ".yaml");
 

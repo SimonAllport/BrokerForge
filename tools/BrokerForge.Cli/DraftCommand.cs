@@ -1,5 +1,4 @@
 using BrokerForge.SwaggerForge;
-using Microsoft.OpenApi.Readers;
 
 namespace BrokerForge.Cli;
 
@@ -36,23 +35,21 @@ public static class DraftCommand
         }
         var root = Path.GetFullPath(options.GetValueOrDefault("--root") ?? ".");
 
-        var document = new OpenApiStringReader().Read(File.ReadAllText(args[0]), out var diagnostic);
-        if (diagnostic.Errors.Count > 0)
+        var review = DraftService.Review(File.ReadAllText(args[0]), new DraftOptions(instance, prefix), new Dictionary<string, string>());
+        foreach (var problem in review.Problems)
+            output.WriteLine($"{args[0]}: {problem}");
+        if (review.Problems.Count > 0)
+            return 1;
+        if (review.Table != null && review.Table.LogicalName != table)
         {
-            foreach (var e in diagnostic.Errors)
-                output.WriteLine($"{args[0]}: {e.Pointer}: {e.Message}");
+            output.WriteLine($"{args[0]}: the definition's table is {review.Table.LogicalName}, not {table}.");
             return 1;
         }
-
-        DraftResult draft;
-        try
+        if (review.Result is not { } draft)
         {
-            draft = Drafter.Draft(document, new DraftOptions(instance, prefix, table));
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or Descriptors.Parsing.DescriptorException or Schema.SchemaException)
-        {
-            // A draft that fails its own validation is a SwaggerForge bug: report it, write nothing.
-            output.WriteLine($"{args[0]}: SwaggerForge produced a draft that does not validate, so nothing was written: {ex.Message}");
+            output.WriteLine($"{args[0]}: the draft is not ready:");
+            foreach (var e in review.Endpoints)
+                output.WriteLine($"  {e.Method} {e.Path}: {e.Status}{(e.Reason != null ? ": " + e.Reason : "")}");
             return 1;
         }
         if (draft.SchemaYaml.Length == 0)
