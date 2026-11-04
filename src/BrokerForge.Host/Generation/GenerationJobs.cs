@@ -1,0 +1,180 @@
+using System.Collections.Concurrent;
+using BrokerForge.Abstractions;
+using BrokerForge.Connections;
+using BrokerForge.Descriptors.Parsing;
+using BrokerForge.Generator;
+using BrokerForge.Host.Config;
+using BrokerForge.Host.Ingress;
+using BrokerForge.Schema;
+using Microsoft.Extensions.Options;
+
+namespace BrokerForge.Host.Generation;
+
+/// <summary>
+/// Runs Generate in the background as the host's own application user (spec 6 step 3): a plug-in call has two
+/// minutes, a generation can take longer. One job at a time per environment and instance; each has a time limit.
+/// A job that succeeds reloads that environment's connections. Finished jobs are kept for a day in memory.
+/// </summary>
+public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClientFactory clients, IHostConfigProvider configs, IGenerationProgress progress,
+    ILogger<GenerationJobs> log, TimeSpan? timeLimit = null)
+{
+    public static readonly TimeSpan DefaultTimeLimit = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan Keep = TimeSpan.FromDays(1);
+
+    private readonly TimeSpan _limit = timeLimit ?? DefaultTimeLimit;
+    private readonly ConcurrentDictionary<Guid, GenerationJob> _jobs = new();
+    private readonly ConcurrentDictionary<Guid, TaskCompletionSource<GenerationJob>> _done = new();
+    private readonly Dictionary<(string, string), Guid> _active = new();
+
+    /// <summary>Queues the job and returns at once.</summary>
+    /// <exception cref="ConfigurationException">The environment is not one the host serves, or has no OrgUrl.</exception>
+    /// <exception cref="GenerationBusyException">A job for this environment and instance is still queued or running.</exception>
+    public GenerationJob Start(GenerationRequest r)
+    {
+        var org = OrgUrl(r.EnvironmentId);
+        var key = (r.EnvironmentId.ToLowerInvariant(), r.Design.Instance);
+        GenerationJob job;
+        lock (_active)
+        {
+            if (_active.TryGetValue(key, out var running))
+                throw new GenerationBusyException($"Generation of {r.Design.Instance} in environment {r.EnvironmentId} is already running (job {running}); wait for it to finish.");
+            Forget();
+            job = new GenerationJob(Guid.NewGuid(), r.EnvironmentId, r.Design.Instance, JobState.Queued, Array.Empty<string>(), null, null, DateTimeOffset.UtcNow, null, r.CorrelationId);
+            _jobs[job.Id] = job;
+            _done[job.Id] = new TaskCompletionSource<GenerationJob>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _active[key] = job.Id;
+        }
+        _ = Task.Run(() => RunAsync(job, r, org, key));
+        return job;
+    }
+
+    public GenerationJob? Get(Guid id) => _jobs.GetValueOrDefault(id);
+
+    /// <summary>The job once it has finished, succeeded or failed.</summary>
+    public Task<GenerationJob> WaitAsync(Guid id) =>
+        _done.TryGetValue(id, out var done) ? done.Task : throw new KeyNotFoundException($"no generation job {id}");
+
+    /// <summary>The design published in the environment for <paramref name="instance"/>, read as the host (for regenerating it).</summary>
+    public async Task<ConnectionDesign> ReadPublishedAsync(string environmentId, string instance, CancellationToken ct)
+    {
+        var client = clients.Create(OrgUrl(environmentId));
+        var suffix = $"_/brokerforge/{instance}/design.xml";
+        var found = (await client.ListAsync(DataverseDesignSource.DesignQuery, ct))
+            .Where(w => ((string?)w["name"])?.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) == true).ToList();
+        if (found.Count != 1)
+            throw new ConfigurationException(found.Count == 0
+                ? $"Environment {environmentId} has no published design for {instance}."
+                : $"Environment {environmentId} has {found.Count} published designs for {instance}.");
+        var name = (string)found[0]["name"]!;
+        var xml = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String((string)found[0]["content"]!));
+        return DesignSerializer.Parse(DesignCarrier.Unwrap(xml, name), name);
+    }
+
+    /// <summary>What Generate would change, for the admin to confirm. Reads only.</summary>
+    public async Task<GenerationPreview> PreviewAsync(GenerationRequest r, CancellationToken ct)
+    {
+        var client = clients.Create(OrgUrl(r.EnvironmentId));
+        var (schema, options) = await OptionsAsync(client, r, ct);
+        return await Generator.Generator.PreviewAsync(client, schema, options, ct);
+    }
+
+    private async Task RunAsync(GenerationJob job, GenerationRequest r, string org, (string, string) key)
+    {
+        DataverseClient? client = null;
+        using var timeout = new CancellationTokenSource(_limit);
+        try
+        {
+            await Report(job = job with { State = JobState.Running });
+            client = clients.Create(org);
+            var (schema, options) = await OptionsAsync(client, r, timeout.Token);
+            var result = await Generator.Generator.RunAsync(client, schema, options, timeout.Token);
+            job = job with { State = JobState.Succeeded, Writes = result.Writes, DesignVersion = result.DesignVersion, Finished = DateTimeOffset.UtcNow };
+            configs.Invalidate(r.EnvironmentId);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            var writes = client?.Writes.ToList() ?? new List<string>();
+            job = Failed(job, writes, $"Generation timed out after {Describe(_limit)}; writes made: {(writes.Count == 0 ? "none" : string.Join(", ", writes))}");
+        }
+        catch (GenerationFailedException ex)
+        {
+            job = Failed(job, ex.WritesDone, ex.Message);
+        }
+        catch (Exception ex) when (ex is GenerationRefusedException or GenerationConfirmationException or DataverseException or DesignFormatException
+                                       or SchemaException or DescriptorException or ConfigurationException)
+        {
+            job = Failed(job, client?.Writes.ToList() ?? new List<string>(), ex.Message);
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Generation {Instance} in {EnvironmentId} stopped unexpectedly", r.Design.Instance, r.EnvironmentId);
+            job = Failed(job, client?.Writes.ToList() ?? new List<string>(), $"Generation stopped unexpectedly ({ex.GetType().Name}); the host log has the details.");
+        }
+        lock (_active)
+            _active.Remove(key);
+        await Report(job);
+        _done[job.Id].TrySetResult(job);
+    }
+
+    private static GenerationJob Failed(GenerationJob job, IReadOnlyList<string> writes, string failure) =>
+        job with { State = JobState.Failed, Writes = writes, Failure = failure, Finished = DateTimeOffset.UtcNow };
+
+    private async Task Report(GenerationJob job)
+    {
+        _jobs[job.Id] = job;
+        try
+        {
+            await progress.ReportAsync(job, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // Progress is a report, not the job: a failed report must not change the job's result.
+            log.LogWarning(ex, "Generation progress for {Instance} could not be reported", job.Instance);
+        }
+    }
+
+    /// <summary>The design's schema and the options a run needs: messages from its descriptors, host URL and scope from the core setup's variables.</summary>
+    private static async Task<(SourceSchema, GenerateOptions)> OptionsAsync(DataverseClient client, GenerationRequest r, CancellationToken ct)
+    {
+        var schema = SchemaParser.Parse(r.Design.Schema, $"{r.Design.Instance} design schema");
+        var messages = r.Design.Descriptors.Select(d => DescriptorParser.Parse(d.Value, $"{r.Design.Instance} design descriptor {d.Key}"))
+            .Where(d => d.CustomApi == null).Select(d => d.Binds).ToHashSet(StringComparer.Ordinal);
+        var hostUrl = await VariableAsync(client, "bf_HostUrl", ct);
+        var scope = await VariableAsync(client, "bf_HostScope", ct);
+        return (schema, new GenerateOptions(r.Design.Instance, r.Solution, r.Publisher, hostUrl, scope, DryRun: false, messages, r.ConfirmedFingerprint,
+            new DesignPublish(r.Design, r.BaseUrl, r.AuthJson)));
+    }
+
+    /// <summary>An environment variable's current value, else its default. The core setup sets bf_HostUrl and bf_HostScope.</summary>
+    private static async Task<string> VariableAsync(DataverseClient client, string schema, CancellationToken ct)
+    {
+        var definition = (await client.ListAsync($"environmentvariabledefinitions?$select=environmentvariabledefinitionid,defaultvalue&$filter=schemaname eq {DataverseClient.Literal(schema)}", ct)).FirstOrDefault();
+        if (definition != null)
+        {
+            var value = (await client.ListAsync($"environmentvariablevalues?$select=value&$filter=_environmentvariabledefinitionid_value eq {(string)definition["environmentvariabledefinitionid"]!}", ct)).FirstOrDefault();
+            if (((string?)value?["value"] ?? (string?)definition["defaultvalue"]) is { Length: > 0 } text)
+                return text;
+        }
+        throw new ConfigurationException($"Environment variable {schema} has no value in this environment; run the core setup (tools/dev/setup-dataverse.sh) first.");
+    }
+
+    private string OrgUrl(string environmentId)
+    {
+        var caller = trust.Value.AllowedCallers.FirstOrDefault(c => string.Equals(c.EnvironmentId, environmentId, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ConfigurationException($"Environment {environmentId} is not one this host serves (Trust:AllowedCallers).");
+        return caller.OrgUrl is { Length: > 0 } org ? org
+            : throw new ConfigurationException($"Environment {environmentId} has no OrgUrl in Trust:AllowedCallers, so the host can't reach its Dataverse.");
+    }
+
+    private void Forget()
+    {
+        foreach (var (id, job) in _jobs)
+            if (job.Finished is { } at && DateTimeOffset.UtcNow - at > Keep)
+            {
+                _jobs.TryRemove(id, out _);
+                _done.TryRemove(id, out _);
+            }
+    }
+
+    private static string Describe(TimeSpan t) => t.TotalMinutes >= 1 ? $"{t.TotalMinutes:0} minutes" : $"{t.TotalMilliseconds:0} ms";
+}

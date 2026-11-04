@@ -37,6 +37,17 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     private readonly List<JsonObject> _variables = new();
     private readonly List<JsonObject> _values = new();
 
+    /// <summary>Each request waits this long first (cancellable), to hold a job open.</summary>
+    public TimeSpan Delay { get; set; }
+
+    /// <summary>An environment variable with a current value, as the core setup leaves bf_HostUrl and bf_HostScope.</summary>
+    public void SetVariable(string schema, string value)
+    {
+        var id = NewId();
+        _variables.Add(new JsonObject { ["environmentvariabledefinitionid"] = id, ["schemaname"] = schema, ["defaultvalue"] = null });
+        _values.Add(new JsonObject { ["environmentvariablevalueid"] = NewId(), ["_environmentvariabledefinitionid_value"] = id, ["value"] = value });
+    }
+
     public JsonObject WebResource(string name) => _webResources.Single(w => (string)w["name"]! == name);
 
     public string? VariableValue(string schema)
@@ -86,10 +97,13 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
+        if (Delay > TimeSpan.Zero)
+            await Task.Delay(Delay, ct);
         var body = request.Content == null ? null : await request.Content.ReadAsStringAsync(ct);
         var path = Uri.UnescapeDataString(request.RequestUri!.PathAndQuery)["/api/data/v9.2/".Length..];
         var solution = request.Headers.TryGetValues("MSCRM.SolutionUniqueName", out var s) ? s.Single() : null;
-        Requests.Add(new Recorded(request.Method.Method, path, body, solution, request.Headers.Authorization?.ToString()));
+        lock (Requests)
+            Requests.Add(new Recorded(request.Method.Method, path, body, solution, request.Headers.Authorization?.ToString()));
         if (request.Method != HttpMethod.Get && ++_writeCount == FailWrite)
             return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "injected failure" } }, HttpStatusCode.InternalServerError);
         var json = body == null ? null : JsonNode.Parse(body)!.AsObject();
@@ -103,7 +117,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
 
     private static HttpResponseMessage Status(HttpStatusCode status) => new(status);
 
-    [GeneratedRegex(@"eq '((?:[^']|'')+)'")]
+    [GeneratedRegex(@"(?:eq |contains\(name,)'((?:[^']|'')+)'")]
     private static partial Regex Quoted();
 
     [GeneratedRegex(@"^EntityDefinitions\(LogicalName='([^']+)'\)(.*)$")]
@@ -144,7 +158,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
                 patched["layoutxml"] = body["layoutxml"]!.DeepClone();
                 return Status(HttpStatusCode.NoContent);
             case ("GET", _) when path.StartsWith("webresourceset?"):
-                return Value(_webResources.Where(w => (string)w["name"]! == name));
+                return Value(_webResources.Where(w => path.Contains("contains(name,") ? ((string)w["name"]!).Contains(name!) : (string)w["name"]! == name));
             case ("POST", "webresourceset"):
                 body!["webresourceid"] = NewId();
                 _webResources.Add(body);

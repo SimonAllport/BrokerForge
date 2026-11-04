@@ -7,6 +7,7 @@ using BrokerForge.Auth;
 using BrokerForge.Auth.Credentials;
 using BrokerForge.Auth.PerUser;
 using BrokerForge.Host.Admin;
+using BrokerForge.Host.Generation;
 using BrokerForge.Host.Config;
 using BrokerForge.Host.Connect;
 using BrokerForge.Host.Endpoints;
@@ -23,8 +24,9 @@ using Microsoft.IdentityModel.Tokens;
 
 // BrokerForge host (HLD 5.2): validates the plug-in's managed identity token, routes the canonical
 // request to its descriptor and adapter, and replies with rows, a record, an id or a typed error.
-// `set-instance-secret ...` runs one admin command with the host's own configuration and identity, then exits.
+// `set-instance-secret ...` and `generate ...` run one admin command with the host's own configuration and identity, then exit.
 args = SetInstanceSecretCommand.Split(args, out var adminCommand);
+args = GenerateCommand.Split(args, out var generateCommand);
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddJsonConsole(o => o.IncludeScopes = true);
 
@@ -204,6 +206,12 @@ builder.Services.AddSingleton<IHostConfigProvider>(sp =>
             AllowedPrivateHosts(sp), configuration.GetValue("Config:Designs:AllowLoopbackForTests", false)));
 });
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IHostConfigProvider>().Files);
+// Generation (plan 3, D-36) writes metadata as the host's application user; a table create can take minutes per call.
+builder.Services.AddHttpClient("generation", c => c.Timeout = TimeSpan.FromMinutes(10)).RemoveAllLoggers();
+builder.Services.AddSingleton<IGenerationClientFactory>(sp => new HostDataverseClientFactory(sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IHttpClientFactory>()));
+builder.Services.AddSingleton<IGenerationProgress, LoggingGenerationProgress>();
+builder.Services.AddSingleton(sp => new GenerationJobs(sp.GetRequiredService<IOptions<TrustOptions>>(), sp.GetRequiredService<IGenerationClientFactory>(),
+    sp.GetRequiredService<IHostConfigProvider>(), sp.GetRequiredService<IGenerationProgress>(), sp.GetRequiredService<ILogger<GenerationJobs>>()));
 builder.Services.AddSingleton<CallerGuard>();
 builder.Services.AddSingleton<RequestRouter>();
 builder.Services.AddSingleton(sp => PageTokenKey.LoadAsync(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<ISecretResolver>()).GetAwaiter().GetResult());
@@ -220,6 +228,12 @@ app.Logger.LogInformation("Loaded descriptors: {Descriptors}", string.Join(", ",
 app.Services.GetRequiredService<PageTokenKey>();
 app.Services.GetRequiredService<IUserCredentialStore>();
 app.Services.GetRequiredService<IInstanceSecretStore>();
+
+if (generateCommand != null)
+{
+    Environment.ExitCode = await GenerateCommand.RunAsync(generateCommand, app.Services.GetRequiredService<GenerationJobs>(), Console.Out, CancellationToken.None);
+    return;
+}
 
 if (adminCommand != null)
 {
