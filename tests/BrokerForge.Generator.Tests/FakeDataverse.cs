@@ -24,6 +24,9 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
 
     /// <summary>The write (counting from 1) that fails once with HTTP 500; 0 for none.</summary>
     public int FailWrite { get; set; }
+
+    /// <summary>The write (counting from 1) that fails with a network error, as an HttpClient does; 0 for none.</summary>
+    public int ThrowWrite { get; set; }
     private int _writeCount;
 
     private readonly Dictionary<string, JsonObject> _forms = new();
@@ -36,6 +39,8 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     private readonly List<JsonObject> _webResources = new();
     private readonly List<JsonObject> _variables = new();
     private readonly List<JsonObject> _values = new();
+    private readonly List<(string Table, string Column, int Type, string Id, int DependencyType)> _dependents = new();
+    private readonly Dictionary<int, string> _definitions = new();
 
     /// <summary>Each request waits this long first (cancellable), to hold a job open.</summary>
     public TimeSpan Delay { get; set; }
@@ -65,6 +70,22 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     }
 
     public void RemoveHandViews() => _handViews.Clear();
+
+    /// <summary>Another component that uses <paramref name="column"/>, of any type and dependency type.</summary>
+    public void AddDependent(string table, string column, int type, string id, int dependencyType = 2) =>
+        _dependents.Add((table, column, type, id, dependencyType));
+
+    /// <summary>A solution component type the platform defines in <c>solutioncomponentdefinitions</c> (types from 10000).</summary>
+    public void AddComponentDefinition(int type, string name) => _definitions[type] = name;
+
+    /// <summary>A role made by hand, outside any solution.</summary>
+    public string AddRole(string name)
+    {
+        var id = NewId();
+        _roles.Add(new JsonObject { ["roleid"] = id, ["name"] = name });
+        _rolePrivileges[id] = new();
+        return id;
+    }
 
     public JsonObject MainForm(string table) => _forms[table];
     public JsonObject DefaultView(string table) => _views[table];
@@ -104,7 +125,9 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
         var solution = request.Headers.TryGetValues("MSCRM.SolutionUniqueName", out var s) ? s.Single() : null;
         lock (Requests)
             Requests.Add(new Recorded(request.Method.Method, path, body, solution, request.Headers.Authorization?.ToString()));
-        if (request.Method != HttpMethod.Get && ++_writeCount == FailWrite)
+        if (request.Method != HttpMethod.Get && ++_writeCount == ThrowWrite)
+            throw new HttpRequestException("injected network failure");
+        if (request.Method != HttpMethod.Get && _writeCount == FailWrite)
             return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "injected failure" } }, HttpStatusCode.InternalServerError);
         var json = body == null ? null : JsonNode.Parse(body)!.AsObject();
         return Route(request.Method.Method, path, json, solution);
@@ -135,10 +158,13 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
         if (DependenciesCall().Match(path) is { Success: true } dep)
             return Value(Dependents(dep.Groups[1].Value, int.Parse(dep.Groups[2].Value)).Select(d => (JsonNode)new JsonObject
             {
-                ["dependentcomponenttype"] = d.Type, ["dependentcomponentobjectid"] = d.Id, ["dependencytype"] = 2,
+                ["dependentcomponenttype"] = d.Type, ["dependentcomponentobjectid"] = d.Id, ["dependencytype"] = d.DependencyType,
             }));
         switch (method, path)
         {
+            case ("GET", _) when path.StartsWith("solutioncomponentdefinitions?"):
+                return Value(_definitions.Where(d => path.Contains($"solutioncomponenttype eq {d.Key}"))
+                    .Select(d => (JsonNode)new JsonObject { ["solutioncomponenttype"] = d.Key, ["name"] = d.Value }));
             case ("GET", _) when path.StartsWith("systemforms?"):
                 return Value(_forms.TryGetValue(name!, out var form) ? new[] { form } : Array.Empty<JsonNode>());
             case ("GET", _) when path.StartsWith("systemforms("):
@@ -313,7 +339,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     private string Privilege(string name) => _privileges.TryGetValue(name, out var id) ? id : _privileges[name] = NewId();
 
     /// <summary>What uses an attribute (by MetadataId) or a Custom API: the generated form and view by their XML, and hand-made views.</summary>
-    private IEnumerable<(int Type, string Id)> Dependents(string objectId, int componentType)
+    private IEnumerable<(int Type, string Id, int DependencyType)> Dependents(string objectId, int componentType)
     {
         if (componentType != 2)
             yield break;
@@ -323,11 +349,13 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             if (column == null)
                 continue;
             if (_forms.TryGetValue(table, out var form) && ((string)form["formxml"]!).Contains($"datafieldname=\"{column}\""))
-                yield return (60, (string)form["formid"]!);
+                yield return (60, (string)form["formid"]!, 2);
             if (_views.TryGetValue(table, out var view) && ((string)view["layoutxml"]!).Contains($"<cell name=\"{column}\""))
-                yield return (26, (string)view["savedqueryid"]!);
+                yield return (26, (string)view["savedqueryid"]!, 2);
             foreach (var hand in _handViews.Where(h => h.Table == table && h.Column == column))
-                yield return (26, hand.ViewId);
+                yield return (26, hand.ViewId, 2);
+            foreach (var other in _dependents.Where(d => d.Table == table && d.Column == column))
+                yield return (other.Type, other.Id, other.DependencyType);
         }
     }
 
@@ -388,7 +416,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
                 case "DELETE":
                     if (attribute == null)
                         return Status(HttpStatusCode.NotFound);
-                    var users = Dependents((string)attribute["MetadataId"]!, 2).ToList();
+                    var users = Dependents((string)attribute["MetadataId"]!, 2).Where(d => d.DependencyType != 1).ToList();
                     if (users.Count > 0)
                         return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = $"referenced by {users.Count} other components" } }, HttpStatusCode.BadRequest);
                     _attributes[table].Remove(attribute);

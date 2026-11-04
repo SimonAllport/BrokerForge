@@ -274,6 +274,78 @@ public class ChangeApplyTests
         await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema(), o));
         Assert.Empty(fake.Writes);
     }
+
+    [Fact]
+    public async Task Run_NetworkFailureHalfway_FailedNamingStepAndWrites()
+    {
+        var fake = new FakeDataverse { ThrowWrite = 4 };
+        var ex = await Assert.ThrowsAsync<GenerationFailedException>(() => Run(fake, Schema()));
+        Assert.Equal(3, ex.WritesDone.Count);
+        Assert.False(string.IsNullOrEmpty(ex.Step));
+        Assert.Contains("injected network failure", ex.Message);
+        Assert.IsType<HttpRequestException>(ex.InnerException);
+    }
+
+    [Fact]
+    public async Task Run_CallerCancels_NotWrapped()
+    {
+        var fake = new FakeDataverse { Delay = TimeSpan.FromSeconds(5) };
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Generator.RunAsync(Client(fake), Schema(), Options, cts.Token));
+    }
+
+    [Fact]
+    public async Task Preview_SolutionInternalDependent_NotBlocking()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        fake.AddDependent("ext_item", "ext_notes", 60, "00000000-0000-0000-0000-00000000ff01", dependencyType: 1);
+        var preview = await Preview(fake, Schema(Without(WithoutNotes)));
+        Assert.Empty(preview.Blocked);
+        await Confirmed(fake, Schema(Without(WithoutNotes)));
+        Assert.DoesNotContain("ext_notes", FormFields(fake));
+    }
+
+    [Theory]
+    [InlineData(61, null, "web resource (00000000-0000-0000-0000-00000000ff02)")]
+    [InlineData(10099, "msdyn_widget", "msdyn_widget (00000000-0000-0000-0000-00000000ff02)")]
+    [InlineData(10098, null, "component of type 10098 (00000000-0000-0000-0000-00000000ff02)")]
+    public async Task Preview_OtherDependentTypes_Named(int type, string? definition, string named)
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        if (definition != null)
+            fake.AddComponentDefinition(type, definition);
+        fake.AddDependent("ext_item", "ext_notes", type, "00000000-0000-0000-0000-00000000ff02");
+        var blocked = Assert.Single((await Preview(fake, Schema(Without(WithoutNotes)))).Blocked);
+        Assert.Equal(named, blocked.Dependent);
+    }
+
+    [Fact]
+    public async Task Run_HandMadeRoleWithTheName_RefusedNothingWritten()
+    {
+        var fake = new FakeDataverse();
+        var hand = fake.AddRole("InventoryAPI user");
+        var preview = await Preview(fake, Schema());
+        Assert.Contains("role InventoryAPI user exists but is not in solution BrokerForgeInventory; rename it or add it to the solution", preview.Changes.Refusals);
+        var ex = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema()));
+        Assert.Contains("InventoryAPI user", ex.Message);
+        Assert.Empty(fake.Writes);
+        Assert.Empty(fake.RolePrivileges("InventoryAPI user"));
+        _ = hand;
+    }
+
+    [Fact]
+    public async Task Run_DryRunWithRemoval_PlansWithoutConfirmation()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        var before = fake.Writes.Count();
+        var dry = new DataverseClient(new HttpClient(fake) { BaseAddress = new Uri(FakeDataverse.Org + "/api/data/v9.2/") }, _ => Task.FromResult("token"), true);
+        var result = await Generator.RunAsync(dry, Schema(Without(WithoutNotes)), Options with { DryRun = true }, CancellationToken.None);
+        Assert.Contains(result.Writes, w => w.StartsWith("DELETE", StringComparison.Ordinal) && w.Contains("ext_notes"));
+        Assert.Equal(before, fake.Writes.Count());
+    }
 }
 
 internal static class SchemaTestExtensions

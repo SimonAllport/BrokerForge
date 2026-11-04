@@ -11,8 +11,8 @@ namespace BrokerForge.Cli;
 /// <c>bf generate --org &lt;url&gt; --schemas &lt;dir&gt; --descriptors &lt;dir&gt; --instance &lt;name&gt; --solution &lt;unique&gt;
 /// --publisher &lt;unique&gt; --host-url &lt;url&gt; --scope &lt;scope&gt; [--dry-run] [--confirm &lt;fingerprint&gt;]</c>. Validates the
 /// instance's descriptors against its schema, prints the change list, then runs the generator as the az CLI user (falling
-/// back to DefaultAzureCredential). Exit codes: 0 applied or nothing to change, 1 refused, blocked or failed, 2 usage,
-/// 4 the changes need confirming with <c>--confirm</c> and the printed fingerprint.
+/// back to DefaultAzureCredential). Exit codes: 0 applied, planned (a dry run never needs <c>--confirm</c>) or nothing to
+/// change, 1 refused, blocked or failed, 2 usage, 4 the changes need confirming with <c>--confirm</c> and the printed fingerprint.
 /// </summary>
 public static class GenerateCommand
 {
@@ -94,6 +94,8 @@ public static class GenerateCommand
             foreach (var write in result.Writes)
                 output.WriteLine((dryRun ? "would " : "") + write);
             output.WriteLine(result.Writes.Count == 0 ? $"{instance}: nothing to change" : $"{instance}: {result.Writes.Count} write(s){(dryRun ? " planned" : "")}");
+            if (dryRun && preview.NeedsConfirmation)
+                output.WriteLine($"A real run of these changes needs --confirm {preview.Changes.Fingerprint}.");
             return 0;
         }
         catch (GenerationConfirmationException ex)

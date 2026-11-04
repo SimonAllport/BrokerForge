@@ -5,7 +5,8 @@ namespace BrokerForge.Generator;
 /// <summary>
 /// The source's role, <c>&lt;Instance&gt; user</c>, with organisation-level privileges on its table that follow the
 /// messages the descriptors bind. Only this table's own privileges are added or removed: a new role starts with
-/// platform privileges that must stay (generator spike section 4).
+/// platform privileges that must stay (generator spike section 4). The generator's role is the one of that name in the
+/// source's solution; a hand-made role with the name, outside it, is never taken over.
 /// </summary>
 public static class RoleGenerator
 {
@@ -30,22 +31,30 @@ public static class RoleGenerator
     }
 
     /// <summary>What the role write would do, or null when the role already holds exactly the wanted privileges.</summary>
-    public static async Task<string?> DescribeAsync(DataverseClient client, string table, string instance, IReadOnlySet<string> messages, CancellationToken ct)
+    public static async Task<string?> DescribeAsync(DataverseClient client, string table, string instance, IReadOnlySet<string> messages, string? solutionId, CancellationToken ct)
     {
         var wanted = Wanted(messages);
-        var role = await FindAsync(client, instance, ct);
+        var (role, _) = await FindAsync(client, instance, solutionId, ct);
         if (role == null)
             return $"create role {RoleName(instance)} with {string.Join(", ", wanted)} on {table}";
-        var (add, remove) = await PlanAsync(client, role.Value.Id, table, wanted, ct);
+        var (add, remove) = await PlanAsync(client, role, table, wanted, ct);
         return add.Count == 0 && remove.Count == 0 ? null
             : $"set role {RoleName(instance)} to {string.Join(", ", wanted)} on {table}";
+    }
+
+    /// <summary>The refusal when a role has the name but none of that name is in the solution (null: no such role, or ours exists).</summary>
+    public static async Task<string?> ConflictAsync(DataverseClient client, string instance, string solution, string? solutionId, CancellationToken ct)
+    {
+        var (ours, others) = await FindAsync(client, instance, solutionId, ct);
+        return ours == null && others > 0 ? $"role {RoleName(instance)} exists but is not in solution {solution}; rename it or add it to the solution" : null;
     }
 
     public static async Task<bool> ApplyAsync(DataverseClient client, string table, string instance, IReadOnlySet<string> messages, string solution, CancellationToken ct)
     {
         var wanted = Wanted(messages);
         var bu = (string)(await client.ListAsync("businessunits?$select=businessunitid&$filter=_parentbusinessunitid_value eq null", ct)).Single()["businessunitid"]!;
-        var role = await FindAsync(client, instance, ct);
+        var solutionId = (string?)(await client.ListAsync($"solutions?$select=solutionid&$filter=uniquename eq {DataverseClient.Literal(solution)}", ct)).FirstOrDefault()?["solutionid"];
+        var (role, _) = await FindAsync(client, instance, solutionId, ct);
         var wrote = false;
         string roleId;
         if (role == null)
@@ -56,11 +65,11 @@ public static class RoleGenerator
             }, solution, ct);
             if (client.DryRun)
                 return true;
-            roleId = (string?)created?["roleid"] ?? (await FindAsync(client, instance, ct))!.Value.Id;
+            roleId = (string?)created?["roleid"] ?? (await FindAsync(client, instance, solutionId, ct)).Ours!;
             wrote = true;
         }
         else
-            roleId = role.Value.Id;
+            roleId = role;
 
         var (add, remove) = await PlanAsync(client, roleId, table, wanted, ct);
         if (add.Count > 0)
@@ -79,10 +88,18 @@ public static class RoleGenerator
         return wrote || add.Count > 0 || remove.Count > 0;
     }
 
-    private static async Task<(string Id, bool Exists)?> FindAsync(DataverseClient client, string instance, CancellationToken ct)
+    /// <summary>The root role of the name that is in the solution, and how many of the name are not.</summary>
+    private static async Task<(string? Ours, int Others)> FindAsync(DataverseClient client, string instance, string? solutionId, CancellationToken ct)
     {
-        var row = (await client.ListAsync($"roles?$select=roleid&$filter=name eq {DataverseClient.Literal(RoleName(instance))} and _parentroleid_value eq null", ct)).FirstOrDefault();
-        return row == null ? null : ((string)row["roleid"]!, true);
+        var named = (await client.ListAsync($"roles?$select=roleid&$filter=name eq {DataverseClient.Literal(RoleName(instance))} and _parentroleid_value eq null", ct))
+            .Select(r => (string)r["roleid"]!).ToList();
+        if (named.Count == 0)
+            return (null, 0);
+        var inSolution = solutionId == null ? new HashSet<string>()
+            : (await client.ListAsync($"solutioncomponents?$select=objectid&$filter=_solutionid_value eq {solutionId} and componenttype eq 20", ct))
+                .Select(c => (string)c["objectid"]!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var ours = named.FirstOrDefault(inSolution.Contains);
+        return (ours, named.Count(n => n != ours));
     }
 
     /// <summary>Wanted privileges missing or below organisation depth, and this table's held privileges that are not wanted.</summary>

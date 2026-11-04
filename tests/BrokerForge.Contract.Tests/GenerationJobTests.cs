@@ -104,6 +104,29 @@ public class GenerationJobTests
     }
 
     [Fact]
+    public async Task Start_SameInstanceOtherCase_Busy()
+    {
+        _fakes[OrgA].Delay = TimeSpan.FromMilliseconds(50);
+        var jobs = Jobs();
+        var first = jobs.Start(Request());
+        var lower = EnvironmentConfigTests.Warehouse() with { Instance = "warehouseapi" };
+        Assert.Throws<GenerationBusyException>(() => jobs.Start(Request(design: lower)));
+        await jobs.WaitAsync(first.Id);
+    }
+
+    [Fact]
+    public async Task Job_NetworkFailure_FailedNamingStep()
+    {
+        _fakes[OrgA].ThrowWrite = 4;
+        var jobs = Jobs();
+        var done = await jobs.WaitAsync(jobs.Start(Request()).Id);
+        Assert.Equal(JobState.Failed, done.State);
+        Assert.Contains("injected network failure", done.Failure);
+        Assert.Contains("step", done.Failure);
+        Assert.Equal(3, done.Writes.Count);
+    }
+
+    [Fact]
     public async Task Start_SameNameTwoEnvironments_BothRun()
     {
         _fakes[OrgA].Delay = _fakes[OrgB].Delay = TimeSpan.FromMilliseconds(20);
@@ -124,6 +147,7 @@ public class GenerationJobTests
         Assert.Equal(JobState.Failed, done.State);
         Assert.Contains("injected failure", done.Failure);
         Assert.Contains("step", done.Failure);
+        Assert.False(done.NeedsConfirmation);
         Assert.Equal(3, done.Writes.Count);
         Assert.Empty(_configs.Invalidated);
     }
@@ -140,9 +164,11 @@ public class GenerationJobTests
         var refused = await jobs.WaitAsync(jobs.Start(Request(design: changed)).Id);
         Assert.Equal(JobState.Failed, refused.State);
         Assert.Contains(fingerprint, refused.Failure);
+        Assert.True(refused.NeedsConfirmation);
         var confirmed = await jobs.WaitAsync(jobs.Start(Request(design: changed) with { ConfirmedFingerprint = fingerprint }).Id);
         Assert.True(confirmed.State == JobState.Succeeded, confirmed.Failure);
         Assert.Equal(2, confirmed.DesignVersion);
+        Assert.False(confirmed.NeedsConfirmation);
     }
 
     [Fact]
@@ -218,6 +244,19 @@ public class GenerationJobTests
         Assert.Contains("Succeeded", output);
         Assert.Contains("design v1", output);
         Assert.DoesNotContain(design.OpenApi[..Math.Min(40, design.OpenApi.Length)], output);
+    }
+
+    [Fact]
+    public async Task Command_StaleConfirm_Exit4NothingWritten()
+    {
+        var design = EnvironmentConfigTests.Warehouse();
+        await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext", "--design-file", DesignFile(design));
+        var before = _fakes[OrgA].Writes.Count();
+        var changed = DesignFile(design with { Schema = design.Schema.Replace("displayName: SKU", "displayName: Stock code") });
+        var (code, output) = await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext",
+            "--design-file", changed, "--confirm", "0000000000000000");
+        Assert.True(code == 4, output);
+        Assert.Equal(before, _fakes[OrgA].Writes.Count());
     }
 
     [Fact]

@@ -99,8 +99,7 @@ public static class GenerateCommand
             await output.WriteLineAsync($"{instance}: {job.State}, {job.Writes.Count} write(s){(job.DesignVersion is { } v ? $", design v{v}" : "")}");
             if (job.State == JobState.Succeeded)
                 return 0;
-            return await Fail(output, job.Failure ?? "failed", job.Failure?.Contains("need confirming", StringComparison.Ordinal) == true
-                                                             || job.Failure?.Contains("not the ones confirmed", StringComparison.Ordinal) == true ? 4 : 1);
+            return await Fail(output, job.Failure ?? "failed", job.NeedsConfirmation ? 4 : 1);
         }
         catch (Exception ex) when (ex is BrokerForge.Abstractions.ConfigurationException or GenerationBusyException or BrokerForge.Generator.GenerationRefusedException
                                        or BrokerForge.Generator.DataverseException or BrokerForge.Schema.SchemaException or BrokerForge.Descriptors.Parsing.DescriptorException)

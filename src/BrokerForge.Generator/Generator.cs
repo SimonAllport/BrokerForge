@@ -31,10 +31,11 @@ public static class Generator
         if (preview.Blocked.Count > 0)
             throw new GenerationRefusedException(preview.Blocked.Select(b => $"{b.Change.Text} is blocked: {b.Dependent} uses it; remove it from there first").ToList());
         var lines = string.Concat(preview.Changes.Changes.Select(c => "\n - " + c.Text));
-        if (o.ConfirmedFingerprint != null && o.ConfirmedFingerprint != preview.Changes.Fingerprint)
+        // A dry run writes nothing, so it plans every change without a fingerprint; the real run asks for one.
+        if (!o.DryRun && o.ConfirmedFingerprint != null && o.ConfirmedFingerprint != preview.Changes.Fingerprint)
             throw new GenerationConfirmationException(preview,
                 $"The changes are not the ones confirmed ({o.ConfirmedFingerprint}). Nothing was written. They are now ({preview.Changes.Fingerprint}):{lines}");
-        if (o.ConfirmedFingerprint == null && preview.NeedsConfirmation)
+        if (!o.DryRun && o.ConfirmedFingerprint == null && preview.NeedsConfirmation)
             throw new GenerationConfirmationException(preview, $"These changes need confirming with fingerprint {preview.Changes.Fingerprint}. Nothing was written:{lines}");
 
         var step = "start";
@@ -43,9 +44,10 @@ public static class Generator
         {
             version = await ApplyAsync(client, schema, o, state, s => step = s, ct);
         }
-        // Past the checks above, a refusal (a privilege that doesn't exist, the platform dropping the provider) can come
-        // after writes: it is a failure naming the step and the writes made, never "made no changes".
-        catch (Exception ex) when (ex is DataverseException or GenerationRefusedException or BrokerForge.Connections.DesignFormatException)
+        // Past the checks above, anything that stops the run (a refusal such as a privilege that doesn't exist, a network
+        // error, an HttpClient timeout, a token failure) can come after writes: it is a failure naming the step and the
+        // writes made, never "made no changes". Only the caller's own cancellation passes through.
+        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
         {
             throw new GenerationFailedException(step, client.Writes.ToList(), ex);
         }
@@ -99,6 +101,10 @@ public static class Generator
             }
         }
 
+        if (schema.Table != null && o.Messages != null
+            && await RoleGenerator.ConflictAsync(client, o.Instance, o.Solution, (string?)solution?["solutionid"], ct) is { } conflict)
+            plan = plan with { Refusals = plan.Refusals.Append(conflict).ToList() };
+
         var parts = table == null ? null : await FormsAndViews.ReadAsync(client, schema.Table!, ct);
         var blocked = new List<Blocked>();
         var generated = parts == null ? new HashSet<string>() : new HashSet<string>(new[] { parts.FormId, parts.ViewId }, StringComparer.OrdinalIgnoreCase);
@@ -124,7 +130,7 @@ public static class Generator
             {
                 var role = table == null
                     ? $"create role {RoleGenerator.RoleName(o.Instance)} with {string.Join(", ", RoleGenerator.Wanted(o.Messages))} on {schema.Table}"
-                    : await RoleGenerator.DescribeAsync(client, schema.Table, o.Instance, o.Messages, ct);
+                    : await RoleGenerator.DescribeAsync(client, schema.Table, o.Instance, o.Messages, (string?)solution?["solutionid"], ct);
                 if (role != null)
                     described.Add(role);
             }

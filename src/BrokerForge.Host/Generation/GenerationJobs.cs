@@ -33,7 +33,8 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
     public GenerationJob Start(GenerationRequest r)
     {
         var org = OrgUrl(r.EnvironmentId);
-        var key = (r.EnvironmentId.ToLowerInvariant(), r.Design.Instance);
+        // Dataverse names are case-insensitive, so WarehouseAPI and warehouseapi are one source.
+        var key = (r.EnvironmentId.ToLowerInvariant(), r.Design.Instance.ToLowerInvariant());
         GenerationJob job;
         lock (_active)
         {
@@ -101,7 +102,11 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
         {
             job = Failed(job, ex.WritesDone, ex.Message);
         }
-        catch (Exception ex) when (ex is GenerationRefusedException or GenerationConfirmationException or DataverseException or DesignFormatException
+        catch (GenerationConfirmationException ex)
+        {
+            job = Failed(job, client?.Writes.ToList() ?? new List<string>(), ex.Message) with { NeedsConfirmation = true };
+        }
+        catch (Exception ex) when (ex is GenerationRefusedException or DataverseException or DesignFormatException
                                        or SchemaException or DescriptorException or ConfigurationException)
         {
             job = Failed(job, client?.Writes.ToList() ?? new List<string>(), ex.Message);
@@ -111,8 +116,12 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
             log.LogError(ex, "Generation {Instance} in {EnvironmentId} stopped unexpectedly", r.Design.Instance, r.EnvironmentId);
             job = Failed(job, client?.Writes.ToList() ?? new List<string>(), $"Generation stopped unexpectedly ({ex.GetType().Name}); the host log has the details.");
         }
+        // The final state is stored before the key is freed, so a job that a new Start can follow never reads as running.
         lock (_active)
+        {
+            _jobs[job.Id] = job;
             _active.Remove(key);
+        }
         await Report(job);
         _done[job.Id].TrySetResult(job);
     }
