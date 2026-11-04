@@ -33,6 +33,17 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     private readonly Dictionary<string, string> _privileges = new();
     private readonly Dictionary<string, Dictionary<string, int>> _rolePrivileges = new();
     private readonly List<(string Solution, int Type, string Id)> _components = new();
+    private readonly List<JsonObject> _webResources = new();
+    private readonly List<JsonObject> _variables = new();
+    private readonly List<JsonObject> _values = new();
+
+    public JsonObject WebResource(string name) => _webResources.Single(w => (string)w["name"]! == name);
+
+    public string? VariableValue(string schema)
+    {
+        var id = (string)_variables.Single(v => (string)v["schemaname"]! == schema)["environmentvariabledefinitionid"]!;
+        return (string?)_values.SingleOrDefault(v => (string)v["_environmentvariabledefinitionid_value"]! == id)?["value"];
+    }
 
     /// <summary>A hand-made public view on <paramref name="table"/> that uses <paramref name="column"/>.</summary>
     public string AddHandView(string table, string column, string name)
@@ -131,6 +142,34 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
                 var patched = _views.Values.Single(v => path == $"savedqueries({v["savedqueryid"]})");
                 patched["fetchxml"] = body!["fetchxml"]!.DeepClone();
                 patched["layoutxml"] = body["layoutxml"]!.DeepClone();
+                return Status(HttpStatusCode.NoContent);
+            case ("GET", _) when path.StartsWith("webresourceset?"):
+                return Value(_webResources.Where(w => (string)w["name"]! == name));
+            case ("POST", "webresourceset"):
+                body!["webresourceid"] = NewId();
+                _webResources.Add(body);
+                return Json(body.DeepClone(), HttpStatusCode.Created);
+            case ("PATCH", _) when path.StartsWith("webresourceset("):
+                var resource = _webResources.Single(w => path == $"webresourceset({w["webresourceid"]})");
+                foreach (var (k, v) in body!)
+                    resource[k] = v?.DeepClone();
+                return Status(HttpStatusCode.NoContent);
+            case ("GET", _) when path.StartsWith("environmentvariabledefinitions?"):
+                return Value(_variables.Where(v => (string)v["schemaname"]! == name));
+            case ("POST", "environmentvariabledefinitions"):
+                body!["environmentvariabledefinitionid"] = NewId();
+                _variables.Add(body);
+                return Json(body.DeepClone(), HttpStatusCode.Created);
+            case ("GET", _) when path.StartsWith("environmentvariablevalues?"):
+                var definition = path[(path.IndexOf("_environmentvariabledefinitionid_value eq ", StringComparison.Ordinal) + "_environmentvariabledefinitionid_value eq ".Length)..];
+                return Value(_values.Where(v => (string)v["_environmentvariabledefinitionid_value"]! == definition));
+            case ("POST", "environmentvariablevalues"):
+                body!["environmentvariablevalueid"] = NewId();
+                body["_environmentvariabledefinitionid_value"] = ((string)body["EnvironmentVariableDefinitionId@odata.bind"]!)["/environmentvariabledefinitions(".Length..^1];
+                _values.Add(body);
+                return Json(body.DeepClone(), HttpStatusCode.Created);
+            case ("PATCH", _) when path.StartsWith("environmentvariablevalues("):
+                _values.Single(v => path == $"environmentvariablevalues({v["environmentvariablevalueid"]})")["value"] = body!["value"]!.DeepClone();
                 return Status(HttpStatusCode.NoContent);
             case ("GET", _) when path.StartsWith("businessunits?"):
                 return Value(new[] { new JsonObject { ["businessunitid"] = BusinessUnitId } });

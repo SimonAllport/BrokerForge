@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\BrokerForge.Schema\BrokerForge.Schema.csproj" />
+    <ProjectReference Include="..\BrokerForge.Connections\BrokerForge.Connections.csproj" />
   </ItemGroup>
 </Project>

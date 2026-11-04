@@ -38,15 +38,16 @@ public static class Generator
             throw new GenerationConfirmationException(preview, $"These changes need confirming with fingerprint {preview.Changes.Fingerprint}. Nothing was written:{lines}");
 
         var step = "start";
+        int? version;
         try
         {
-            await ApplyAsync(client, schema, o, state, s => step = s, ct);
+            version = await ApplyAsync(client, schema, o, state, s => step = s, ct);
         }
         catch (DataverseException ex)
         {
             throw new GenerationFailedException(step, client.Writes.ToList(), ex);
         }
-        return new GenerationResult(client.Writes);
+        return new GenerationResult(client.Writes, version);
     }
 
     private static async Task<State> ReadAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, CancellationToken ct)
@@ -114,10 +115,12 @@ public static class Generator
                     described.Add(role);
             }
         }
+        if (o.Design != null)
+            described.Add($"publish the {o.Instance} design and its environment variables bf_{o.Instance}_BaseUrl and bf_{o.Instance}_Auth (the design version goes up only if it changed)");
         return new State(providerId, pluginTypeId, publisher, solution, dataSource, table, apis, parts, prefix, new GenerationPreview(plan, blocked, described));
     }
 
-    private static async Task ApplyAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, State s, Action<string> at, CancellationToken ct)
+    private static async Task<int?> ApplyAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, State s, Action<string> at, CancellationToken ct)
     {
         var changes = s.Preview.Changes.Changes;
         IEnumerable<string> Columns(params ChangeKind[] kinds) =>
@@ -233,6 +236,11 @@ public static class Generator
             else
                 await RoleGenerator.ApplyAsync(client, schema.Table, o.Instance, o.Messages, o.Solution, ct);
         }
+
+        if (o.Design == null)
+            return null;
+        at("design");
+        return await DesignPublisher.PublishAsync(client, o.Design.Design, s.Prefix, o.Solution, o.Design.BaseUrl, o.Design.AuthJson, ct);
     }
 
     public static Task PublishAsync(DataverseClient client, string table, CancellationToken ct) =>

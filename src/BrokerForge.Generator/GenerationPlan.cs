@@ -7,8 +7,12 @@ namespace BrokerForge.Generator;
 /// <param name="Publisher">Unique name of the publisher whose prefix the schema uses.</param>
 /// <param name="Messages">The table messages the descriptors bind (RetrieveMultiple, Retrieve, Create, Update, Delete); they decide the role's privileges.</param>
 /// <param name="ConfirmedFingerprint">The fingerprint of the change list the admin confirmed. Needed for any change other than an add.</param>
+/// <param name="Design">The connection design to publish with its parts, last (DesignPublisher); null to leave the design alone.</param>
 public sealed record GenerateOptions(string Instance, string Solution, string Publisher, string HostUrl, string Scope, bool DryRun,
-    IReadOnlySet<string>? Messages = null, string? ConfirmedFingerprint = null);
+    IReadOnlySet<string>? Messages = null, string? ConfirmedFingerprint = null, DesignPublish? Design = null);
+
+/// <summary>A design and this environment's own values for its two variables (null leaves a value as it is).</summary>
+public sealed record DesignPublish(BrokerForge.Connections.ConnectionDesign Design, string? BaseUrl, string? AuthJson);
 
 /// <summary>A change that can't be applied because something outside BrokerForge's generated parts depends on what it deletes.</summary>
 public sealed record Blocked(Change Change, string Dependent);
@@ -37,8 +41,8 @@ public sealed class GenerationFailedException(string step, IReadOnlyList<string>
     public IReadOnlyList<string> WritesDone { get; } = writesDone;
 }
 
-/// <summary><see cref="Writes"/> lists the write calls made, or planned in a dry run; empty when nothing changed.</summary>
-public sealed record GenerationResult(IReadOnlyList<string> Writes);
+/// <summary><see cref="Writes"/> lists the write calls made, or planned in a dry run; empty when nothing changed. <see cref="DesignVersion"/> is the design version now published, when a design was given.</summary>
+public sealed record GenerationResult(IReadOnlyList<string> Writes, int? DesignVersion = null);
 
 /// <summary>The schema and the environment disagree in a way the generator will not change. Nothing was written.</summary>
 public sealed class GenerationRefusedException(IReadOnlyList<string> differences)
