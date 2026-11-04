@@ -38,6 +38,8 @@ public class DrafterTests
             ["op.listOrders.filter.customer"] = "eq",
             ["op.listOrders.sort"] = "none",
             ["op.listOrders.sortStable"] = "no",
+            ["op.createOrder.value.accountId"] = "acc-1",
+            ["op.createOrder.error.422.message"] = "$.error.detail",
         },
         "inventory-openapi.yaml" => new Dictionary<string, string>
         {
@@ -46,6 +48,7 @@ public class DrafterTests
             ["op.listItems.filter.state"] = "eq",
             ["op.listItems.filter.name"] = "eq",
             ["op.listItems.sortStable"] = "yes",
+            ["op.createItem.error.422.message"] = "$.error.detail",
         },
         "unsupported.yaml" => new Dictionary<string, string>
         {
@@ -115,8 +118,7 @@ public class DrafterTests
         Assert.Equal("ext_reference", schema.PrimaryName);
 
         var create = Descriptor(r, "createOrder");
-        Assert.Equal(new InstanceBinding("accountId", BindingModifiers.None), create.Request.PathParams["accountId"]);
-        Assert.Contains(r.Notes, n => n.Contains("accountId") && n.Contains("instance"));
+        Assert.Equal(new StaticBinding("acc-1", false, BindingModifiers.None), create.Request.PathParams["accountId"]);
         Assert.Equal(new PathKey("$.id"), create.Response!.Key);
     }
 

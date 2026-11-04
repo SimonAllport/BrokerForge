@@ -433,6 +433,11 @@ public static class Drafter
             {
                 if (pagingParams.Contains(param))
                     continue;
+                if (Reserved(param))
+                {
+                    _notes.Add($"{name}: query parameter {param} is sent by the authentication; it is not declared.");
+                    continue;
+                }
                 if (SortParams.Contains(param))
                 {
                     Sort(name, param, fields, queryMap);
@@ -441,7 +446,10 @@ public static class Drafter
                 var column = FilterColumn(p, fields);
                 if (column == null)
                 {
-                    _notes.Add($"{name}: query parameter {param} matches no column; it is not declared as a filter.");
+                    if (p.Required)
+                        queryMap.Add(param, FixedValue(name, param, "Query parameter"));
+                    else
+                        _notes.Add($"{name}: query parameter {param} matches no column; it is not declared as a filter.");
                     continue;
                 }
                 var choices = new List<Choice> { new("none", "Not a filter"), new("eq", "Equals") };
@@ -471,7 +479,7 @@ public static class Drafter
             AddOptionSets(root, fields);
             if (anyIn)
                 root.Map("filters").Add("allowOr", true).Add("orStyle", "in");
-            root.Map("errors").Add("default", "Fail");
+            Errors(root, op, name);
             var stable = Ask(answers.Choice($"op.{name}.sortStable",
                 "With no sort, does the source return rows in the same order on every call? Paging relies on it.", YesNo));
             root.Add("sortStable", stable.Answer == "yes");
@@ -610,10 +618,11 @@ public static class Drafter
             var root = Header(name, "Retrieve", _table);
             var request = root.Map("request").Add("method", "GET").Add("path", path);
             CheckPathParams(path, parameters, request, r.IdParam, name);
+            FixedQuery(parameters, request, name);
             var response = root.Map("response").Add("rows", "$").Add("key", _keyPath ?? "$");
             AddMap(response, fields);
             AddOptionSets(root, fields);
-            Errors(root, op);
+            Errors(root, op, name);
             return root.ToString();
         }
 
@@ -627,6 +636,7 @@ public static class Drafter
             var root = Header(name, binds, _table);
             var request = root.Map("request").Add("method", MethodOf(path, op)).Add("path", path);
             CheckPathParams(path, parameters, request, binds == "Update" ? r.IdParam : null, name);
+            FixedQuery(parameters, request, name);
 
             var bound = new List<Field>();
             var template = new YamlMap();
@@ -681,7 +691,7 @@ public static class Drafter
                     response.Add("unmapped", unmapped);
             }
             AddOptionSets(root, bound);
-            Errors(root, op);
+            Errors(root, op, name);
             return root.ToString();
         }
 
@@ -693,7 +703,8 @@ public static class Drafter
             var root = Header(name, "Delete", _table);
             var request = root.Map("request").Add("method", "DELETE").Add("path", path);
             CheckPathParams(path, parameters, request, r.IdParam, name);
-            Errors(root, op);
+            FixedQuery(parameters, request, name);
+            Errors(root, op, name);
             return root.ToString();
         }
 
@@ -723,6 +734,9 @@ public static class Drafter
                     case ParameterLocation.Path:
                         Input(p.Name, p.Schema, true, $"path parameter {p.Name}");
                         pathParams.Map(p.Name).Add("param", Heuristics.ParamName(p.Name, "path parameter"));
+                        break;
+                    case ParameterLocation.Query when Reserved(p.Name):
+                        _notes.Add($"{name}: query parameter {p.Name} is sent by the authentication; it is not declared.");
                         break;
                     case ParameterLocation.Query:
                         Input(p.Name, p.Schema, p.Required, $"query parameter {p.Name}");
@@ -776,7 +790,7 @@ public static class Drafter
             if (outputs.Count == 0)
                 throw new UnsupportedShapeException("the response has no flat properties to return as outputs");
             root.Map("response").Add("outputs", outputs);
-            Errors(root, op);
+            Errors(root, op, name);
 
             var declaredApi = new YamlMap().Add("displayName", Heuristics.Humanise(name));
             _lastApi = (api, declaredApi);
@@ -787,6 +801,17 @@ public static class Drafter
         }
 
         /// <summary>Path parameters: the record id where there is one, otherwise service instance config named like the parameter.</summary>
+        private bool Reserved(string param) => (o.ReservedNames ?? Array.Empty<string>()).Contains(param, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>A value the source needs that no column or record supplies: the admin gives it, and it is sent as a static value.</summary>
+        private YamlMap FixedValue(string name, string param, string where)
+        {
+            var q = Ask(answers.Text($"op.{name}.value.{param}", $"{where} `{param}` is not a column or the record's key. What value should BrokerForge send? It is the same in every environment.",
+                true, null, v => v.Length <= 200 ? null : "must be at most 200 characters"));
+            return new YamlMap().Add("static", q.Answer ?? "");
+        }
+
+        /// <summary>Path parameters: the record id where there is one, otherwise a fixed value the admin gives.</summary>
         private void CheckPathParams(string path, List<OpenApiParameter> parameters, YamlMap request, string? idParam, string name)
         {
             var map = new YamlMap();
@@ -797,20 +822,85 @@ public static class Drafter
                     map.Map(p.Name).Add("id", true);
                     continue;
                 }
-                map.Map(p.Name).Add("instance", p.Name);
-                _notes.Add($"{name}: path parameter {p.Name} is bound to instance config `{p.Name}`; set it in the host settings for {o.ServiceInstance}.");
+                map.Add(p.Name, FixedValue(name, p.Name, "Path parameter"));
             }
             if (map.Count > 0)
                 request.Add("pathParams", map);
         }
 
-        private static void Errors(YamlMap root, OpenApiOperation op)
+        /// <summary>Query parameters of a retrieve, write or delete: required ones get a fixed value, optional ones are not sent.</summary>
+        private void FixedQuery(List<OpenApiParameter> parameters, YamlMap request, string name)
+        {
+            var map = new YamlMap();
+            foreach (var p in parameters.Where(p => p.In == ParameterLocation.Query))
+            {
+                if (Reserved(p.Name))
+                    _notes.Add($"{name}: query parameter {p.Name} is sent by the authentication; it is not declared.");
+                else if (p.Required)
+                    map.Add(p.Name, FixedValue(name, p.Name, "Query parameter"));
+                else
+                    _notes.Add($"{name}: optional query parameter {p.Name} is not sent.");
+            }
+            if (map.Count > 0)
+                request.Add("query", map);
+        }
+
+        private static readonly (string Status, string Kind)[] FixedErrors = { ("403", "Forbidden"), ("404", "NotFound"), ("409", "Conflict"), ("422", "Validation") };
+
+        private static readonly Choice[] ErrorChoices =
+        {
+            new("NotFound", "The record was not found"),
+            new("Conflict", "A duplicate or a conflicting change"),
+            new("Forbidden", "The caller may not do this"),
+            new("Validation", "The input was refused (the message is shown to the user)"),
+            new("Fail", "A failure of the source"),
+        };
+
+        /// <summary>
+        /// Error mappings: 403, 404, 409 and 422 by their HTTP meaning; every other documented status is a question. A status
+        /// that maps to Validation asks where the message is: the string paths of its schema, or a JSONPath when it has none.
+        /// </summary>
+        private void Errors(YamlMap root, OpenApiOperation op, string name)
         {
             var errors = root.Map("errors");
-            foreach (var (status, kind) in new[] { ("404", "NotFound"), ("409", "Conflict"), ("403", "Forbidden"), ("422", "Validation") })
-                if (op.Responses.ContainsKey(status))
+            foreach (var (status, response) in op.Responses.Where(r => r.Key != "default" && !r.Key.StartsWith('2')).OrderBy(r => r.Key, StringComparer.Ordinal))
+            {
+                var kind = FixedErrors.FirstOrDefault(f => f.Status == status).Kind
+                    ?? Ask(answers.Choice($"op.{name}.error.{status}", $"When the source answers {status} ({response.Description}), what happened?", ErrorChoices)).Answer;
+                if (kind == null)
+                    continue;
+                if (kind != "Validation")
+                {
                     errors.Add(status, kind);
+                    continue;
+                }
+                var paths = StringPaths(JsonSchema(response.Content));
+                var message = paths.Count > 0
+                    ? Ask(answers.Choice($"op.{name}.error.{status}.message", $"Which field of the {status} response holds the message to show the user?",
+                        paths.Select(x => new Choice(x, x)).Append(new Choice("none", "None: show no message")).ToList()))
+                    : Ask(answers.Text($"op.{name}.error.{status}.message",
+                        $"The {status} response has no documented body. If it carries a message, which JSON path holds it (for example $.error.detail)? Leave empty for none.",
+                        false, null, v => System.Text.RegularExpressions.Regex.IsMatch(v, @"^\$(\.[A-Za-z_][A-Za-z0-9_]*){1,4}$") ? null : "must be a JSON path such as $.error.detail"));
+                if (message.Answer is null or "none")
+                    errors.Add(status, "Validation");
+                else
+                    errors.Map(status).Add("exception", "Validation").Add("message", message.Answer);
+            }
             errors.Add("default", "Fail");
+        }
+
+        /// <summary>JSONPaths of the string properties of an error body, up to two levels deep.</summary>
+        private static List<string> StringPaths(OpenApiSchema? s)
+        {
+            var paths = new List<string>();
+            foreach (var (name, child) in s?.Properties ?? new Dictionary<string, OpenApiSchema>())
+            {
+                if (child.Type == "string")
+                    paths.Add("$" + Heuristics.Step(name));
+                else if (child.Type == "object")
+                    paths.AddRange(child.Properties.Where(c => c.Value.Type == "string").Select(c => "$" + Heuristics.Step(name) + Heuristics.Step(c.Key)));
+            }
+            return paths;
         }
 
         private static OpenApiSchema? SuccessSchema(OpenApiOperation op) =>
