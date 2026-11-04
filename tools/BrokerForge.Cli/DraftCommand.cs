@@ -23,7 +23,7 @@ public static class DraftCommand
             options[args[i]] = args[i + 1];
         if (!options.TryGetValue("--instance", out var instance) || !options.TryGetValue("--prefix", out var prefix)
             || !options.TryGetValue("--table", out var table) || !options.TryGetValue("--out", out var outDir)
-            || options.Keys.Except(new[] { "--instance", "--prefix", "--table", "--out", "--root" }).Any())
+            || options.Keys.Except(new[] { "--instance", "--prefix", "--table", "--out", "--root", "--answers" }).Any())
         {
             output.WriteLine(Usage);
             return 2;
@@ -35,7 +35,10 @@ public static class DraftCommand
         }
         var root = Path.GetFullPath(options.GetValueOrDefault("--root") ?? ".");
 
-        var review = DraftService.Review(File.ReadAllText(args[0]), new DraftOptions(instance, prefix), new Dictionary<string, string>());
+        var answers = options.TryGetValue("--answers", out var answersFile)
+            ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(answersFile)) ?? new()
+            : new Dictionary<string, string>();
+        var review = DraftService.Review(File.ReadAllText(args[0]), new DraftOptions(instance, prefix), answers);
         foreach (var problem in review.Problems)
             output.WriteLine($"{args[0]}: {problem}");
         if (review.Problems.Count > 0)

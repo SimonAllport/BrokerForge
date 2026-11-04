@@ -7,7 +7,6 @@ namespace BrokerForge.SwaggerForge;
 /// <summary>Naming and type rules. Each is a fixed mapping from the OpenAPI document, never a guess about the source.</summary>
 internal static class Heuristics
 {
-    public const int DefaultPageSizeMax = 100;
     public const int FirstOptionValue = 100000000;
 
     /// <summary>placedAt → "Placed at"; on_hand → "On hand".</summary>

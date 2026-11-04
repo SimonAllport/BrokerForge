@@ -404,6 +404,18 @@ public static class Drafter
             return root;
         }
 
+        private static readonly string[] SortParams = { "sort", "orderBy", "order_by" };
+
+        private static readonly Choice[] SortChoices =
+        {
+            new("none", "It cannot sort, or BrokerForge should not use it"),
+            new("asc", "Ascending only"),
+            new("-{field}", "A leading minus sorts descending (-name)"),
+            new("{field} desc", "`desc` after the field sorts descending (name desc)"),
+        };
+
+        private static readonly Choice[] YesNo = { new("yes", "Yes"), new("no", "No") };
+
         private string List(string name, string path, OpenApiOperation op, List<OpenApiParameter> parameters)
         {
             var responseSchema = SuccessSchema(op) ?? throw new UnsupportedShapeException("no response schema for the list");
@@ -413,16 +425,17 @@ public static class Drafter
 
             var root = Header(name, "RetrieveMultiple", _table);
             var request = root.Map("request").Add("method", "GET").Add("path", path);
-            var paging = Paging(query, responseSchema, container, out var pagingParams);
+            var paging = Paging(name, op, query, responseSchema, container, out var pagingParams);
 
             var queryMap = new YamlMap();
+            var anyIn = false;
             foreach (var (param, p) in query)
             {
                 if (pagingParams.Contains(param))
                     continue;
-                if (param == "sort")
+                if (SortParams.Contains(param))
                 {
-                    _notes.Add($"{name}: query parameter sort is not drafted; declare a sort binding if the source's sort fields are known.");
+                    Sort(name, param, fields, queryMap);
                     continue;
                 }
                 var column = FilterColumn(p, fields);
@@ -431,7 +444,22 @@ public static class Drafter
                     _notes.Add($"{name}: query parameter {param} matches no column; it is not declared as a filter.");
                     continue;
                 }
-                queryMap.Map(param).Add("filter", column.Column).Add("ops", new[] { "eq" });
+                var choices = new List<Choice> { new("none", "Not a filter"), new("eq", "Equals") };
+                if (column.Type is "string" or "optionset")
+                    choices.AddRange(new[] { new Choice("in", "One of several, comma-separated"), new Choice("eq,in", "Equals, or one of several, comma-separated") });
+                if (column.Type == "string")
+                    choices.Add(new Choice("like", "Begins with"));
+                var q = Ask(answers.Choice($"op.{name}.filter.{param}",
+                    $"Query parameter `{param}` looks like a filter on {column.DisplayName}. What does the source really do with it? Anything not declared fails loudly if someone filters on it.", choices));
+                if (q.Answer is null or "none")
+                    continue;
+                var ops = q.Answer.Split(',');
+                var binding = queryMap.Map(param).Add("filter", column.Column).Add("ops", ops);
+                if (ops.Contains("in"))
+                {
+                    binding.Add("format", "csv");
+                    anyIn = true;
+                }
             }
             if (queryMap.Count > 0)
                 request.Add("query", queryMap);
@@ -441,10 +469,42 @@ public static class Drafter
             var response = root.Map("response").Add("rows", rowsPath).Add("key", _keyPath ?? "$");
             AddMap(response, fields);
             AddOptionSets(root, fields);
+            if (anyIn)
+                root.Map("filters").Add("allowOr", true).Add("orStyle", "in");
             root.Map("errors").Add("default", "Fail");
-            root.Add("sortStable", false);
-            _notes.Add($"{name}: sortStable drafted as false; set true if the source's default order is stable.");
+            var stable = Ask(answers.Choice($"op.{name}.sortStable",
+                "With no sort, does the source return rows in the same order on every call? Paging relies on it.", YesNo));
+            root.Add("sortStable", stable.Answer == "yes");
             return root.ToString();
+        }
+
+        private Question Ask(Question q)
+        {
+            _q.Add(q);
+            return q;
+        }
+
+        private void Sort(string name, string param, List<Field> fields, YamlMap queryMap)
+        {
+            var q = Ask(answers.Choice($"op.{name}.sort", $"Query parameter `{param}` looks like a sort. How does the source sort?", SortChoices));
+            if (q.Answer is null or "none")
+                return;
+            var sortFields = new YamlMap();
+            foreach (var f in fields.Where(f => f.Type != "memo"))
+            {
+                var field = Ask(answers.Text($"op.{name}.sort.{f.SourcePath}", $"The source's sort field for {f.DisplayName} (leave empty if it cannot sort by it)", false, null,
+                    v => v.Length <= 100 && !v.Any(char.IsWhiteSpace) ? null : "must be 1 to 100 characters with no spaces"));
+                if (field.Answer != null)
+                    sortFields.Add(f.Column, field.Answer);
+            }
+            if (sortFields.Count == 0)
+            {
+                _q[_q.IndexOf(q)] = q with { Answer = null, Error = "name at least one column the source can sort by, or choose that it cannot sort" };
+                return;
+            }
+            var binding = queryMap.Map(param).Add("sort", sortFields);
+            if (q.Answer != "asc")
+                binding.Add("descFormat", q.Answer);
         }
 
         private static (string Path, OpenApiSchema Item, string? Container) Rows(OpenApiSchema s)
@@ -457,15 +517,23 @@ public static class Drafter
             throw new UnsupportedShapeException("the list response is not an array or an object with exactly one array property");
         }
 
-        private YamlMap Paging(Dictionary<string, OpenApiParameter> query, OpenApiSchema response, string? container, out HashSet<string> used)
+        /// <summary>
+        /// Paging is always a question: the choices are the strategies this list's shape supports, from its parameters and
+        /// response, plus "it doesn't page". <paramref name="used"/> is every parameter any candidate pages with, so those
+        /// are never asked about as filters whichever strategy is chosen.
+        /// </summary>
+        private YamlMap Paging(string name, OpenApiOperation op, Dictionary<string, OpenApiParameter> query, OpenApiSchema response, string? container, out HashSet<string> used)
         {
-            var paging = new YamlMap();
+            used = new HashSet<string>(StringComparer.Ordinal);
             YamlMap PageSize(string param)
             {
                 var max = query[param].Schema?.Maximum is { } m ? (int)m : (int?)null;
                 if (max == null)
-                    _notes.Add($"Paging parameter {param} declares no maximum; drafted as {Heuristics.DefaultPageSizeMax}.");
-                return new YamlMap().Add("param", param).Add("max", max ?? Heuristics.DefaultPageSizeMax);
+                {
+                    var q = Ask(answers.Number($"op.{name}.pageSizeMax", $"Paging parameter `{param}` declares no maximum. What is the largest page the source returns?", 1, 5000));
+                    max = q.Answer == null ? 1 : int.Parse(q.Answer, System.Globalization.CultureInfo.InvariantCulture);
+                }
+                return new YamlMap().Add("param", param).Add("max", max.Value);
             }
 
             var cursorField = response.Properties?.Where(p => p.Key != container)
@@ -474,29 +542,48 @@ public static class Drafter
                     : new[] { (Path: "$" + Heuristics.Step(p.Key), Name: p.Key, Schema: p.Value) })
                 .FirstOrDefault(f => f.Schema.Type == "string" && f.Name.Contains("cursor", StringComparison.OrdinalIgnoreCase));
             var total = response.Properties?.TryGetValue("total", out var t) == true && t.Type == "integer";
-
-            if (query.ContainsKey("limit") && query.ContainsKey("cursor") && cursorField?.Path != null)
-            {
-                used = new HashSet<string> { "limit", "cursor" };
-                return paging.Add("strategy", "cursor").Add("pageSize", PageSize("limit"))
-                    .Add("token", new YamlMap().Add("param", "cursor").Add("next", cursorField.Value.Path));
-            }
-            if (query.ContainsKey("limit") && query.ContainsKey("offset"))
-            {
-                used = new HashSet<string> { "limit", "offset" };
-                var offset = new YamlMap().Add("param", "offset");
-                if (total)
-                    offset.Add("total", "$.total");
-                return paging.Add("strategy", "offset").Add("pageSize", PageSize("limit")).Add("offset", offset);
-            }
             var size = new[] { "pageSize", "size" }.FirstOrDefault(query.ContainsKey);
+            var linkSize = new[] { "limit", "pageSize", "size" }.FirstOrDefault(query.ContainsKey);
+            var link = op.Responses.Where(r => r.Key is "200").Any(r => r.Value.Headers.Keys.Any(h => h.Equals("Link", StringComparison.OrdinalIgnoreCase)));
+
+            var candidates = new List<(Choice Choice, string[] Params, Func<YamlMap> Build)>();
+            if (query.ContainsKey("limit") && query.ContainsKey("cursor") && cursorField?.Path != null)
+                candidates.Add((new Choice("cursor", $"`limit` and `cursor` query parameters; the next cursor is at {cursorField.Value.Path}"), new[] { "limit", "cursor" },
+                    () => new YamlMap().Add("strategy", "cursor").Add("pageSize", PageSize("limit")).Add("token", new YamlMap().Add("param", "cursor").Add("next", cursorField.Value.Path))));
+            if (query.ContainsKey("limit") && query.ContainsKey("offset"))
+                candidates.Add((new Choice("offset", "`limit` and `offset` query parameters" + (total ? "; the total is at $.total" : "")), new[] { "limit", "offset" }, () =>
+                {
+                    var offset = new YamlMap().Add("param", "offset");
+                    if (total)
+                        offset.Add("total", "$.total");
+                    return new YamlMap().Add("strategy", "offset").Add("pageSize", PageSize("limit")).Add("offset", offset);
+                }));
             if (query.ContainsKey("page") && size != null)
-            {
-                used = new HashSet<string> { "page", size };
-                var @base = query["page"].Schema?.Minimum == 0 ? 0 : 1;
-                return paging.Add("strategy", "pageNumber").Add("pageSize", PageSize(size)).Add("page", new YamlMap().Add("param", "page").Add("base", @base));
-            }
-            throw new UnsupportedShapeException("paging not identifiable: expected limit+cursor with a cursor field in the response, limit+offset, or page+pageSize");
+                candidates.Add((new Choice("pageNumber", $"`page` and `{size}` query parameters"), new[] { "page", size }, () =>
+                {
+                    var @base = query["page"].Schema?.Minimum is { } min ? (int)min : (int?)null;
+                    if (@base == null)
+                    {
+                        var q = Ask(answers.Choice($"op.{name}.pageBase", "Is the first page number 0 or 1?", new[] { new Choice("0", "0"), new Choice("1", "1") }));
+                        @base = q.Answer == null ? 1 : int.Parse(q.Answer, System.Globalization.CultureInfo.InvariantCulture);
+                    }
+                    return new YamlMap().Add("strategy", "pageNumber").Add("pageSize", PageSize(size)).Add("page", new YamlMap().Add("param", "page").Add("base", @base.Value));
+                }));
+            if (link)
+                candidates.Add((new Choice("link", "A `Link` response header with rel=\"next\""), linkSize == null ? Array.Empty<string>() : new[] { linkSize }, () =>
+                {
+                    var paging = new YamlMap().Add("strategy", "link");
+                    if (linkSize != null)
+                        paging.Add("pageSize", PageSize(linkSize));
+                    return paging;
+                }));
+            foreach (var c in candidates)
+                used.UnionWith(c.Params);
+
+            var choices = candidates.Select(c => c.Choice).Append(new Choice("none", "It doesn't page: one call returns every row")).ToList();
+            var answer = Ask(answers.Choice($"op.{name}.paging", "How does this endpoint page its results?", choices));
+            var chosen = candidates.FirstOrDefault(c => c.Choice.Value == answer.Answer);
+            return chosen.Build != null ? chosen.Build() : new YamlMap().Add("strategy", "none");
         }
 
         /// <summary>The column a query parameter filters: same name as a top-level property, the parent of exactly one nested column, or the same enum values.</summary>

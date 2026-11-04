@@ -33,10 +33,25 @@ public class DrafterTests
         {
             ["column.$.totals.gross.precision"] = "2",
             ["table.primaryName"] = "$.reference",
+            ["op.listOrders.paging"] = "cursor",
+            ["op.listOrders.filter.status"] = "eq",
+            ["op.listOrders.filter.customer"] = "eq",
+            ["op.listOrders.sort"] = "none",
+            ["op.listOrders.sortStable"] = "no",
         },
         "inventory-openapi.yaml" => new Dictionary<string, string>
         {
             ["column.$.price.precision"] = "2",
+            ["op.listItems.paging"] = "offset",
+            ["op.listItems.filter.state"] = "eq",
+            ["op.listItems.filter.name"] = "eq",
+            ["op.listItems.sortStable"] = "yes",
+        },
+        "unsupported.yaml" => new Dictionary<string, string>
+        {
+            ["op.listWidgets.paging"] = "offset",
+            ["op.listWidgets.filter.name"] = "eq",
+            ["op.listWidgets.sortStable"] = "no",
         },
         _ => new Dictionary<string, string>(),
     };
@@ -135,17 +150,6 @@ public class DrafterTests
         Assert.Equal(new OffsetSpec("offset", "$.total"), paging.Offset);
         Assert.Equal(new PageSizeSpec("limit", 50), paging.PageSize);
         Assert.Equal("$.items[*]", Descriptor(r, "listWidgets").Response!.Rows);
-    }
-
-    [Fact]
-    public void Draft_PagingUnidentifiable_ListSkippedWithReason()
-    {
-        var r = Orders(t => t.Replace("        - { name: cursor, in: query, schema: { type: string } }\n", ""));
-        Assert.DoesNotContain("listOrders", r.Descriptors.Keys);
-        var skipped = Assert.Single(r.Skipped);
-        Assert.Equal(("GET", "/v2/orders"), (skipped.Method, skipped.Path));
-        Assert.Contains("paging not identifiable", skipped.Reason);
-        Assert.Contains("getOrder", r.Descriptors.Keys);
     }
 
     [Fact]

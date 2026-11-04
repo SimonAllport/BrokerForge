@@ -4,6 +4,13 @@ namespace SwaggerForge.Tests;
 
 public class CliDraftTests
 {
+    private static string WidgetAnswers(DirectoryInfo root)
+    {
+        var file = Path.Combine(root.FullName, "widgets-answers.json");
+        File.WriteAllText(file, System.Text.Json.JsonSerializer.Serialize(DrafterTests.AnswersFor("unsupported.yaml")));
+        return file;
+    }
+
     [Fact]
     public void Cli_Draft_WritesSchemaDescriptorsAndReport()
     {
@@ -11,7 +18,7 @@ public class CliDraftTests
         try
         {
             var output = new StringWriter();
-            var code = DraftCommand.Run(new[] { DrafterTests.Fixture("unsupported.yaml"), "--instance", "WidgetsAPI", "--prefix", "ext", "--table", "ext_widget", "--out", "out", "--root", root.FullName }, output);
+            var code = DraftCommand.Run(new[] { DrafterTests.Fixture("unsupported.yaml"), "--instance", "WidgetsAPI", "--prefix", "ext", "--table", "ext_widget", "--out", "out", "--root", root.FullName, "--answers", WidgetAnswers(root) }, output);
             Assert.True(code == 0, output.ToString());
             Assert.True(File.Exists(Path.Combine(root.FullName, "schemas", "WidgetsAPI.yaml")));
             Assert.True(File.Exists(Path.Combine(root.FullName, "descriptors", "WidgetsAPI", "listWidgets.yaml")));
@@ -37,7 +44,7 @@ public class CliDraftTests
             Directory.CreateDirectory(Path.Combine(root.FullName, "schemas"));
             File.WriteAllText(Path.Combine(root.FullName, "schemas", "WidgetsAPI.yaml"), "keep me");
             var output = new StringWriter();
-            var code = DraftCommand.Run(new[] { DrafterTests.Fixture("unsupported.yaml"), "--instance", "WidgetsAPI", "--prefix", "ext", "--table", "ext_widget", "--out", "out", "--root", root.FullName }, output);
+            var code = DraftCommand.Run(new[] { DrafterTests.Fixture("unsupported.yaml"), "--instance", "WidgetsAPI", "--prefix", "ext", "--table", "ext_widget", "--out", "out", "--root", root.FullName, "--answers", WidgetAnswers(root) }, output);
             Assert.Equal(1, code);
             Assert.Contains("WidgetsAPI.yaml", output.ToString());
             Assert.Equal("keep me", File.ReadAllText(Path.Combine(root.FullName, "schemas", "WidgetsAPI.yaml")));
