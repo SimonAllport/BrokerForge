@@ -28,10 +28,12 @@ public static class FormsAndViews
         ["optionset"] = "{3EF39988-22BB-4f0b-BBBE-64B5A3748AEE}",
     };
 
-    /// <summary>The main form (type 2, the oldest if there are several) and the default public view; null while the table has neither.</summary>
+    /// <summary>The main form (type 2; the one called Information if there are several) and the default public view; null while the table has neither.</summary>
     public static async Task<GeneratedParts?> ReadAsync(DataverseClient client, string table, CancellationToken ct)
     {
-        var form = (await client.ListAsync($"systemforms?$select=formid,formxml&$filter=objecttypecode eq {DataverseClient.Literal(table)} and type eq 2&$orderby=createdon asc", ct)).FirstOrDefault();
+        // systemform has no createdon to order by (live): the platform's own main form is called Information.
+        var forms = await client.ListAsync($"systemforms?$select=formid,formxml,name&$filter=objecttypecode eq {DataverseClient.Literal(table)} and type eq 2", ct);
+        var form = forms.FirstOrDefault(f => (string?)f["name"] == "Information") ?? forms.FirstOrDefault();
         var view = (await client.ListAsync($"savedqueries?$select=savedqueryid,fetchxml,layoutxml&$filter=returnedtypecode eq {DataverseClient.Literal(table)} and querytype eq 0 and isdefault eq true", ct)).FirstOrDefault();
         if (form == null || view == null)
             return null;

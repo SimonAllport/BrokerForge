@@ -34,7 +34,7 @@ public static class Dependencies
             80 => ("appmodules", "name", "app"),
             _ => (null, null, $"component of type {type}"),
         };
-        var name = set == null ? null : (string?)(await client.GetAsync($"{set}({id})?$select={field}", ct))?[field];
+        var name = set == null ? null : (string?)(await client.GetAsync($"{set}({id})?$select={field}", ct))?[field!];
         return name == null ? $"{what} ({id})" : $"{what} \"{name}\" ({id})";
     }
 }
