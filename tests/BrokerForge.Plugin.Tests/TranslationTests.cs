@@ -141,7 +141,7 @@ public class TranslationTests
         { 3.25d, "3.25" },
         { new OptionSetValue(100000002), "100000002" },
         { new Money(9.99m), "9.99" },
-        { Guid.Parse("8b875594-0ed5-f111-84ea-002248db5cf2"), "8b875594-0ed5-f111-84ea-002248db5cf2" },
+        { Guid.Parse("8b875594-0000-0000-0000-000000000001"), "8b875594-0000-0000-0000-000000000001" },
         { true, "true" },
         { 42L, "42" },
     };

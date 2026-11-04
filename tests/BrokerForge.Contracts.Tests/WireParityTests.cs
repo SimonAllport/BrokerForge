@@ -35,7 +35,7 @@ public class WireParityTests
     private static CanonicalRequest FullRequest() => new()
     {
         CorrelationId = "8c1f0000-0000-0000-0000-000000000001",
-        EnvironmentId = "a4c0d8aa-c6c6-e9a3-bc54-8725982bb449",
+        EnvironmentId = "a4c0d8aa-0000-0000-0000-000000000001",
         ServiceInstance = "OrdersAPI",
         Table = "ext_order",
         Message = Messages.RetrieveMultiple,

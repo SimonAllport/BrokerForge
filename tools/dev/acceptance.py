@@ -6,7 +6,8 @@ error assertions also print the BrokerForge correlation ID from the message.
 """
 import json, os, re, statistics, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 
-ORG = os.environ.get("DV_ORG", "https://orgeb8d0d95.crm17.dynamics.com")
+ORG = os.environ.get("DV_ORG") or next((l.split("=", 1)[1].strip().strip('"') for l in open(os.path.expanduser("~/.brokerforge/spike-ids.env"))
+                                   if l.startswith("DV_ORG=")), None) or sys.exit("Set DV_ORG, or add DV_ORG=<org url> to ~/.brokerforge/spike-ids.env")
 API = ORG + "/api/data/v9.2/"
 TOKEN = subprocess.check_output(["az", "account", "get-access-token", "--resource", ORG, "--query", "accessToken", "-o", "tsv"], text=True).strip()
 TIMINGS = {}

@@ -18,7 +18,7 @@ source "$IDS"
 devid() { [ -f "$OUT" ] && sed -n "s/^$1=//p" "$OUT" | tail -1 || true; }
 CONNECT_APP="$(devid CONNECT_APP)" TICKETS_API_APP="$(devid TICKETS_API_APP)"
 TICKETS_ALICE_OID="$(devid TICKETS_ALICE_OID)" TICKETS_BOB_OID="$(devid TICKETS_BOB_OID)"
-# The dev environment's org URL (DV_ORG, defaulted in dv.sh): the host reads its connection designs there.
+# The dev environment's org URL (DV_ORG, read by dv.sh from ~/.brokerforge/spike-ids.env): the host reads its connection designs there.
 # shellcheck disable=SC1091
 source "$ROOT/tools/spike/dv.sh"
 

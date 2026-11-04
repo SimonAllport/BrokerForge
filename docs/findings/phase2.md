@@ -1,6 +1,6 @@
 # Phase 2 findings: tooling
 
-Live results against the dev environment (`rg-brokerforge-dev`, org `orgeb8d0d95`), 1 November 2026.
+Live results against the dev environment (`rg-brokerforge-dev`, org in `~/.brokerforge/spike-ids.env`), 1 November 2026.
 Plan: `docs/superpowers/plans/2026-10-31-phase2-tooling.md`. Decisions: HLD D-16 to D-24.
 
 ## 1. The generator adopts the phase 1 `ext_order` table unchanged

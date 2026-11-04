@@ -12,7 +12,7 @@ namespace BrokerForge.Generator.Tests;
 internal sealed partial class FakeDataverse : HttpMessageHandler
 {
     public const string Org = "https://org.example.crm.dynamics.com";
-    public const string ProviderId = "4c75d224-30d5-f111-84ea-002248db5cf2";
+    public const string ProviderId = "4c75d224-0000-0000-0000-000000000001";
     public const string CustomApiPluginTypeId = "7d000000-0000-0000-0000-0000000000a1";
 
     public sealed record Recorded(string Method, string Path, string? Body, string? Solution, string? Authorization);

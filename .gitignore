@@ -11,3 +11,4 @@ appsettings.*.local.json
 
 # brainstorm mockups
 .superpowers/brainstorm/
+.DS_Store

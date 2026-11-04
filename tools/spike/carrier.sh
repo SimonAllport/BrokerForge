@@ -5,7 +5,7 @@
 #   tools/spike/carrier.sh            run every check, then delete what it made
 #   KEEP=1 tools/spike/carrier.sh     leave the scratch solutions and components in place
 #
-# Writes to the dev environment named by DV_ORG (default from tools/spike/dv.sh), as the
+# Writes to the dev environment named by DV_ORG (from ~/.brokerforge/spike-ids.env, through tools/spike/dv.sh), as the
 # signed-in az CLI user. Creates solution BrokerForgeCarrierSpike (publisher brokerforgeext)
 # and, for the import check, BrokerForgeCarrierSpike2. Prints no org URL and no token.
 set -euo pipefail

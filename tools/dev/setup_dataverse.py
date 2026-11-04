@@ -14,7 +14,8 @@ Usage: python3 setup_dataverse.py <signed plug-in dll>
 """
 import base64, json, os, subprocess, sys, urllib.error, urllib.parse, urllib.request
 
-ORG = os.environ.get("DV_ORG", "https://orgeb8d0d95.crm17.dynamics.com")
+ORG = os.environ.get("DV_ORG") or next((l.split("=", 1)[1].strip().strip('"') for l in open(os.path.expanduser("~/.brokerforge/spike-ids.env"))
+                                   if l.startswith("DV_ORG=")), None) or sys.exit("Set DV_ORG, or add DV_ORG=<org url> to ~/.brokerforge/spike-ids.env")
 API = ORG + "/api/data/v9.2/"
 DATA_SOURCE_PROVIDER = "b2112a7e-b26c-42f7-9b63-9a809a9d716f"
 ASSEMBLY_VERSION = "0.1.0.0"

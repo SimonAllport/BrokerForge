@@ -2,7 +2,9 @@
 # Phase 0 Web API helper (bash and zsh). Source it, then: dv GET 'publishers?$select=uniquename'
 # Token comes from the signed-in az CLI user; it is never printed.
 # dvjson extracts one field from a dv response body: dv POST ... | dvjson publisherid
-DV_ORG="${DV_ORG:-https://orgeb8d0d95.crm17.dynamics.com}"
+# The org URL is not in this public repo: DV_ORG from the environment, else from ~/.brokerforge/spike-ids.env.
+[ -z "${DV_ORG:-}" ] && [ -f "$HOME/.brokerforge/spike-ids.env" ] && DV_ORG="$(sed -n 's/^DV_ORG=//p' "$HOME/.brokerforge/spike-ids.env" | tr -d '"')"
+: "${DV_ORG:?Set DV_ORG, or add DV_ORG=<org url> to ~/.brokerforge/spike-ids.env}"
 DV_SOLUTION="${DV_SOLUTION-BrokerForgeSpike}"
 
 dv() {

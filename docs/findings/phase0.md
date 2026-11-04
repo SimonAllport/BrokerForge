@@ -4,8 +4,8 @@ Verified 31 October 2026 against a real environment. Everything below was observ
 
 | Item | Value |
 | --- | --- |
-| Environment | `dev-eu-8831fe17`, `https://orgeb8d0d95.crm17.dynamics.com`, geo CHE, version 9.2.26103.145 |
-| Environment ID | `a4c0d8aa-c6c6-e9a3-bc54-8725982bb449` |
+| Environment | `dev-eu-<id>`, `https://<org>.crm17.dynamics.com`, geo CHE, version 9.2.26103.145 |
+| Environment ID | `<environment id>` (in `~/.brokerforge/spike-ids.env`) |
 | SDK | `Microsoft.CrmSdk.CoreAssemblies` 9.0.2.60, plug-in targets `net462` |
 | Stub host | Azure Container Apps, Switzerland North, `rg-brokerforge-spike` |
 | Solution | `BrokerForgeSpike`, publisher `brokerforge` (prefix `bf`) |
@@ -86,7 +86,7 @@ var dataSource = retriever.RetrieveEntityDataSource();
 Observed return value, from the plug-in trace log:
 
 ```
-dataSource logicalName=bf_spikedatasource id=44336a82-0fd5-f111-84ea-002248db5cf2 attributes=bf_hosturl,bf_name,bf_scope,bf_spikedatasourceid
+dataSource logicalName=bf_spikedatasource id=<record id> attributes=bf_hosturl,bf_name,bf_scope,bf_spikedatasourceid
 ```
 
 The `Entity` uses the data-source table's logical name and **Dataverse logical column names**, not the `ExternalName` keys used in storage. It is the record bound through the virtual table's `DataSourceId`. No query, no extra privileges.

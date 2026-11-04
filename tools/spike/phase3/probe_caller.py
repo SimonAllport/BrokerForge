@@ -8,7 +8,8 @@ Run with /usr/bin/python3; needs ~/.brokerforge/dev-ids.env (RG) and the az CLI 
 """
 import json, os, subprocess, sys, time, urllib.parse, urllib.request, urllib.error
 
-ORG = os.environ.get("DV_ORG", "https://orgeb8d0d95.crm17.dynamics.com")
+ORG = os.environ.get("DV_ORG") or next((l.split("=", 1)[1].strip().strip('"') for l in open(os.path.expanduser("~/.brokerforge/spike-ids.env"))
+                                   if l.startswith("DV_ORG=")), None) or sys.exit("Set DV_ORG, or add DV_ORG=<org url> to ~/.brokerforge/spike-ids.env")
 API = ORG + "/api/data/v9.2/"
 ids = dict(l.strip().split("=", 1) for l in open(os.path.expanduser("~/.brokerforge/dev-ids.env")) if "=" in l and not l.startswith("#"))
 RG = ids["RG"].strip('"')
