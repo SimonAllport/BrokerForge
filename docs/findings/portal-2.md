@@ -56,6 +56,24 @@ The definition doesn't state any of these, and no answer key adds them. The fixt
 - Optional query parameters of retrieve, write and delete operations aren't sent. Required ones ask for a fixed value. A parameter named in `DraftOptions.ReservedNames` is left to the authentication.
 - Sort field questions appear only once a sort style is chosen.
 
-## 4. Tests
+## 4. Final review
 
-`dotnet test tests/SwaggerForge.Tests`: 58 tests, including `DraftServiceTests`, `TableQuestionTests`, `ListQuestionTests`, `OperationQuestionTests`, `ReproduceTests` and the CLI tests. The full solution and `bf validate descriptors --schemas schemas` pass (see the plan 2 ledger completion line).
+A fresh review of the whole branch found four ways pasted text could throw or hang:
+
+- a parameter declared at both path and operation level;
+- two operations with the same name;
+- a `maximum` or `minimum` too big for an integer;
+- shared schemas checked in exponential time (3.5 KB of text took minutes).
+
+It also found endpoints that ended Invalid with no question to fix them:
+
+- `4XX` ranges;
+- kebab-case operationIds;
+- a proposed column named `<table>id`;
+- out-of-range `maxLength`.
+
+The other findings were PUT and PATCH both becoming Save, an integer enum taking the whole table out, and notes hidden until the review was ready. All are fixed, each with a test that failed first (`tests/SwaggerForge.Tests/ReviewFixTests.cs`). PUT and PATCH now ask a question: new answer keys `table.list`, `table.open`, `table.new`, `table.save` and `table.delete`.
+
+## 5. Tests
+
+`dotnet test tests/SwaggerForge.Tests`: 78 tests. The full solution and `bf validate descriptors --schemas schemas` (17 descriptors) pass.
