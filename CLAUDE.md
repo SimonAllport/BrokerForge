@@ -167,7 +167,7 @@ tools/dev/setup-dataverse.sh                    # sign + register core: assembly
 tools/dev/generate.sh OrdersAPI BrokerForgeOrders [--dry-run] [--confirm <fp>]   # bf generate: table, columns, form and view, role, Custom APIs; exit 4: confirm the printed changes
 dotnet run --project tools/BrokerForge.Cli -- validate descriptors --schemas schemas   # what CI runs
 dotnet run --project tools/BrokerForge.Cli -- draft <openapi> --instance <Name> --prefix ext --out out [--answers a.json]   # exit 3: fill out/<Name>-questions.json, run again
-tools/dev/generate-in-host.sh WarehouseAPI BrokerForgeWarehouse [--preview | --confirm <fp>]   # Generate inside the host container as its identity, from the published design (exec is rate-limited: ~8 calls, then a 10-minute wait)
+tools/dev/generate-in-host.sh WarehouseAPI BrokerForgeWarehouse [--preview | --confirm <fp> | --with-role]   # Generate as the host from the published design; exit 3: the role needs --with-role (runs locally as you). exec is rate-limited: ~8 calls, then 10 minutes
 tools/dev/acceptance.sh                         # Orders: phase 1 done criteria + option set writes, lines read back
 tools/dev/acceptance_inventory.sh               # Inventory: the phase 2 onboarding acceptance
 tools/dev/setup-connect-app.sh                  # phase 3 Entra apps (connect app + Tickets API), before deploy.sh; TICKETS_BOB_OID=<second user>

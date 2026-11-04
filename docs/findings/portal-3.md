@@ -41,7 +41,16 @@ Run inside the container with `tools/dev/generate-in-host.sh` against `Warehouse
 | Delete taken off `WarehouseAPI user` by hand, run again | The preview lists the role change. The run failed at step `role` with 0 writes: HTTP 403, 0x80048d3c, "Add/Update/Removal of privilege(s) on a Role requires calling user to have the privilege(s) being modified", naming `prvDeleteext_stockitem` |
 | Restored as the az CLI user | The role holds Delete at organisation depth again |
 
-**Honest constraint (spike section 5 answered).** A caller can only add a privilege to a role if it holds that privilege itself. Each generated table brings its own privileges (`prv<Verb><table>`), and the host's role doesn't hold them, so the host can't set up `<Instance> user` for a new table or change it for an existing one. Its own role can't take them on either, for the same reason. Every other part ran as the host. Which way round this goes is Simon's decision (it widens what the host identity can do, or moves one step to another identity), so it was stopped here and reported.
+**Honest constraint (spike section 5 answered).** A caller can only add a privilege to a role if it holds that privilege itself. Each generated table brings its own privileges (`prv<Verb><table>`), and the host's role doesn't hold them, so the host can't set up `<Instance> user` for a new table or change it for an existing one. Its own role can't take them on either, for the same reason.
+
+**Decision (Simon, 4 November):** an administrator does the role step. Generate as the host leaves the role out, and reports the change it would have made as pending. The admin command prints `needs an administrator: …` and exits 3. `--with-role` applies the role too, for an administrator running the same command as themselves. In dev that means `tools/dev/generate-in-host.sh <Instance> <Solution> --with-role`, which runs it locally as the az CLI user with the container's Trust settings. The `generate` command now starts before the host loads its serving stores, so that local run needs nothing else. In plan 4, the Generate page will apply the role as the signed-in administrator.
+
+| Step (after the decision, image 121cdd3) | Result |
+| --- | --- |
+| Delete taken off `WarehouseAPI user` again, run in the host | Succeeded, 0 writes, design v1; `needs an administrator: set role WarehouseAPI user to Read, Create, Write, Delete on ext_stockitem`; exit 3 |
+| `--with-role` locally as the az CLI user | Succeeded, 1 write (the privilege); the role holds Delete at organisation depth |
+| Run in the host again | Succeeded, 0 writes, nothing pending; exit 0 |
+| `tools/dev/acceptance.sh`, `tools/dev/acceptance_inventory.sh` | All assertions passed |
 
 Also found: `az containerapp exec` is rate-limited. After about eight calls in a few minutes it returns 429 with `retry-after: 600`.
 
@@ -73,6 +82,6 @@ A fourth problem is recorded as a constraint in D-36 instead: the one-job-at-a-t
 
 ## 6. Tests
 
-- Generator: 70 tests.
-- Contract: 324 tests, 19 of them new for jobs and the admin command.
+- Generator: 72 tests.
+- Contract: 326 tests, 21 of them new for jobs and the admin command.
 - The full solution passes.

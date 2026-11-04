@@ -223,17 +223,18 @@ var trustProblems = app.Services.GetRequiredService<IOptions<TrustOptions>>().Va
     .Problems(app.Configuration.GetValue("Config:Designs:Enabled", false)).ToList();
 if (trustProblems.Count > 0)
     throw new ConfigurationException("Host configuration is invalid:" + string.Concat(trustProblems.Select(p => "\n - " + p)));
-var store = app.Services.GetRequiredService<HostConfigStore>();
-app.Logger.LogInformation("Loaded descriptors: {Descriptors}", string.Join(", ", store.DescriptorNames));
-app.Services.GetRequiredService<PageTokenKey>();
-app.Services.GetRequiredService<IUserCredentialStore>();
-app.Services.GetRequiredService<IInstanceSecretStore>();
-
+// The generate admin command needs trust and Dataverse only, not the serving stores below, so an administrator can run
+// it locally as themselves (with --with-role) with just the Trust settings and the repo's descriptor folders.
 if (generateCommand != null)
 {
     Environment.ExitCode = await GenerateCommand.RunAsync(generateCommand, app.Services.GetRequiredService<GenerationJobs>(), Console.Out, CancellationToken.None);
     return;
 }
+var store = app.Services.GetRequiredService<HostConfigStore>();
+app.Logger.LogInformation("Loaded descriptors: {Descriptors}", string.Join(", ", store.DescriptorNames));
+app.Services.GetRequiredService<PageTokenKey>();
+app.Services.GetRequiredService<IUserCredentialStore>();
+app.Services.GetRequiredService<IInstanceSecretStore>();
 
 if (adminCommand != null)
 {
