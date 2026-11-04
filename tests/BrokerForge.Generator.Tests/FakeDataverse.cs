@@ -122,6 +122,9 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             ["DataProviderId"] = DropProviderOnCreate ? null : body["DataProviderId"]?.DeepClone(),
             ["DataSourceId"] = body["DataSourceId"]?.DeepClone(),
             ["ExternalName"] = body["ExternalName"]?.DeepClone(),
+            ["PrimaryNameAttribute"] = ((string?)body["Attributes"]!.AsArray().FirstOrDefault(a => (bool?)a!["IsPrimaryName"] == true)?["SchemaName"])?.ToLowerInvariant(),
+            ["DisplayName"] = body["DisplayName"]?.DeepClone(),
+            ["DisplayCollectionName"] = body["DisplayCollectionName"]?.DeepClone(),
         };
         _attributes[logical] = new List<JsonObject>
         {
@@ -145,6 +148,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             ["Precision"] = payload["Precision"]?.DeepClone(),
             ["Format"] = payload["Format"]?.DeepClone(),
             ["OptionSet"] = payload["OptionSet"]?.DeepClone(),
+            ["DisplayName"] = payload["DisplayName"]?.DeepClone(),
         });
         // Live: the platform adds a derived <column>name attribute for every picklist (phase 2 findings).
         if (type == "Picklist")
@@ -177,7 +181,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             {
                 ["LogicalName"] = a["LogicalName"]?.DeepClone(), ["AttributeType"] = a["AttributeType"]?.DeepClone(),
                 ["IsCustomAttribute"] = a["IsCustomAttribute"]?.DeepClone(), ["ExternalName"] = a["ExternalName"]?.DeepClone(),
-                ["AttributeOf"] = a["AttributeOf"]?.DeepClone(),
+                ["AttributeOf"] = a["AttributeOf"]?.DeepClone(), ["DisplayName"] = a["DisplayName"]?.DeepClone(),
             }));
         if (method == "GET" && rest.StartsWith("/Attributes/Microsoft.Dynamics.CRM."))
         {

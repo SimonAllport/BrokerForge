@@ -16,13 +16,13 @@ public static class TableGenerator
     {
         var name = schema.Table!;
         var entity = $"EntityDefinitions(LogicalName='{name}')";
-        var table = await client.GetAsync($"{entity}?$select=TableType,DataProviderId,DataSourceId,ExternalName", ct);
+        var table = await client.GetAsync($"{entity}?$select=TableType,DataProviderId,DataSourceId,ExternalName,PrimaryNameAttribute,DisplayName,DisplayCollectionName", ct);
         if (table == null)
             return null;
 
         var prefix = name[..(name.IndexOf('_') + 1)];
         // AttributeOf marks attributes the platform derives from another column (ext_statusname for the ext_status picklist).
-        var attributes = (await client.ListAsync($"{entity}/Attributes?$select=LogicalName,AttributeType,IsCustomAttribute,ExternalName,AttributeOf", ct))
+        var attributes = (await client.ListAsync($"{entity}/Attributes?$select=LogicalName,AttributeType,IsCustomAttribute,ExternalName,AttributeOf,DisplayName", ct))
             .Where(a => (bool?)a["IsCustomAttribute"] == true && ((string)a["LogicalName"]!).StartsWith(prefix, StringComparison.Ordinal)
                 && (string)a["LogicalName"]! != schema.PrimaryKey && string.IsNullOrEmpty((string?)a["AttributeOf"]))
             .ToList();
@@ -51,10 +51,15 @@ public static class TableGenerator
             };
             int? maxLength = (int?)(strings.GetValueOrDefault(logical) ?? memos.GetValueOrDefault(logical))?["MaxLength"];
             var options = picklists.GetValueOrDefault(logical)?["OptionSet"]?["Options"]?.AsArray().Select(o => (int)o!["Value"]!).ToList();
-            return new ExistingColumn(logical, type, (string?)a["ExternalName"], maxLength, (int?)decimals.GetValueOrDefault(logical)?["Precision"], options);
+            return new ExistingColumn(logical, type, (string?)a["ExternalName"], maxLength, (int?)decimals.GetValueOrDefault(logical)?["Precision"], options, LabelText(a["DisplayName"]));
         }).ToList();
-        return new ExistingTable((string?)table["TableType"], (string?)table["DataProviderId"], (string?)table["DataSourceId"], (string?)table["ExternalName"], columns);
+        return new ExistingTable((string?)table["TableType"], (string?)table["DataProviderId"], (string?)table["DataSourceId"], (string?)table["ExternalName"], columns,
+            (string?)table["PrimaryNameAttribute"], LabelText(table["DisplayName"]), LabelText(table["DisplayCollectionName"]));
     }
+
+    /// <summary>A label's text: the user's localised label, else the first one; null when there is none.</summary>
+    public static string? LabelText(JsonNode? label) =>
+        (string?)label?["UserLocalizedLabel"]?["Label"] ?? (string?)label?["LocalizedLabels"]?.AsArray().FirstOrDefault()?["Label"];
 
     public static JsonObject TablePayload(SourceSchema schema, string providerId, string dataSourceId) => new()
     {

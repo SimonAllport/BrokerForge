@@ -18,15 +18,40 @@ public sealed class GenerationRefusedException(IReadOnlyList<string> differences
 }
 
 /// <summary>A column as it exists in Dataverse, described with schema type names (descriptor spec 14).</summary>
-public sealed record ExistingColumn(string LogicalName, string Type, string? ExternalName, int? MaxLength, int? Precision, IReadOnlyList<int>? Options);
+public sealed record ExistingColumn(string LogicalName, string Type, string? ExternalName, int? MaxLength, int? Precision, IReadOnlyList<int>? Options, string? DisplayName = null);
 
-public sealed record ExistingTable(string? TableType, string? DataProviderId, string? DataSourceId, string? ExternalName, IReadOnlyList<ExistingColumn> Columns);
+/// <summary><see cref="PrimaryName"/>, <see cref="DisplayName"/> and <see cref="DisplayCollectionName"/> are null when not read.</summary>
+public sealed record ExistingTable(string? TableType, string? DataProviderId, string? DataSourceId, string? ExternalName, IReadOnlyList<ExistingColumn> Columns,
+    string? PrimaryName = null, string? DisplayName = null, string? DisplayCollectionName = null);
 
-public sealed record ExistingCustomApi(string PluginTypeId, int BindingType, bool IsFunction, IReadOnlyDictionary<string, (int Type, bool Optional)> Inputs, IReadOnlyDictionary<string, int> Outputs);
+public sealed record ExistingCustomApi(string PluginTypeId, int BindingType, bool IsFunction, IReadOnlyDictionary<string, (int Type, bool Optional)> Inputs,
+    IReadOnlyDictionary<string, int> Outputs, string? DisplayName = null);
+
+/// <summary>The order is the order a change list is shown and applied in.</summary>
+public enum ChangeKind { AddTable, UpdateTable, AddColumn, UpdateColumn, RemoveColumn, RecreateColumn, AddApi, UpdateApi, RemoveApi, RecreateApi }
+
+/// <summary>One change, in plain words. <see cref="Target"/> is <c>table.column</c>, the table, or the Custom API's unique name.</summary>
+public sealed record Change(ChangeKind Kind, string Target, string Text);
 
 /// <summary>
-/// Compares the schema with what exists. The generator only adds: a changed column, a column the schema no
-/// longer has, or a changed Custom API is a difference, and any difference refuses the whole run.
+/// What generating would change, ordered by kind then target. <see cref="Refusals"/> are differences the generator
+/// will not change at all. <see cref="Fingerprint"/> identifies the list, so that what is applied is what was confirmed.
+/// </summary>
+public sealed record ChangeList(IReadOnlyList<Change> Changes, IReadOnlyList<string> Refusals, string Fingerprint)
+{
+    public static string FingerprintOf(IEnumerable<Change> changes)
+    {
+        var text = string.Join("\n", changes.Select(c => c.Text));
+        return text.Length == 0 ? "none"
+            : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)))[..16].ToLowerInvariant();
+    }
+}
+
+/// <summary>
+/// Compares the schema with what exists. A display name change is an update in place. Any other column or Custom API
+/// change is a recreate (remove, then add under the same name): virtual tables hold no data, so nothing is lost. A
+/// column or Custom API that the schema no longer has is a removal. The table itself is never re-pointed, re-keyed or
+/// given another primary name: those are refusals.
 /// </summary>
 public static class GenerationPlan
 {
@@ -36,85 +61,118 @@ public static class GenerationPlan
         ["bool"] = 0, ["datetime"] = 1, ["decimal"] = 2, ["int"] = 7, ["string"] = 10, ["guid"] = 12,
     };
 
-    public sealed record Result(IReadOnlyList<string> Differences, IReadOnlyList<string> ColumnsToAdd, IReadOnlyList<string> ApisToAdd);
-
-    public static Result Compare(SourceSchema schema, ExistingTable? table, IReadOnlyDictionary<string, ExistingCustomApi?> apis,
+    public static ChangeList Diff(SourceSchema schema, ExistingTable? table, IReadOnlyDictionary<string, ExistingCustomApi?> apis,
         string providerId, string? dataSourceId, string? customApiPluginTypeId, string instance)
     {
-        var differences = new List<string>();
-        var add = new List<string>();
+        var refusals = new List<string>();
+        var changes = new List<Change>();
         if (schema.Table is { } name)
         {
             if (table == null)
             {
-                add.AddRange(schema.Columns.Keys.Where(c => c != schema.PrimaryName));
+                changes.Add(new Change(ChangeKind.AddTable, name, $"add table {schema.DisplayName} ({name})"));
+                foreach (var (column, declared) in schema.Columns.Where(c => c.Key != schema.PrimaryName))
+                    changes.Add(new Change(ChangeKind.AddColumn, $"{name}.{column}", $"add column {declared.DisplayName} ({column}, {Describe(declared)})"));
             }
             else
             {
                 if (table.TableType != "Virtual")
-                    differences.Add($"{name} exists as a {table.TableType ?? "(unknown)"} table, not a virtual table; {DeleteByHand(name)}");
+                    refusals.Add($"{name} exists as a {table.TableType ?? "(unknown)"} table, not a virtual table; {DeleteByHand(name)}");
                 if (!SameId(table.DataProviderId, providerId))
-                    differences.Add($"{name} DataProviderId is {table.DataProviderId ?? "(none)"}, not the BrokerForge provider {providerId}; {DeleteByHand(name)}");
+                    refusals.Add($"{name} DataProviderId is {table.DataProviderId ?? "(none)"}, not the BrokerForge provider {providerId}; {DeleteByHand(name)}");
                 if (dataSourceId == null)
-                    differences.Add($"{name} exists and uses data source {table.DataSourceId ?? "(none)"}, but no bf_brokerdatasource record has bf_serviceinstance = {instance}; creating one would leave the table pointing elsewhere");
+                    refusals.Add($"{name} exists and uses data source {table.DataSourceId ?? "(none)"}, but no bf_brokerdatasource record has bf_serviceinstance = {instance}; creating one would leave the table pointing elsewhere");
                 else if (!SameId(table.DataSourceId, dataSourceId))
-                    differences.Add($"{name} DataSourceId is {table.DataSourceId ?? "(none)"}, not the {schema.Table} data source record {dataSourceId}");
+                    refusals.Add($"{name} DataSourceId is {table.DataSourceId ?? "(none)"}, not the {schema.Table} data source record {dataSourceId}");
                 if (table.ExternalName != schema.ExternalName)
-                    differences.Add($"{name} ExternalName is {table.ExternalName ?? "(none)"}, the schema says {schema.ExternalName}");
+                    refusals.Add($"{name} ExternalName is {table.ExternalName ?? "(none)"}, the schema says {schema.ExternalName}; {DeleteByHand(name)}");
+                if (table.PrimaryName != null && table.PrimaryName != schema.PrimaryName)
+                    refusals.Add($"{name}'s primary name column is {table.PrimaryName} in Dataverse but {schema.PrimaryName} in the schema; a table's primary name can't change, so {DeleteByHand(name)}");
+                if ((table.DisplayName != null && table.DisplayName != schema.DisplayName) || (table.DisplayCollectionName != null && table.DisplayCollectionName != schema.DisplayCollectionName))
+                    changes.Add(new Change(ChangeKind.UpdateTable, name,
+                        $"rename table from {table.DisplayName} / {table.DisplayCollectionName} to {schema.DisplayName} / {schema.DisplayCollectionName}"));
+
                 var existing = table.Columns.ToDictionary(c => c.LogicalName);
                 foreach (var (column, declared) in schema.Columns)
                 {
+                    var target = $"{name}.{column}";
                     if (!existing.TryGetValue(column, out var actual))
                     {
-                        add.Add(column);
+                        changes.Add(new Change(ChangeKind.AddColumn, target, $"add column {declared.DisplayName} ({column}, {Describe(declared)})"));
                         continue;
                     }
-                    differences.AddRange(CompareColumn(name, column, declared, actual));
+                    if (Differs(column, declared, actual) is { } why)
+                    {
+                        if (column == schema.PrimaryName || column == table.PrimaryName)
+                            refusals.Add($"{column} is the primary name column, which can't be recreated: {why}; {DeleteByHand(name)}");
+                        else
+                            changes.Add(new Change(ChangeKind.RecreateColumn, target, $"change {declared.DisplayName} ({column}) {why}"));
+                    }
+                    else if (actual.DisplayName != null && actual.DisplayName != declared.DisplayName)
+                        changes.Add(new Change(ChangeKind.UpdateColumn, target, $"rename {column} from {actual.DisplayName} to {declared.DisplayName}"));
                 }
-                foreach (var column in existing.Keys.Where(c => !schema.Columns.ContainsKey(c)))
-                    differences.Add($"{name}.{column} exists but is not in the schema; the generator does not delete columns");
+                foreach (var actual in table.Columns.Where(c => !schema.Columns.ContainsKey(c.LogicalName) && c.LogicalName != table.PrimaryName))
+                    changes.Add(new Change(ChangeKind.RemoveColumn, $"{name}.{actual.LogicalName}", $"remove column {actual.DisplayName ?? actual.LogicalName} ({actual.LogicalName})"));
             }
         }
 
-        var apisToAdd = new List<string>();
         foreach (var (api, declared) in schema.CustomApis)
         {
             if (apis.GetValueOrDefault(api) is not { } actual)
             {
-                apisToAdd.Add(api);
+                changes.Add(new Change(ChangeKind.AddApi, api, $"add action {declared.DisplayName} ({api})"));
                 continue;
             }
+            var differences = new List<string>();
             if (customApiPluginTypeId != null && !SameId(actual.PluginTypeId, customApiPluginTypeId))
-                differences.Add($"Custom API {api} runs plug-in type {actual.PluginTypeId}, not BrokerForge.Plugin.CustomApiPlugin {customApiPluginTypeId}");
+                differences.Add($"it runs plug-in type {actual.PluginTypeId}, not BrokerForge.Plugin.CustomApiPlugin {customApiPluginTypeId}");
             // The generator creates unbound actions only (HLD D-19).
             if (actual.BindingType != 0)
-                differences.Add($"Custom API {api} has bindingtype {actual.BindingType} in Dataverse; the schema's APIs are unbound (0)");
+                differences.Add($"bindingtype is {actual.BindingType} in Dataverse; the schema's APIs are unbound (0)");
             if (actual.IsFunction)
-                differences.Add($"Custom API {api} has isfunction true in Dataverse; the schema's APIs are actions (false)");
+                differences.Add("isfunction is true in Dataverse; the schema's APIs are actions (false)");
             var wantedInputs = declared.Inputs.ToDictionary(i => i.Key, i => (ParamTypeCodes[i.Value.Type], !i.Value.Required));
-            differences.AddRange(CompareSets($"Custom API {api} input", wantedInputs, actual.Inputs, v => $"type {v.Item1}{(v.Item2 ? ", optional" : ", required")}"));
+            differences.AddRange(CompareSets("input", wantedInputs, actual.Inputs, v => $"type {v.Item1}{(v.Item2 ? ", optional" : ", required")}"));
             var wantedOutputs = declared.Outputs.ToDictionary(o => o.Key, o => ParamTypeCodes[o.Value]);
-            differences.AddRange(CompareSets($"Custom API {api} output", wantedOutputs, actual.Outputs, v => $"type {v}"));
+            differences.AddRange(CompareSets("output", wantedOutputs, actual.Outputs, v => $"type {v}"));
+            if (differences.Count > 0)
+                changes.Add(new Change(ChangeKind.RecreateApi, api, $"change action {declared.DisplayName} ({api}): {string.Join("; ", differences)}"));
+            else if (actual.DisplayName != null && actual.DisplayName != declared.DisplayName)
+                changes.Add(new Change(ChangeKind.UpdateApi, api, $"rename action {api} from {actual.DisplayName} to {declared.DisplayName}"));
         }
-        return new Result(differences, add, apisToAdd);
+        foreach (var (api, actual) in apis.Where(a => a.Value != null && !schema.CustomApis.ContainsKey(a.Key)))
+            changes.Add(new Change(ChangeKind.RemoveApi, api, $"remove action {actual!.DisplayName ?? api} ({api})"));
+
+        var ordered = changes.OrderBy(c => c.Kind).ThenBy(c => c.Target, StringComparer.Ordinal).ToList();
+        return new ChangeList(ordered, refusals, ChangeList.FingerprintOf(ordered));
     }
 
-    private static IEnumerable<string> CompareColumn(string table, string column, ColumnSchema declared, ExistingColumn actual)
+    /// <summary>The column as the schema describes it: type, then length, precision or options.</summary>
+    public static string Describe(ColumnSchema c) => Describe(c.Type, EffectiveMaxLength(c), c.Precision, c.Options?.Values.ToList());
+
+    private static string Describe(string type, int? maxLength, int? precision, IReadOnlyList<int>? options) => type switch
     {
-        var where = $"{table}.{column}";
-        if (actual.Type != declared.Type)
-        {
-            yield return $"{where} is {actual.Type} in Dataverse but {declared.Type} in the schema";
-            yield break;
-        }
-        if (actual.ExternalName != column)
-            yield return $"{where} ExternalName is {actual.ExternalName ?? "(none)"}, expected {column}";
-        if (declared.MaxLength is { } length && actual.MaxLength != length)
-            yield return $"{where} maxLength is {actual.MaxLength} in Dataverse but {length} in the schema";
-        if (declared.Precision is { } precision && actual.Precision != precision)
-            yield return $"{where} precision is {actual.Precision} in Dataverse but {precision} in the schema";
-        if (declared.Options is { } options && !options.Values.Order().SequenceEqual(actual.Options?.Order() ?? Enumerable.Empty<int>()))
-            yield return $"{where} options are {string.Join(", ", actual.Options ?? Array.Empty<int>())} in Dataverse but {string.Join(", ", options.Values)} in the schema";
+        "string" or "memo" when maxLength != null => $"{type} {maxLength}",
+        "decimal" when precision != null => $"decimal {precision}",
+        "optionset" when options != null => $"optionset ({string.Join(", ", options.Order())})",
+        _ => type,
+    };
+
+    /// <summary>A memo the schema gives no length is created at 100000 (TableGenerator.ColumnPayload).</summary>
+    private static int? EffectiveMaxLength(ColumnSchema c) => c.Type == "memo" ? c.MaxLength ?? 100000 : c.MaxLength;
+
+    /// <summary>Why <paramref name="actual"/> has to be recreated to match <paramref name="declared"/>, or null when it matches.</summary>
+    private static string? Differs(string column, ColumnSchema declared, ExistingColumn actual)
+    {
+        var from = Describe(actual.Type, actual.MaxLength, actual.Precision, actual.Options);
+        var to = Describe(declared);
+        var sameShape = actual.Type == declared.Type
+            && (declared.Type is not ("string" or "memo") || actual.MaxLength == EffectiveMaxLength(declared))
+            && (declared.Type != "decimal" || actual.Precision == declared.Precision)
+            && (declared.Type != "optionset" || (declared.Options?.Values.Order() ?? Enumerable.Empty<int>()).SequenceEqual(actual.Options?.Order() ?? Enumerable.Empty<int>()));
+        if (!sameShape)
+            return $"from {from} to {to}";
+        return actual.ExternalName != column ? $"because its ExternalName is {actual.ExternalName ?? "(none)"}, not {column}" : null;
     }
 
     private static IEnumerable<string> CompareSets<T>(string what, IReadOnlyDictionary<string, T> wanted, IReadOnlyDictionary<string, T> actual, Func<T, string> describe)

@@ -42,8 +42,14 @@ public static class Generator
 
         // The schema parser holds every table, column and Custom API name to one prefix, so one name gives it.
         var prefix = (schema.Table ?? schema.CustomApis.Keys.First()).Split('_')[0];
-        var plan = GenerationPlan.Compare(schema, table, apis, providerId, (string?)dataSource?["bf_brokerdatasourceid"], pluginTypeId, o.Instance);
-        var differences = plan.Differences.ToList();
+        var plan = GenerationPlan.Diff(schema, table, apis, providerId, (string?)dataSource?["bf_brokerdatasourceid"], pluginTypeId, o.Instance);
+        var differences = plan.Refusals.ToList();
+        differences.AddRange(plan.Changes.Where(c => c.Kind is not (ChangeKind.AddTable or ChangeKind.AddColumn or ChangeKind.AddApi))
+            .Select(c => c.Kind is ChangeKind.RemoveColumn or ChangeKind.RemoveApi ? $"{c.Text}: it is in Dataverse but not in the schema, and the generator only adds" : $"{c.Text}: the generator only adds"));
+        // Shown in target order, created in schema order.
+        var adding = plan.Changes.Where(c => c.Kind == ChangeKind.AddColumn).Select(c => c.Target[(c.Target.IndexOf('.') + 1)..]).ToHashSet(StringComparer.Ordinal);
+        var columnsToAdd = schema.Columns.Keys.Where(adding.Contains).ToList();
+        var apisToAdd = plan.Changes.Where(c => c.Kind == ChangeKind.AddApi).Select(c => c.Target).ToList();
         if (publisher != null && (string?)publisher["customizationprefix"] is { } existingPrefix && existingPrefix != prefix)
             differences.Add($"publisher {o.Publisher} has prefix {existingPrefix}, but the schema uses {prefix}");
         if (differences.Count > 0)
@@ -74,10 +80,10 @@ public static class Generator
                 await client.WriteAsync(HttpMethod.Post, "EntityDefinitions", TableGenerator.TablePayload(schema, providerId, dataSourceId), o.Solution, ct);
                 created = true;
             }
-            foreach (var column in plan.ColumnsToAdd.Where(c => !(created && c == schema.PrimaryName)))
+            foreach (var column in columnsToAdd)
                 await client.WriteAsync(HttpMethod.Post, $"EntityDefinitions(LogicalName='{schema.Table}')/Attributes",
                     TableGenerator.ColumnPayload(column, schema.Columns[column]), o.Solution, ct);
-            if (created || plan.ColumnsToAdd.Count > 0)
+            if (created || columnsToAdd.Count > 0)
                 await client.WriteAsync(HttpMethod.Post, "PublishXml", new JsonObject
                 {
                     ["ParameterXml"] = $"<importexportxml><entities><entity>{schema.Table}</entity></entities></importexportxml>",
@@ -86,7 +92,7 @@ public static class Generator
                 await CheckTable(client, schema, providerId, dataSourceId, ct);
         }
 
-        foreach (var api in plan.ApisToAdd)
+        foreach (var api in apisToAdd)
             await client.WriteAsync(HttpMethod.Post, "customapis", CustomApiGenerator.Payload(api, schema.CustomApis[api], pluginTypeId!), o.Solution, ct);
 
         return new GenerationResult(client.Writes);
