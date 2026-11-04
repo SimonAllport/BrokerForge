@@ -71,26 +71,47 @@ public static class Drafter
             var ops = doc.Paths.SelectMany(p => p.Value.Operations.Select(op => (Path: p.Key, Item: p.Value, Method: op.Key.ToString().ToUpperInvariant(), Op: op.Value)))
                 .OrderBy(x => x.Path, StringComparer.Ordinal).ThenBy(x => x.Method, StringComparer.Ordinal).ToList();
 
+            var names = ops.Select(x => OperationName(x.Op.OperationId)).Where(n => n != null).GroupBy(n => n!, StringComparer.Ordinal)
+                .Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
+
+            // Two operations that would be the same table message (PUT and PATCH both Save): the admin picks one.
+            var contested = new Dictionary<string, Question>(StringComparer.Ordinal);
+            if (resource != null)
+                foreach (var group in ops.Select(x => (Name: OperationName(x.Op.OperationId), Role: Role(resource, x.Path, x.Method), x.Method, x.Path))
+                             .Where(x => x.Name != null && !names.Contains(x.Name) && IsTableRole(x.Role)).GroupBy(x => x.Role).Where(g => g.Count() > 1))
+                {
+                    var becomesLower = Becomes(group.Key, "").ToLowerInvariant();
+                    var q = answers.Choice($"table.{becomesLower}", $"More than one endpoint could be {Becomes(group.Key, "")}. Which one should BrokerForge use?",
+                        group.OrderBy(x => x.Name, StringComparer.Ordinal).Select(x => new Choice(x.Name!, $"{x.Method} {x.Path}")).ToList());
+                    foreach (var x in group)
+                        contested[x.Name!] = q;
+                }
+
             var endpoints = new List<EndpointReview>();
             var drafted = new List<Drafted>();
             foreach (var (path, item, method, op) in ops)
             {
-                var name = string.IsNullOrEmpty(op.OperationId) ? $"{method} {path}" : char.ToLowerInvariant(op.OperationId[0]) + op.OperationId[1..];
+                var name = OperationName(op.OperationId) ?? $"{method} {path}";
                 var becomes = "Not drafted";
                 try
                 {
                     if (string.IsNullOrEmpty(op.OperationId))
                         throw new UnsupportedShapeException("no operationId, so the operation has no name");
-                    var parameters = item.Parameters.Concat(op.Parameters).ToList();
+                    if (OperationName(op.OperationId) == null)
+                        throw new UnsupportedShapeException($"operationId `{op.OperationId}` cannot become an operation name (letters and digits, starting with a letter)");
+                    if (names.Contains(name))
+                        throw new UnsupportedShapeException($"operationId `{op.OperationId}` gives operation name {name}, which more than one operation would have");
+                    var parameters = Merge(item.Parameters, op.Parameters);
                     foreach (var p in parameters)
-                        Heuristics.Check(p.Schema, $"parameter {p.Name}");
-                    Heuristics.Check(RequestSchema(op), "request body");
+                        Heuristics.Check(p.Schema, $"parameter {p.Name}", verified: _verified);
+                    Heuristics.Check(RequestSchema(op), "request body", verified: _verified);
                     foreach (var (status, response) in op.Responses)
-                        Heuristics.Check(JsonSchema(response.Content), $"response {status}");
+                        Heuristics.Check(JsonSchema(response.Content), $"response {status}", verified: _verified);
 
                     if (resource == null && candidates.Count > 1 && candidates.Select(c => Role(c, path, method)).FirstOrDefault(IsTableRole) is { } waiting)
                     {
-                        endpoints.Add(new EndpointReview(name, method, path, Becomes(waiting, name), EndpointStatus.NeedsAnswers, null, Array.Empty<Question>(), Array.Empty<string>()));
+                        endpoints.Add(new EndpointReview(name, method, path, Becomes(waiting, name), EndpointStatus.NeedsAnswers, null,
+                            _tableQuestions.Where(q => q.Key == "table.collection").ToList(), Array.Empty<string>()));
                         continue;
                     }
                     var role = Role(resource, path, method);
@@ -100,6 +121,12 @@ public static class Drafter
                         throw new UnsupportedShapeException(_tableUnsupported);
 
                     _q = new List<Question>();
+                    if (contested.TryGetValue(name, out var pick))
+                    {
+                        if (pick.Answer != null && pick.Answer != name)
+                            throw new UnsupportedShapeException($"{becomes} uses {pick.Answer}");
+                        _q.Add(pick);
+                    }
                     var use = answers.Choice($"op.{name}.use", $"Use {method} {path}?", UseChoices, required: false, proposed: "yes");
                     _q.Add(use);
                     if (use.Value == "no")
@@ -149,7 +176,37 @@ public static class Drafter
             if (_problems.Count == 0 && used.Count > 0 && used.All(e => e.Status == EndpointStatus.Ready))
                 result = new DraftResult(schemaYaml, new SortedDictionary<string, string>(ready.ToDictionary(d => d.Operation, d => d.Yaml), StringComparer.Ordinal),
                     _skipped, _notes);
-            return new DraftReview(table, endpoints, _problems, answers.Unused(), result);
+            return new DraftReview(table, endpoints, _problems, answers.Unused(), result, _notes);
+        }
+
+        private readonly HashSet<OpenApiSchema> _verified = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>
+        /// The descriptor operation name: the operationId with a lower-case first letter, or, when it has other characters
+        /// (list-widgets, widgets.list), its words joined in camelCase. Null when no name starting with a letter results.
+        /// </summary>
+        private static string? OperationName(string? operationId)
+        {
+            if (string.IsNullOrEmpty(operationId))
+                return null;
+            var pascal = operationId.All(char.IsAsciiLetterOrDigit) ? operationId : Heuristics.Pascal(operationId);
+            return pascal.Length > 0 && char.IsAsciiLetter(pascal[0]) && pascal.All(char.IsAsciiLetterOrDigit)
+                ? char.ToLowerInvariant(pascal[0]) + pascal[1..] : null;
+        }
+
+        /// <summary>Path-level parameters overridden by operation-level ones with the same name and location (OpenAPI 3).</summary>
+        private static List<OpenApiParameter> Merge(IEnumerable<OpenApiParameter> pathLevel, IEnumerable<OpenApiParameter> operationLevel)
+        {
+            var merged = new List<OpenApiParameter>();
+            foreach (var p in pathLevel.Concat(operationLevel))
+            {
+                var at = merged.FindIndex(m => m.Name == p.Name && m.In == p.In);
+                if (at >= 0)
+                    merged[at] = p;
+                else
+                    merged.Add(p);
+            }
+            return merged;
         }
 
         private static bool IsTableRole(string role) => role is "RetrieveMultiple" or "Retrieve" or "Create" or "Update" or "Delete";
@@ -169,6 +226,8 @@ public static class Drafter
         private string Table(string key, string text, string proposed, Func<string, string?> check)
         {
             var q = answers.Text(key, text, false, proposed, check);
+            if (q.Answer == null && q.Error == null && check(proposed) is { } refused)
+                q = q with { Error = $"the proposed {proposed} can't be used: it {refused}; give another" };
             _tableQuestions.Add(q);
             return q.Value!;
         }
@@ -257,11 +316,6 @@ public static class Drafter
                     return;
                 }
                 var column = Heuristics.Column(o.Prefix, parent + property);
-                if (fields.Any(f => f.Column == column))
-                {
-                    _notes.Add($"Property {sourcePath} would be column {column}, which another property already uses; it is not drafted.");
-                    return;
-                }
                 var questions = asked[sourcePath] = new List<Question>();
                 if (s.Type == "array")
                 {
@@ -272,10 +326,14 @@ public static class Drafter
                 int? maxLength = null, precision = null;
                 if (type == "string")
                 {
-                    maxLength = s.MaxLength;
+                    maxLength = s.MaxLength is >= 1 and <= 4000 ? s.MaxLength : null;
                     if (maxLength == null)
                     {
-                        var q = answers.Number($"column.{sourcePath}.maxLength", $"{display} ({sourcePath}): the definition gives no maximum length. What is the longest value?", 1, 4000);
+                        var q = answers.Number($"column.{sourcePath}.maxLength", s.MaxLength == null
+                            ? $"{display} ({sourcePath}): the definition gives no maximum length. What is the longest value?"
+                            : $"{display} ({sourcePath}): the definition says {s.MaxLength} characters, but a column holds 1 to 4000. What is the longest value?", 1, 4000);
+                        if (q.Answer == null && q.Error == null && s.MaxLength != null)
+                            q = q with { Error = $"the definition's maxLength {s.MaxLength} is outside 1 to 4000" };
                         questions.Add(q);
                         maxLength = q.Answer == null ? 0 : int.Parse(q.Answer, System.Globalization.CultureInfo.InvariantCulture);
                     }
@@ -318,19 +376,28 @@ public static class Drafter
                 }
             }
 
-            // Names the admin may edit, then refuse any that collide: every answered name in a clash gets the error.
+            // Names the admin may edit. A proposal or answer that is not a usable name, or that collides, is refused on its
+            // question: every answered name in a clash, or, when none is answered, every proposal after the first.
             var named = new List<(Field Field, Question Name, Question Display)>();
+            string? ColumnCheck(string v) => NameCheck(v) ?? (v == _table + "id" ? $"is the table's own key column {v}" : null);
             foreach (var f in fields)
             {
-                var n = answers.Text($"column.{f.SourcePath}.name", $"Column logical name for {f.SourcePath}", false, f.Column,
-                    v => NameCheck(v) ?? (v == _table + "id" ? $"{v} is the table's own key column" : null));
+                var n = answers.Text($"column.{f.SourcePath}.name", $"Column logical name for {f.SourcePath}", false, f.Column, ColumnCheck);
+                if (n.Answer == null && n.Error == null && ColumnCheck(f.Column) is { } refused)
+                    n = n with { Error = $"the proposed {f.Column} can't be used: it {refused}; give another" };
                 var d = answers.Text($"column.{f.SourcePath}.displayName", $"Column display name for {f.SourcePath}", false, f.DisplayName, DisplayCheck);
                 named.Add((f, n, d));
             }
-            foreach (var clash in named.GroupBy(x => x.Name.Value, StringComparer.Ordinal).Where(g => g.Count() > 1))
-                for (var i = 0; i < named.Count; i++)
-                    if (named[i].Name.Value == clash.Key && named[i].Name.Answer != null)
-                        named[i] = named[i] with { Name = named[i].Name with { Answer = null, Error = $"another column is also named {clash.Key}" } };
+            foreach (var clash in named.Where(x => x.Name.Error == null).GroupBy(x => x.Name.Value, StringComparer.Ordinal).Where(g => g.Count() > 1).ToList())
+            {
+                var members = clash.ToList();
+                var blame = members.Any(m => m.Name.Answer != null) ? members.Where(m => m.Name.Answer != null) : members.Skip(1);
+                foreach (var m in blame.ToList())
+                {
+                    var i = named.FindIndex(x => x.Field.SourcePath == m.Field.SourcePath);
+                    named[i] = named[i] with { Name = named[i].Name with { Answer = null, Error = $"another column is also named {clash.Key}; give another" } };
+                }
+            }
             fields = named.Select(x => x.Field with { Column = x.Name.Value!, DisplayName = x.Display.Value! }).ToList();
             foreach (var (f, n, d) in named)
                 _tableQuestions.AddRange(new[] { n, d }.Concat(asked[f.SourcePath]));
@@ -536,10 +603,16 @@ public static class Drafter
             used = new HashSet<string>(StringComparer.Ordinal);
             YamlMap PageSize(string param)
             {
-                var max = query[param].Schema?.Maximum is { } m ? (int)m : (int?)null;
+                var declared = query[param].Schema?.Maximum;
+                var max = declared is >= 1 and <= 5000 ? (int)declared.Value : (int?)null;
                 if (max == null)
                 {
-                    var q = Ask(answers.Number($"op.{name}.pageSizeMax", $"Paging parameter `{param}` declares no maximum. What is the largest page the source returns?", 1, 5000));
+                    var q = answers.Number($"op.{name}.pageSizeMax", declared == null
+                        ? $"Paging parameter `{param}` declares no maximum. What is the largest page the source returns?"
+                        : $"Paging parameter `{param}` declares a maximum of {declared}, outside 1 to 5000. What is the largest page the source returns?", 1, 5000);
+                    if (q.Answer == null && q.Error == null && declared != null)
+                        q = q with { Error = $"the definition's maximum {declared} is outside 1 to 5000" };
+                    Ask(q);
                     max = q.Answer == null ? 1 : int.Parse(q.Answer, System.Globalization.CultureInfo.InvariantCulture);
                 }
                 return new YamlMap().Add("param", param).Add("max", max.Value);
@@ -570,7 +643,7 @@ public static class Drafter
             if (query.ContainsKey("page") && size != null)
                 candidates.Add((new Choice("pageNumber", $"`page` and `{size}` query parameters"), new[] { "page", size }, () =>
                 {
-                    var @base = query["page"].Schema?.Minimum is { } min ? (int)min : (int?)null;
+                    var @base = query["page"].Schema?.Minimum switch { 0 => 0, 1 => 1, _ => (int?)null };
                     if (@base == null)
                     {
                         var q = Ask(answers.Choice($"op.{name}.pageBase", "Is the first page number 0 or 1?", new[] { new Choice("0", "0"), new Choice("1", "1") }));
@@ -866,6 +939,11 @@ public static class Drafter
             var errors = root.Map("errors");
             foreach (var (status, response) in op.Responses.Where(r => r.Key != "default" && !r.Key.StartsWith('2')).OrderBy(r => r.Key, StringComparer.Ordinal))
             {
+                if (!(status.Length == 3 && status.All(char.IsAsciiDigit)))
+                {
+                    _notes.Add($"{name}: response {status} is a range; statuses in it are failures (default: Fail) unless listed one by one.");
+                    continue;
+                }
                 var kind = FixedErrors.FirstOrDefault(f => f.Status == status).Kind
                     ?? Ask(answers.Choice($"op.{name}.error.{status}", $"When the source answers {status} ({response.Description}), what happened?", ErrorChoices)).Answer;
                 if (kind == null)

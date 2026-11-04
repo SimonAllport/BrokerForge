@@ -72,9 +72,10 @@ internal static class Heuristics
 
     public static bool IsScalar(OpenApiSchema s) => s.Type is "string" or "integer" or "number" or "boolean";
 
+    /// <summary>The values of a string enum; null for no enum, or one whose values are not all strings (an integer enum is a plain int).</summary>
     public static IReadOnlyList<string>? EnumValues(OpenApiSchema s) =>
-        s.Enum is { Count: > 0 } values
-            ? values.Select(v => v is OpenApiString str ? str.Value : throw new UnsupportedShapeException("an enum has values that are not strings")).ToList()
+        s.Type == "string" && s.Enum is { Count: > 0 } values && values.All(v => v is OpenApiString)
+            ? values.Select(v => ((OpenApiString)v).Value).ToList()
             : null;
 
     /// <summary>Decimal places stated by <c>multipleOf</c> 1, 0.1 … 0.0000000001; null when it states none.</summary>
@@ -124,11 +125,12 @@ internal static class Heuristics
 
     /// <summary>
     /// Refuses shapes the drafter cannot represent: composition (oneOf, anyOf, allOf) and a schema that
-    /// contains itself. <paramref name="ancestors"/> holds the schemas on the current path (reference equality).
+    /// contains itself. <paramref name="ancestors"/> holds the schemas on the current path (reference equality);
+    /// <paramref name="verified"/> holds schemas already checked, so a schema reached by many routes is walked once.
     /// </summary>
-    public static void Check(OpenApiSchema? s, string where, HashSet<OpenApiSchema>? ancestors = null)
+    public static void Check(OpenApiSchema? s, string where, HashSet<OpenApiSchema>? ancestors = null, HashSet<OpenApiSchema>? verified = null)
     {
-        if (s == null)
+        if (s == null || verified?.Contains(s) == true)
             return;
         ancestors ??= new HashSet<OpenApiSchema>(ReferenceEqualityComparer.Instance);
         if (!ancestors.Add(s))
@@ -137,10 +139,11 @@ internal static class Heuristics
             if (list is { Count: > 0 })
                 throw new UnsupportedShapeException($"{where} uses {kind}, which has no single column layout");
         foreach (var (name, child) in s.Properties ?? new Dictionary<string, OpenApiSchema>())
-            Check(child, $"{where}.{name}", ancestors);
-        Check(s.Items, $"{where}[]", ancestors);
+            Check(child, $"{where}.{name}", ancestors, verified);
+        Check(s.Items, $"{where}[]", ancestors, verified);
         if (s.AdditionalProperties != null)
-            Check(s.AdditionalProperties, $"{where}.*", ancestors);
+            Check(s.AdditionalProperties, $"{where}.*", ancestors, verified);
         ancestors.Remove(s);
+        verified?.Add(s);
     }
 }

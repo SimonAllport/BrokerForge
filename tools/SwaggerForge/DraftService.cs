@@ -53,7 +53,7 @@ public static class DraftService
     }
 
     private static DraftReview Failed(string problem, IReadOnlyDictionary<string, string> answers) =>
-        new(null, Array.Empty<EndpointReview>(), new[] { problem }, answers.Keys.Order(StringComparer.Ordinal).ToList(), null);
+        new(null, Array.Empty<EndpointReview>(), new[] { problem }, answers.Keys.Order(StringComparer.Ordinal).ToList(), null, Array.Empty<string>());
 
     private static string Short(string message) => message.Length <= 200 ? message : message[..200] + "…";
 

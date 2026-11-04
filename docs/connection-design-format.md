@@ -77,7 +77,7 @@ Root:
 
 ## Answer keys
 
-`answers` holds the admin's answers to the draft service's questions (HLD D-35), as string to string. `<path>` is a column's source JSONPath, such as `$.reference` or `$.state.code`, and `<op>` is an operation name, which is the operationId with a lower-case first letter. An answer whose key no question asks is not applied: the review lists it as unused. An answer that isn't valid for its question is refused, and the question stays open. An empty string counts as no answer.
+`answers` holds the admin's answers to the draft service's questions (HLD D-35), as string to string. `<path>` is a column's source JSONPath, such as `$.reference` or `$.state.code`, and `<op>` is an operation name: the operationId with a lower-case first letter, or its words in camelCase when it has other characters (`list-widgets` becomes `listWidgets`). Two operations with the same name are both left out. An answer whose key no question asks is not applied: the review lists it as unused. An answer that isn't valid for its question is refused, and the question stays open. An empty string counts as no answer.
 
 | Key | Answer | Asked when |
 | --- | --- | --- |
@@ -85,15 +85,16 @@ Root:
 | `table.name` | logical name, `<prefix>_` then a lower-case letter, then letters, digits or `_`; at most 50 characters | optional; proposed from the collection |
 | `table.displayName`, `table.collectionName` | 1–100 characters | optional; proposed |
 | `table.key` | a top-level scalar path | the item has no scalar `id` |
+| `table.list`, `table.open`, `table.new`, `table.save`, `table.delete` | the operation name to use | more than one endpoint could be that message (PUT and PATCH both Save); the others are left out |
 | `table.primaryName` | a string column's path | no string property is called `name` |
 | `column.<path>.name` | logical name as for `table.name`; unique, and not `<table>id` | optional; proposed |
 | `column.<path>.displayName` | 1–100 characters | optional; proposed |
-| `column.<path>.maxLength` | 1–4000 | a string with no `maxLength` |
+| `column.<path>.maxLength` | 1–4000 | a string with no `maxLength`, or one outside 1–4000 |
 | `column.<path>.precision` | 0–10 | a number whose `multipleOf` isn't a power of ten from 1 to 0.0000000001 |
 | `op.<op>.use` | `yes` or `no` | optional; `yes` when absent |
 | `op.<op>.paging` | `cursor`, `offset`, `pageNumber` or `link`, whichever the shape supports, or `none` | every list |
-| `op.<op>.pageBase` | `0` or `1` | `pageNumber`, when `page` has no `minimum` |
-| `op.<op>.pageSizeMax` | 1–5000 | the page size parameter has no `maximum` |
+| `op.<op>.pageBase` | `0` or `1` | `pageNumber`, when `page` has no `minimum` of 0 or 1 |
+| `op.<op>.pageSizeMax` | 1–5000 | the page size parameter has no `maximum`, or one outside 1–5000 |
 | `op.<op>.filter.<param>` | `none`, `eq`, `in`, `eq,in` or `like` (string); `none`, `eq`, `in` or `eq,in` (option set); `none` or `eq` (other types) | a query parameter that matches a column |
 | `op.<op>.sort` | `none`, `asc`, `-{field}` or `{field} desc` | a `sort`, `orderBy` or `order_by` parameter |
 | `op.<op>.sort.<path>` | the source's sort field, 1–100 characters, no spaces | optional, once the sort isn't `none`; at least one is needed |

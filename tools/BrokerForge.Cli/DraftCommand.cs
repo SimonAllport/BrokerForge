@@ -137,7 +137,7 @@ public static class DraftCommand
             lines.AddRange(new[] { "", "## Answers no question asked", "" });
             lines.AddRange(review.UnusedAnswers.Select(a => $"- `{a}`"));
         }
-        var notes = review.Result?.Notes ?? Array.Empty<string>();
+        var notes = review.Notes;
         if (notes.Count > 0)
         {
             lines.AddRange(new[] { "", "## Notes", "" });
