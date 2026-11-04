@@ -43,7 +43,9 @@ public static class Generator
         {
             version = await ApplyAsync(client, schema, o, state, s => step = s, ct);
         }
-        catch (DataverseException ex)
+        // Past the checks above, a refusal (a privilege that doesn't exist, the platform dropping the provider) can come
+        // after writes: it is a failure naming the step and the writes made, never "made no changes".
+        catch (Exception ex) when (ex is DataverseException or GenerationRefusedException or BrokerForge.Connections.DesignFormatException)
         {
             throw new GenerationFailedException(step, client.Writes.ToList(), ex);
         }
@@ -85,6 +87,18 @@ public static class Generator
         if (publisher != null && (string?)publisher["customizationprefix"] is { } existingPrefix && existingPrefix != prefix)
             plan = plan with { Refusals = plan.Refusals.Append($"publisher {o.Publisher} has prefix {existingPrefix}, but the schema uses {prefix}").ToList() };
 
+        if (o.Design != null)
+        {
+            try
+            {
+                DesignPublisher.Check(o.Design.Design, o.Design.AuthJson);
+            }
+            catch (BrokerForge.Connections.DesignFormatException ex)
+            {
+                plan = plan with { Refusals = plan.Refusals.Append(ex.Message).ToList() };
+            }
+        }
+
         var parts = table == null ? null : await FormsAndViews.ReadAsync(client, schema.Table!, ct);
         var blocked = new List<Blocked>();
         var generated = parts == null ? new HashSet<string>() : new HashSet<string>(new[] { parts.FormId, parts.ViewId }, StringComparer.OrdinalIgnoreCase);
@@ -104,7 +118,7 @@ public static class Generator
         if (schema.Table != null)
         {
             var all = FormsAndViews.Order(schema, schema.Columns.Keys);
-            if (parts == null || FormsAndViews.Shown(parts) is var (form, view) && !(form.SequenceEqual(all) && view.SequenceEqual(all)))
+            if (parts == null || !FormsAndViews.Matches(schema, parts, all))
                 described.Add($"show every column on the main form and the default view of {schema.Table}");
             if (o.Messages != null)
             {

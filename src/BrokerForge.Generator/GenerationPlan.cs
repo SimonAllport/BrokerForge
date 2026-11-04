@@ -35,7 +35,8 @@ public sealed class GenerationConfirmationException(GenerationPreview preview, s
 
 /// <summary>A Dataverse call failed while applying. <see cref="WritesDone"/> lists the writes made before it; a fresh preview and run continue from there.</summary>
 public sealed class GenerationFailedException(string step, IReadOnlyList<string> writesDone, Exception inner)
-    : Exception($"Generation failed at step '{step}' after {writesDone.Count} write(s): {inner.Message}", inner)
+    : Exception($"Generation failed at step '{step}' after {writesDone.Count} write(s): "
+        + (inner is GenerationRefusedException r ? string.Join("; ", r.Differences) : inner.Message), inner)
 {
     public string Step { get; } = step;
     public IReadOnlyList<string> WritesDone { get; } = writesDone;

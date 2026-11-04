@@ -35,9 +35,7 @@ public static partial class DesignPublisher
     /// </summary>
     public static async Task<int> PublishAsync(DataverseClient client, ConnectionDesign design, string prefix, string solution, string? baseUrl, string? authJson, CancellationToken ct)
     {
-        if (!InstanceName().IsMatch(design.Instance))
-            throw new DesignFormatException($"instance name `{design.Instance}` must be a letter followed by up to 63 letters or digits");
-        CheckOverrides(authJson);
+        Check(design, authJson);
 
         var name = WebResourceName(prefix, design.Instance);
         var existing = (await client.ListAsync($"webresourceset?$select=webresourceid,content&$filter=name eq {DataverseClient.Literal(name)}", ct)).FirstOrDefault();
@@ -81,6 +79,15 @@ public static partial class DesignPublisher
         if (authJson != null)
             await SetValueAsync(client, authId, $"bf_{design.Instance}_Auth", authJson, ct);
         return version;
+    }
+
+    /// <summary>What <see cref="PublishAsync"/> refuses, checked before any write: the instance name, and the overrides.</summary>
+    /// <exception cref="DesignFormatException">Naming the instance or the override key, never a value.</exception>
+    public static void Check(ConnectionDesign design, string? authJson)
+    {
+        if (!InstanceName().IsMatch(design.Instance))
+            throw new DesignFormatException($"instance name `{design.Instance}` must be a letter followed by up to 63 letters or digits");
+        CheckOverrides(authJson);
     }
 
     /// <summary>An object of string values with documented keys only. The message names the key, never a value.</summary>

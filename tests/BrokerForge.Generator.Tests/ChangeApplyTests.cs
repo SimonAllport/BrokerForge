@@ -235,6 +235,45 @@ public class ChangeApplyTests
         Assert.Contains(fresh.Parts, p => p.StartsWith("create role InventoryAPI user with Read, Create, Write, Delete"));
         Assert.Contains(fresh.Parts, p => p.StartsWith("show every column"));
     }
+
+    [Fact]
+    public async Task Run_RenameOnly_FormLabelUpdated()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        var renamed = Schema(GeneratorTests.InventorySchema.Replace("displayName: On hand", "displayName: In stock"));
+        await Confirmed(fake, renamed);
+        var form = (string)fake.MainForm("ext_item")["formxml"]!;
+        Assert.Contains("description=\"In stock\"", form);
+        Assert.DoesNotContain("description=\"On hand\"", form);
+        Assert.Empty((await Preview(fake, renamed)).Parts);
+    }
+
+    [Fact]
+    public async Task Run_RefusalAfterWrites_FailedNamingWrites()
+    {
+        var fake = new FakeDataverse { DropProviderOnCreate = true };
+        var ex = await Assert.ThrowsAsync<GenerationFailedException>(() => Run(fake, Schema()));
+        Assert.Contains("HLD 15", ex.Message);
+        Assert.Contains("POST EntityDefinitions", ex.WritesDone);
+        Assert.DoesNotContain("made no changes", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("{\"password\":\"x\"}", "InventoryAPI")]
+    [InlineData(null, "Inventory API")]
+    public async Task Preview_BadDesignValues_RefusedBeforeAnyWrite(string? auth, string instance)
+    {
+        var fake = new FakeDataverse();
+        var design = new BrokerForge.Connections.ConnectionDesign(1, instance, 0, "rest", "openapi: 3.0.3", new Dictionary<string, string>(),
+            new BrokerForge.Connections.DesignAuth("Static", "ApiKeyQuery", null, "api_key", null, null, null, null, null, ["apiKey"]), null,
+            GeneratorTests.InventorySchema, new Dictionary<string, string>());
+        var o = Options with { Design = new DesignPublish(design, null, auth) };
+        var preview = await Preview(fake, Schema(), o);
+        Assert.NotEmpty(preview.Changes.Refusals);
+        await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema(), o));
+        Assert.Empty(fake.Writes);
+    }
 }
 
 internal static class SchemaTestExtensions

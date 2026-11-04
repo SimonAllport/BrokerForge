@@ -41,8 +41,23 @@ The permission check in this session stopped the setup script from granting them
 
 **Not verified:** done criterion 6 (a non-administrator gets Read through the generated role). The role exists in dev with the right privileges, but no non-administrator token was used.
 
-## 4. Tests
+## 4. Final review
 
-- Generator: 58 tests.
-- Contract: 320 tests, 15 of them new for jobs and the admin command.
+A fresh review of the branch found three Important problems, each now fixed with a test that failed first:
+
+- **Rename only:** a display-name change left the form's old label in place, and later runs never noticed. The form is now compared cell by cell, with labels and controls.
+- **Late checks:** some checks ran after writes, and their message said "made no changes":
+  - the design's instance name and auth overrides;
+  - a privilege that doesn't exist;
+  - the platform dropping the provider.
+
+  The first two are now checked in the preview. Anything refused after a write is a failure naming the step and the writes made.
+- **Descriptors not checked:** the host path didn't check the design's descriptors against its schema, so it could publish a design the host then refuses to load. It now checks them the way the CLI does.
+
+A fourth problem is recorded as a constraint in D-36 instead: the one-job-at-a-time guard holds only within one host process. Plan 4 needs a lock outside the process before `bf_Generate` starts jobs.
+
+## 5. Tests
+
+- Generator: 62 tests.
+- Contract: 321 tests, 16 of them new for jobs and the admin command.
 - The full solution passes.

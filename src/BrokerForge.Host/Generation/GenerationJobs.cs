@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using BrokerForge.Abstractions;
 using BrokerForge.Connections;
 using BrokerForge.Descriptors.Parsing;
+using BrokerForge.Descriptors.Validation;
 using BrokerForge.Generator;
 using BrokerForge.Host.Config;
 using BrokerForge.Host.Ingress;
@@ -137,8 +138,14 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
     private static async Task<(SourceSchema, GenerateOptions)> OptionsAsync(DataverseClient client, GenerationRequest r, CancellationToken ct)
     {
         var schema = SchemaParser.Parse(r.Design.Schema, $"{r.Design.Instance} design schema");
-        var messages = r.Design.Descriptors.Select(d => DescriptorParser.Parse(d.Value, $"{r.Design.Instance} design descriptor {d.Key}"))
-            .Where(d => d.CustomApi == null).Select(d => d.Binds).ToHashSet(StringComparer.Ordinal);
+        var descriptors = r.Design.Descriptors.Select(d => DescriptorParser.Parse(d.Value, $"{r.Design.Instance} design descriptor {d.Key}")).ToList();
+        // The host refuses at load a design whose descriptors disagree with its schema (HostConfigStore), so never generate one.
+        var problems = descriptors.SelectMany(d => DescriptorValidator.Validate(d, ReservedNames.For(Array.Empty<string>()), schema).Select(e => $"{d.Operation}: {e}"))
+            .Concat(schema.CustomApis.Keys.Where(a => descriptors.All(d => d.CustomApi != a)).Select(a => $"Custom API {a} is in the schema but no descriptor binds it"))
+            .ToList();
+        if (problems.Count > 0)
+            throw new ConfigurationException($"The {r.Design.Instance} design's descriptors do not match its schema; nothing was generated: " + string.Join("; ", problems));
+        var messages = descriptors.Where(d => d.CustomApi == null).Select(d => d.Binds).ToHashSet(StringComparer.Ordinal);
         var hostUrl = await VariableAsync(client, "bf_HostUrl", ct);
         var scope = await VariableAsync(client, "bf_HostScope", ct);
         return (schema, new GenerateOptions(r.Design.Instance, r.Solution, r.Publisher, hostUrl, scope, DryRun: false, messages, r.ConfirmedFingerprint,

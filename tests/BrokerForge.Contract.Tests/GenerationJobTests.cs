@@ -252,4 +252,17 @@ public class GenerationJobTests
         Assert.Equal(2, code);
         Assert.StartsWith("usage: generate", output);
     }
+
+    [Fact]
+    public async Task Job_DescriptorsDisagreeWithSchema_FailedBeforeAnyWrite()
+    {
+        var design = EnvironmentConfigTests.Warehouse();
+        var unbound = design with { Descriptors = design.Descriptors.Where(d => !d.Value.Contains("customapi:")).ToDictionary(d => d.Key, d => d.Value) };
+        Assert.NotEqual(design.Descriptors.Count, unbound.Descriptors.Count);
+        var jobs = Jobs();
+        var failed = await jobs.WaitAsync(jobs.Start(Request(design: unbound)).Id);
+        Assert.Equal(JobState.Failed, failed.State);
+        Assert.Contains("no descriptor binds it", failed.Failure);
+        Assert.Empty(_fakes[OrgA].Writes);
+    }
 }

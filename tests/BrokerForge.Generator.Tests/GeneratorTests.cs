@@ -176,7 +176,7 @@ public class GeneratorTests
     public async Task Generate_PlatformDroppedProvider_RerunSaysDeleteByHand()
     {
         var fake = new FakeDataverse { DropProviderOnCreate = true };
-        var first = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema()));
+        var first = await Assert.ThrowsAsync<GenerationFailedException>(() => Run(fake, Schema()));
         Assert.Contains("delete ext_item by hand", first.Message);
         var again = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema()));
         Assert.Contains("DataProviderId", again.Message);
@@ -199,7 +199,7 @@ public class GeneratorTests
     public async Task Generate_PlatformDroppedProvider_Fails()
     {
         var fake = new FakeDataverse { DropProviderOnCreate = true };
-        var ex = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema()));
+        var ex = await Assert.ThrowsAsync<GenerationFailedException>(() => Run(fake, Schema()));
         Assert.Contains("DataProviderId", ex.Message);
         Assert.Contains("HLD 15", ex.Message);
     }

@@ -90,11 +90,22 @@ public static class FormsAndViews
         return root.ToString(SaveOptions.DisableFormatting);
     }
 
+    /// <summary>
+    /// True when both parts already show <paramref name="columns"/> as the generator would write them: the same cells in
+    /// the same order with the schema's labels and controls, so a rename alone still rewrites the form.
+    /// </summary>
+    public static bool Matches(SourceSchema schema, GeneratedParts parts, IReadOnlyList<string> columns)
+    {
+        static IEnumerable<string> Cells(string formXml) => XElement.Parse(formXml).Descendants("section").First().Descendants("cell")
+            .Select(c => $"{(string?)c.Element("control")?.Attribute("datafieldname")}|{(string?)c.Element("labels")?.Element("label")?.Attribute("description")}|{(string?)c.Element("control")?.Attribute("classid")}");
+        var wanted = FormXml(parts.FormXml, schema.Table!, columns.Select(c => (c, schema.Columns[c])).ToList());
+        return Cells(parts.FormXml).SequenceEqual(Cells(wanted), StringComparer.OrdinalIgnoreCase) && Shown(parts).View.SequenceEqual(columns);
+    }
+
     /// <summary>Writes both parts to show <paramref name="columns"/> unless they already do, then publishes. Returns true when it wrote.</summary>
     public static async Task<bool> ShowAsync(DataverseClient client, SourceSchema schema, GeneratedParts parts, IReadOnlyList<string> columns, CancellationToken ct)
     {
-        var (form, view) = Shown(parts);
-        if (form.SequenceEqual(columns) && view.SequenceEqual(columns))
+        if (Matches(schema, parts, columns))
             return false;
         var table = schema.Table!;
         await client.WriteAsync(HttpMethod.Patch, $"systemforms({parts.FormId})",
