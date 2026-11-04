@@ -29,6 +29,15 @@ public class DrafterTests
     /// <summary>The answers each fixture needs to be ready, with the drafter's own names (no renames).</summary>
     internal static IReadOnlyDictionary<string, string> AnswersFor(string fixture) => fixture switch
     {
+        "orders-openapi.yaml" => new Dictionary<string, string>
+        {
+            ["column.$.totals.gross.precision"] = "2",
+            ["table.primaryName"] = "$.reference",
+        },
+        "inventory-openapi.yaml" => new Dictionary<string, string>
+        {
+            ["column.$.price.precision"] = "2",
+        },
         _ => new Dictionary<string, string>(),
     };
 
@@ -39,8 +48,13 @@ public class DrafterTests
                 .Select(e => $"{e.Operation} {e.Status} [{string.Join(", ", e.Questions.Where(q => q.Open).Select(q => q.Key).Concat(e.Problems))}]"))
             .Concat(r.Table?.Questions.Where(q => q.Open).Select(q => $"table {q.Key} {q.Error}") ?? Array.Empty<string>())));
 
-    private static DraftResult Orders(Func<string, string>? edit = null) =>
-        Ready(DraftServiceTests.Review("orders-openapi.yaml", edit: edit));
+    private static DraftResult Orders(Func<string, string>? edit = null, params (string Key, string Value)[] extra)
+    {
+        var answers = new Dictionary<string, string>(AnswersFor("orders-openapi.yaml"));
+        foreach (var (k, v) in extra)
+            answers[k] = v;
+        return Ready(DraftServiceTests.Review("orders-openapi.yaml", answers, edit));
+    }
 
     private static DraftResult Widgets() => Ready(DraftServiceTests.Review("unsupported.yaml"));
 
@@ -84,7 +98,6 @@ public class DrafterTests
         Assert.Equal(new Dictionary<string, int> { ["open"] = 100000000, ["shipped"] = 100000001, ["cancelled"] = 100000002 }, schema.Columns["ext_statecode"].Options);
         Assert.Equal(20, schema.Columns["ext_reference"].MaxLength);
         Assert.Equal("ext_reference", schema.PrimaryName);
-        Assert.Contains(r.Notes, n => n.Contains("primaryName") && n.Contains("ext_reference"));
 
         var create = Descriptor(r, "createOrder");
         Assert.Equal(new InstanceBinding("accountId", BindingModifiers.None), create.Request.PathParams["accountId"]);
@@ -176,7 +189,8 @@ public class DrafterTests
     [Fact]
     public void Draft_AwkwardPropertyNames_BracketPathOrSkippedWithNote()
     {
-        var r = Orders(t => t.Replace("        id: { type: string }\n        reference:", "        id: { type: string }\n        unit-price: { type: number }\n        café: { type: string }\n        reference:"));
+        var r = Orders(t => t.Replace("        id: { type: string }\n        reference:", "        id: { type: string }\n        unit-price: { type: number }\n        café: { type: string }\n        reference:"),
+            ("column.$['unit-price'].precision", "2"));
         var list = Descriptor(r, "listOrders");
         Assert.Equal("$['unit-price']", list.Response!.Map["ext_unitprice"].Path);
         Assert.DoesNotContain(list.Response.Map.Keys, k => k.Contains('é'));

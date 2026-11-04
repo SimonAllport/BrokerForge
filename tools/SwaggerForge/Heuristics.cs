@@ -7,8 +7,6 @@ namespace BrokerForge.SwaggerForge;
 /// <summary>Naming and type rules. Each is a fixed mapping from the OpenAPI document, never a guess about the source.</summary>
 internal static class Heuristics
 {
-    public const int DefaultMaxLength = 100;
-    public const int DefaultPrecision = 2;
     public const int DefaultPageSizeMax = 100;
     public const int FirstOptionValue = 100000000;
 
@@ -79,6 +77,17 @@ internal static class Heuristics
         s.Enum is { Count: > 0 } values
             ? values.Select(v => v is OpenApiString str ? str.Value : throw new UnsupportedShapeException("an enum has values that are not strings")).ToList()
             : null;
+
+    /// <summary>Decimal places stated by <c>multipleOf</c> 1, 0.1 … 0.0000000001; null when it states none.</summary>
+    public static int? PrecisionOf(OpenApiSchema s)
+    {
+        if (s.MultipleOf is not { } step)
+            return null;
+        for (var places = 0; places <= 10; places++)
+            if (step == (decimal)Math.Pow(10, -places))
+                return places;
+        return null;
+    }
 
     /// <summary>Column type for a scalar property (descriptor spec 14).</summary>
     public static string ColumnType(OpenApiSchema s) => s.Type switch

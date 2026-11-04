@@ -4,6 +4,7 @@
     <ProjectReference Include="..\..\tools\BrokerForge.Cli\BrokerForge.Cli.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="fixtures\*.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="fixtures\*.yaml;fixtures\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\tools\mock-api\inventory-openapi.yaml" Link="fixtures\inventory-openapi.yaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

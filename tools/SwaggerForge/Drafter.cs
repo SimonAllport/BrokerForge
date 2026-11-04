@@ -35,15 +35,29 @@ public static class Drafter
         private string? _keyPath;
         private string? _primaryName;
         private string _table = "";
+        private string _tableDisplay = "";
+        private string _tableCollection = "";
+        private string? _keyProp;
 
         private sealed record Drafted(string Operation, string Method, string Path, string Becomes, bool TableBound, List<Question> Questions, string Yaml, (string Name, YamlMap Map)? Api);
 
         public DraftReview Execute()
         {
-            var resource = FindResource();
+            var candidates = Candidates();
+            var resource = candidates.Count == 1 ? candidates[0] : null;
+            if (candidates.Count > 1)
+            {
+                var which = answers.Choice("table.collection", "Several collections have an item path. Which one becomes the table?",
+                    candidates.Select(c => new Choice(c.Collection, c.Collection)).ToList());
+                _tableQuestions.Add(which);
+                resource = candidates.FirstOrDefault(c => c.Collection == which.Answer);
+            }
             if (resource != null)
             {
-                _table = Heuristics.Column(o.Prefix, Singular(resource.Collection.Split('/')[^1]));
+                var singular = Singular(resource.Collection.Split('/')[^1]);
+                _table = Table("table.name", "Table logical name", Heuristics.Column(o.Prefix, singular), NameCheck);
+                _tableDisplay = Table("table.displayName", "Table display name", Heuristics.Humanise(singular), DisplayCheck);
+                _tableCollection = Table("table.collectionName", "Table plural display name", Heuristics.Humanise(singular) + "s", DisplayCheck);
                 try
                 {
                     Fields(ItemSchema(resource));
@@ -74,18 +88,14 @@ public static class Drafter
                     foreach (var (status, response) in op.Responses)
                         Heuristics.Check(JsonSchema(response.Content), $"response {status}");
 
-                    var role = Role(resource, path, method);
-                    becomes = role switch
+                    if (resource == null && candidates.Count > 1 && candidates.Select(c => Role(c, path, method)).FirstOrDefault(IsTableRole) is { } waiting)
                     {
-                        "RetrieveMultiple" => "List",
-                        "Retrieve" => "Open",
-                        "Create" => "New",
-                        "Update" => "Save",
-                        "Delete" => "Delete",
-                        "CustomApi" => "Action: " + Heuristics.Humanise(name),
-                        _ => becomes,
-                    };
-                    var tableBound = role is "RetrieveMultiple" or "Retrieve" or "Create" or "Update" or "Delete";
+                        endpoints.Add(new EndpointReview(name, method, path, Becomes(waiting, name), EndpointStatus.NeedsAnswers, null, Array.Empty<Question>(), Array.Empty<string>()));
+                        continue;
+                    }
+                    var role = Role(resource, path, method);
+                    becomes = Becomes(role, name);
+                    var tableBound = IsTableRole(role);
                     if (tableBound && _tableUnsupported != null)
                         throw new UnsupportedShapeException(_tableUnsupported);
 
@@ -131,8 +141,7 @@ public static class Drafter
             }
             endpoints = endpoints.OrderBy(e => e.Path, StringComparer.Ordinal).ThenBy(e => e.Method, StringComparer.Ordinal).ToList();
 
-            var table = resource == null ? null : new TableProposal(resource.Collection, _table, Heuristics.Humanise(_table[(o.Prefix.Length + 1)..]),
-                Heuristics.Humanise(_table[(o.Prefix.Length + 1)..]) + "s", _keyPath, _primaryName,
+            var table = resource == null && candidates.Count < 2 ? null : new TableProposal(resource?.Collection, _table, _tableDisplay, _tableCollection, _keyPath, _primaryName,
                 (_fields ?? new()).Select(f => new ColumnProposal(f.SourcePath, f.Column, f.DisplayName, f.Type)).ToList(), _tableQuestions);
 
             var used = endpoints.Where(e => e.Status != EndpointStatus.NotUsed && e.Status != EndpointStatus.Unsupported).ToList();
@@ -143,10 +152,40 @@ public static class Drafter
             return new DraftReview(table, endpoints, _problems, answers.Unused(), result);
         }
 
+        private static bool IsTableRole(string role) => role is "RetrieveMultiple" or "Retrieve" or "Create" or "Update" or "Delete";
+
+        private static string Becomes(string role, string name) => role switch
+        {
+            "RetrieveMultiple" => "List",
+            "Retrieve" => "Open",
+            "Create" => "New",
+            "Update" => "Save",
+            "Delete" => "Delete",
+            "CustomApi" => "Action: " + Heuristics.Humanise(name),
+            _ => "Not drafted",
+        };
+
+        /// <summary>Asks an optional table-level name question and returns the value in use.</summary>
+        private string Table(string key, string text, string proposed, Func<string, string?> check)
+        {
+            var q = answers.Text(key, text, false, proposed, check);
+            _tableQuestions.Add(q);
+            return q.Value!;
+        }
+
+        /// <summary>A logical name: the prefix, an underscore, then lower-case ASCII letters and digits; at most 50 characters.</summary>
+        private string? NameCheck(string name) =>
+            name.Length <= 50 && name.StartsWith(o.Prefix + "_", StringComparison.Ordinal) && name.Length > o.Prefix.Length + 1
+            && name[(o.Prefix.Length + 1)..].All(c => char.IsAsciiDigit(c) || char.IsAsciiLetterLower(c))
+                ? null : $"must be {o.Prefix}_ followed by lower-case letters and digits, at most 50 characters";
+
+        private static string? DisplayCheck(string name) =>
+            name.Trim().Length > 0 && name.Length <= 100 && name == name.Trim() ? null : "must be 1 to 100 characters, with no leading or trailing spaces";
+
         // ---- resource and roles ----
 
-        /// <summary>The collection with an item path (orders for /orders/{id}) that becomes the table.</summary>
-        private Resource? FindResource()
+        /// <summary>Every collection with an item path (orders for /orders/{id}), in path order.</summary>
+        private List<Resource> Candidates()
         {
             var candidates = new List<Resource>();
             foreach (var path in doc.Paths.Keys.Order(StringComparer.Ordinal))
@@ -156,11 +195,10 @@ public static class Drafter
                 if (last.StartsWith('{') && last.EndsWith('}') && segments.Length > 1 && !segments[^2].StartsWith('{'))
                     candidates.Add(new Resource(string.Join("/", segments[..^1]), path, last[1..^1]));
             }
-            if (candidates.Count == 1)
-                return candidates[0];
-            _notes.Add(candidates.Count == 0 ? "No collection has an item path, so no virtual table operations were drafted."
-                : "More than one collection has an item path, so no virtual table operations were drafted.");
-            return null;
+            candidates = candidates.OrderBy(c => c.Collection, StringComparer.Ordinal).ToList();
+            if (candidates.Count == 0)
+                _notes.Add("No collection has an item path, so no virtual table operations were drafted.");
+            return candidates;
         }
 
         private static string Singular(string name) =>
@@ -183,17 +221,33 @@ public static class Drafter
 
         // ---- columns ----
 
+        /// <summary>
+        /// The table's columns, once, with the table questions: the key when there is no scalar <c>id</c>, each column's
+        /// name and display name, a string's length and a number's precision when the definition does not state them,
+        /// and the primary name when no string property is called <c>name</c>.
+        /// </summary>
         private List<Field> Fields(OpenApiSchema item)
         {
             if (_fields != null)
                 return _fields;
             if (item.Type != "object" || item.Properties.Count == 0)
                 throw new UnsupportedShapeException("the item schema is not an object with properties");
-            if (!item.Properties.TryGetValue("id", out var id) || !Heuristics.IsScalar(id))
-                throw new UnsupportedShapeException("the item schema has no scalar `id` property for the key");
-            _keyPath = "$.id";
+            if (item.Properties.TryGetValue("id", out var id) && Heuristics.IsScalar(id))
+                _keyProp = "id";
+            else
+            {
+                var scalars = item.Properties.Where(p => Heuristics.IsScalar(p.Value)).Select(p => p.Key).ToList();
+                if (scalars.Count == 0)
+                    throw new UnsupportedShapeException("the item schema has no scalar property for the key");
+                var key = answers.Choice("table.key", "The definition has no scalar `id`. Which property is the record's key?",
+                    scalars.Select(n => new Choice("$" + Heuristics.Step(n), n)).ToList());
+                _tableQuestions.Add(key);
+                _keyProp = scalars.FirstOrDefault(n => "$" + Heuristics.Step(n) == key.Answer);
+            }
+            _keyPath = _keyProp == null ? null : "$" + Heuristics.Step(_keyProp);
 
             var fields = new List<Field>();
+            var asked = new Dictionary<string, List<Question>>(StringComparer.Ordinal);
             void Add(string property, OpenApiSchema s, string sourcePath, string display, bool required, string? parent)
             {
                 if (!Heuristics.Representable(property) || (parent != null && !Heuristics.Representable(parent)))
@@ -207,6 +261,7 @@ public static class Drafter
                     _notes.Add($"Property {sourcePath} would be column {column}, which another property already uses; it is not drafted.");
                     return;
                 }
+                var questions = asked[sourcePath] = new List<Question>();
                 if (s.Type == "array")
                 {
                     fields.Add(new Field(column, sourcePath, display, "memo", null, null, null, required, parent, property));
@@ -219,21 +274,27 @@ public static class Drafter
                     maxLength = s.MaxLength;
                     if (maxLength == null)
                     {
-                        maxLength = Heuristics.DefaultMaxLength;
-                        _notes.Add($"{column}: {sourcePath} declares no maxLength; drafted as {Heuristics.DefaultMaxLength}.");
+                        var q = answers.Number($"column.{sourcePath}.maxLength", $"{display} ({sourcePath}): the definition gives no maximum length. What is the longest value?", 1, 4000);
+                        questions.Add(q);
+                        maxLength = q.Answer == null ? 0 : int.Parse(q.Answer, System.Globalization.CultureInfo.InvariantCulture);
                     }
                 }
                 if (type == "decimal")
                 {
-                    precision = Heuristics.DefaultPrecision;
-                    _notes.Add($"{column}: {sourcePath} is a number; drafted as decimal with precision {Heuristics.DefaultPrecision}.");
+                    precision = Heuristics.PrecisionOf(s);
+                    if (precision == null)
+                    {
+                        var q = answers.Number($"column.{sourcePath}.precision", $"{display} ({sourcePath}) is a number. How many decimal places does it have?", 0, 10);
+                        questions.Add(q);
+                        precision = q.Answer == null ? 0 : int.Parse(q.Answer, System.Globalization.CultureInfo.InvariantCulture);
+                    }
                 }
                 fields.Add(new Field(column, sourcePath, display, type, maxLength, precision, Heuristics.EnumValues(s), required, parent, property));
             }
 
             foreach (var (name, s) in item.Properties)
             {
-                if (name == "id")
+                if (name == _keyProp)
                     continue;
                 var required = item.Required.Contains(name);
                 if (Heuristics.IsScalar(s) || s.Type == "array")
@@ -256,10 +317,35 @@ public static class Drafter
                 }
             }
 
-            var primary = fields.FirstOrDefault(f => f.Column == o.Prefix + "_name" && f.Type == "string") ?? fields.FirstOrDefault(f => f.Type == "string")
-                ?? throw new UnsupportedShapeException("the item schema has no string property for the primary name");
-            _primaryName = primary.Column;
-            _notes.Add($"primaryName: {primary.Column} ({primary.SourcePath}), {(primary.Column == o.Prefix + "_name" ? "the name property" : "the first string property")}; review.");
+            // Names the admin may edit, then refuse any that collide: every answered name in a clash gets the error.
+            var named = new List<(Field Field, Question Name, Question Display)>();
+            foreach (var f in fields)
+            {
+                var n = answers.Text($"column.{f.SourcePath}.name", $"Column logical name for {f.SourcePath}", false, f.Column,
+                    v => NameCheck(v) ?? (v == _table + "id" ? $"{v} is the table's own key column" : null));
+                var d = answers.Text($"column.{f.SourcePath}.displayName", $"Column display name for {f.SourcePath}", false, f.DisplayName, DisplayCheck);
+                named.Add((f, n, d));
+            }
+            foreach (var clash in named.GroupBy(x => x.Name.Value, StringComparer.Ordinal).Where(g => g.Count() > 1))
+                for (var i = 0; i < named.Count; i++)
+                    if (named[i].Name.Value == clash.Key && named[i].Name.Answer != null)
+                        named[i] = named[i] with { Name = named[i].Name with { Answer = null, Error = $"another column is also named {clash.Key}" } };
+            fields = named.Select(x => x.Field with { Column = x.Name.Value!, DisplayName = x.Display.Value! }).ToList();
+            foreach (var (f, n, d) in named)
+                _tableQuestions.AddRange(new[] { n, d }.Concat(asked[f.SourcePath]));
+
+            var strings = fields.Where(f => f.Type == "string").ToList();
+            if (strings.Count == 0)
+                throw new UnsupportedShapeException("the item schema has no string property for the primary name");
+            var primary = strings.FirstOrDefault(f => f.Parent == null && f.Property == "name");
+            if (primary == null)
+            {
+                var q = answers.Choice("table.primaryName", "No property is called `name`. Which one names a record in lists and lookups?",
+                    strings.Select(f => new Choice(f.SourcePath, $"{f.DisplayName} ({f.SourcePath})")).ToList());
+                _tableQuestions.Add(q);
+                primary = strings.FirstOrDefault(f => f.SourcePath == q.Answer);
+            }
+            _primaryName = primary?.Column;
             _fields = fields;
             return fields;
         }
@@ -352,7 +438,7 @@ public static class Drafter
             CheckPathParams(path, parameters, request, idParam: null, name);
 
             root.Add("paging", paging);
-            var response = root.Map("response").Add("rows", rowsPath).Add("key", _keyPath!);
+            var response = root.Map("response").Add("rows", rowsPath).Add("key", _keyPath ?? "$");
             AddMap(response, fields);
             AddOptionSets(root, fields);
             root.Map("errors").Add("default", "Fail");
@@ -437,7 +523,7 @@ public static class Drafter
             var root = Header(name, "Retrieve", _table);
             var request = root.Map("request").Add("method", "GET").Add("path", path);
             CheckPathParams(path, parameters, request, r.IdParam, name);
-            var response = root.Map("response").Add("rows", "$").Add("key", _keyPath!);
+            var response = root.Map("response").Add("rows", "$").Add("key", _keyPath ?? "$");
             AddMap(response, fields);
             AddOptionSets(root, fields);
             Errors(root, op);
@@ -497,8 +583,8 @@ public static class Drafter
                 var response = root.Map("response");
                 var created = op.Responses.Where(x => x.Key is "200" or "201").Select(x => x.Value).FirstOrDefault()
                     ?? throw new UnsupportedShapeException("the create declares no 200 or 201 response");
-                if (JsonSchema(created.Content)?.Properties.TryGetValue("id", out var id) == true && Heuristics.IsScalar(id))
-                    response.Add("key", "$.id");
+                if (JsonSchema(created.Content)?.Properties.TryGetValue(_keyProp ?? "id", out var id) == true && Heuristics.IsScalar(id))
+                    response.Add("key", _keyPath ?? "$");
                 else if (created.Headers.ContainsKey("Location"))
                     response.Add("key", new YamlMap().Add("header", "Location").Add("pattern", $"/{r.Collection.Split('/')[^1]}/(?<id>[^/]+)$"));
                 else
@@ -656,8 +742,8 @@ public static class Drafter
             if (table && _fields != null)
             {
                 var bare = _table[(o.Prefix.Length + 1)..];
-                root.Add("table", _table).Add("displayName", Heuristics.Humanise(bare)).Add("displayCollectionName", Heuristics.Humanise(bare) + "s")
-                    .Add("externalName", bare).Add("primaryName", _primaryName!);
+                root.Add("table", _table).Add("displayName", _tableDisplay).Add("displayCollectionName", _tableCollection)
+                    .Add("externalName", bare).Add("primaryName", _primaryName ?? "");
                 var columns = root.Map("columns");
                 foreach (var f in _fields)
                 {
