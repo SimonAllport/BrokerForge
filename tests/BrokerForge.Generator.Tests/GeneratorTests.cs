@@ -83,7 +83,7 @@ public class GeneratorTests
     }
 
     [Fact]
-    public async Task Generate_ColumnTypeChanged_RefusesWithoutWriting()
+    public async Task Generate_ColumnTypeChanged_NeedsConfirmationWithoutWriting()
     {
         var fake = new FakeDataverse();
         await Run(fake, Schema());
@@ -91,7 +91,7 @@ public class GeneratorTests
         var changed = InventorySchema.Replace("ext_onhand: { type: int, displayName: On hand }", "ext_onhand: { type: decimal, precision: 0, displayName: On hand }");
         Assert.NotEqual(InventorySchema, changed);
 
-        var ex = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema(changed)));
+        var ex = await Assert.ThrowsAsync<GenerationConfirmationException>(() => Run(fake, Schema(changed)));
         Assert.Contains("ext_onhand", ex.Message);
         Assert.Contains("int", ex.Message);
         Assert.Contains("decimal", ex.Message);
@@ -99,7 +99,7 @@ public class GeneratorTests
     }
 
     [Fact]
-    public async Task Generate_ColumnRemoved_Refuses()
+    public async Task Generate_ColumnRemoved_NeedsConfirmation()
     {
         var fake = new FakeDataverse();
         await Run(fake, Schema());
@@ -107,9 +107,8 @@ public class GeneratorTests
         var removed = InventorySchema.Replace("  ext_notes:  { type: memo, displayName: Notes }\n", "");
         Assert.NotEqual(InventorySchema, removed);
 
-        var ex = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema(removed)));
-        Assert.Contains("ext_notes", ex.Message);
-        Assert.Contains("not in the schema", ex.Message);
+        var ex = await Assert.ThrowsAsync<GenerationConfirmationException>(() => Run(fake, Schema(removed)));
+        Assert.Contains("remove column Notes (ext_notes)", ex.Message);
         Assert.Equal(before, fake.Writes.Count());
     }
 
@@ -122,7 +121,8 @@ public class GeneratorTests
         var added = InventorySchema.Replace("  ext_notes:  { type: memo, displayName: Notes }\n", "  ext_notes:  { type: memo, displayName: Notes }\n  ext_sku:    { type: string, maxLength: 40, displayName: SKU }\n");
         await Run(fake, Schema(added));
         var newWrites = fake.Writes.Skip(before).ToList();
-        Assert.Equal(new[] { "EntityDefinitions(LogicalName='ext_item')/Attributes", "PublishXml" }, newWrites.Select(w => w.Path));
+        Assert.Equal(new[] { "EntityDefinitions", "PublishXml", "systemforms", "savedqueries", "PublishXml" },
+            newWrites.Select(w => w.Path.Split('(')[0]));
         Assert.Contains("ext_sku", newWrites[0].Body);
     }
 
@@ -147,12 +147,12 @@ public class GeneratorTests
     }
 
     [Fact]
-    public async Task Generate_CustomApiParameterChanged_Refuses()
+    public async Task Generate_CustomApiParameterChanged_NeedsConfirmation()
     {
         var fake = new FakeDataverse();
         await Run(fake, Schema());
         var changed = InventorySchema.Replace("Reason: { type: string }", "Reason: { type: string, required: true }");
-        var ex = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema(changed)));
+        var ex = await Assert.ThrowsAsync<GenerationConfirmationException>(() => Run(fake, Schema(changed)));
         Assert.Contains("ext_AdjustStock", ex.Message);
         Assert.Contains("Reason", ex.Message);
     }
@@ -160,13 +160,13 @@ public class GeneratorTests
     [Theory]
     [InlineData("bindingtype", 1, "bindingtype")]
     [InlineData("isfunction", true, "isfunction")]
-    public async Task Generate_CustomApiShapeChanged_Refuses(string key, object value, string named)
+    public async Task Generate_CustomApiShapeChanged_NeedsConfirmation(string key, object value, string named)
     {
         var fake = new FakeDataverse();
         await Run(fake, Schema());
         fake.SetCustomApi("ext_AdjustStock", key, JsonValue.Create(value)!);
         var before = fake.Writes.Count();
-        var ex = await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema()));
+        var ex = await Assert.ThrowsAsync<GenerationConfirmationException>(() => Run(fake, Schema()));
         Assert.Contains("ext_AdjustStock", ex.Message);
         Assert.Contains(named, ex.Message);
         Assert.Equal(before, fake.Writes.Count());

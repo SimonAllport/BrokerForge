@@ -20,6 +20,37 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     public List<Recorded> Requests { get; } = new();
     public IEnumerable<Recorded> Writes => Requests.Where(r => r.Method != "GET");
     public bool DropProviderOnCreate { get; set; }
+    public const string BusinessUnitId = "00000000-0000-0000-0000-0000000000b0";
+
+    /// <summary>The write (counting from 1) that fails once with HTTP 500; 0 for none.</summary>
+    public int FailWrite { get; set; }
+    private int _writeCount;
+
+    private readonly Dictionary<string, JsonObject> _forms = new();
+    private readonly Dictionary<string, JsonObject> _views = new();
+    private readonly List<(string Table, string Column, string ViewId, string Name)> _handViews = new();
+    private readonly List<JsonObject> _roles = new();
+    private readonly Dictionary<string, string> _privileges = new();
+    private readonly Dictionary<string, Dictionary<string, int>> _rolePrivileges = new();
+    private readonly List<(string Solution, int Type, string Id)> _components = new();
+
+    /// <summary>A hand-made public view on <paramref name="table"/> that uses <paramref name="column"/>.</summary>
+    public string AddHandView(string table, string column, string name)
+    {
+        var id = NewId();
+        _handViews.Add((table, column, id, name));
+        return id;
+    }
+
+    public void RemoveHandViews() => _handViews.Clear();
+
+    public JsonObject MainForm(string table) => _forms[table];
+    public JsonObject DefaultView(string table) => _views[table];
+    public IReadOnlyDictionary<string, int> RolePrivileges(string roleName) =>
+        _rolePrivileges[(string)_roles.Single(r => (string)r["name"]! == roleName)["roleid"]!]
+            .ToDictionary(p => _privileges.Single(x => x.Value == p.Key).Key, p => p.Value);
+    public void GrantRolePrivilege(string roleName, string privilege, int depth) =>
+        _rolePrivileges[(string)_roles.Single(r => (string)r["name"]! == roleName)["roleid"]!][_privileges[privilege]] = depth;
 
     private readonly Dictionary<string, string> _publishers = new();
     private readonly Dictionary<string, string> _solutions = new();
@@ -46,10 +77,12 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     {
         var body = request.Content == null ? null : await request.Content.ReadAsStringAsync(ct);
         var path = Uri.UnescapeDataString(request.RequestUri!.PathAndQuery)["/api/data/v9.2/".Length..];
-        Requests.Add(new Recorded(request.Method.Method, path, body,
-            request.Headers.TryGetValues("MSCRM.SolutionUniqueName", out var s) ? s.Single() : null, request.Headers.Authorization?.ToString()));
+        var solution = request.Headers.TryGetValues("MSCRM.SolutionUniqueName", out var s) ? s.Single() : null;
+        Requests.Add(new Recorded(request.Method.Method, path, body, solution, request.Headers.Authorization?.ToString()));
+        if (request.Method != HttpMethod.Get && ++_writeCount == FailWrite)
+            return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "injected failure" } }, HttpStatusCode.InternalServerError);
         var json = body == null ? null : JsonNode.Parse(body)!.AsObject();
-        return Route(request.Method.Method, path, json);
+        return Route(request.Method.Method, path, json, solution);
     }
 
     private static HttpResponseMessage Json(JsonNode node, HttpStatusCode status = HttpStatusCode.OK) =>
@@ -65,11 +98,83 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     [GeneratedRegex(@"^EntityDefinitions\(LogicalName='([^']+)'\)(.*)$")]
     private static partial Regex Entity();
 
-    private HttpResponseMessage Route(string method, string path, JsonObject? body)
+    [GeneratedRegex(@"^/Attributes\(LogicalName='([^']+)'\)(\?.*)?$")]
+    private static partial Regex Single();
+
+    [GeneratedRegex(@"RetrieveDependenciesForDelete\(ObjectId=([^,]+),ComponentType=(\d+)\)")]
+    private static partial Regex DependenciesCall();
+
+    private HttpResponseMessage Route(string method, string path, JsonObject? body, string? inSolution)
     {
         var name = Quoted().Match(path) is { Success: true } q ? q.Groups[1].Value.Replace("''", "'") : null;
+        if (DependenciesCall().Match(path) is { Success: true } dep)
+            return Value(Dependents(dep.Groups[1].Value, int.Parse(dep.Groups[2].Value)).Select(d => (JsonNode)new JsonObject
+            {
+                ["dependentcomponenttype"] = d.Type, ["dependentcomponentobjectid"] = d.Id, ["dependencytype"] = 2,
+            }));
         switch (method, path)
         {
+            case ("GET", _) when path.StartsWith("systemforms?"):
+                return Value(_forms.TryGetValue(name!, out var form) ? new[] { form } : Array.Empty<JsonNode>());
+            case ("GET", _) when path.StartsWith("systemforms("):
+                return Json(_forms.Values.Single(f => path.StartsWith($"systemforms({f["formid"]})")).DeepClone());
+            case ("PATCH", _) when path.StartsWith("systemforms("):
+                _forms.Values.Single(f => path == $"systemforms({f["formid"]})")["formxml"] = body!["formxml"]!.DeepClone();
+                return Status(HttpStatusCode.NoContent);
+            case ("GET", _) when path.StartsWith("savedqueries?"):
+                return Value(_views.TryGetValue(name!, out var view) ? new[] { view } : Array.Empty<JsonNode>());
+            case ("GET", _) when path.StartsWith("savedqueries("):
+                var hand = _handViews.FirstOrDefault(h => path.StartsWith($"savedqueries({h.ViewId})"));
+                return hand.ViewId != null ? Json(new JsonObject { ["name"] = hand.Name })
+                    : Json(_views.Values.Single(v => path.StartsWith($"savedqueries({v["savedqueryid"]})")).DeepClone());
+            case ("PATCH", _) when path.StartsWith("savedqueries("):
+                var patched = _views.Values.Single(v => path == $"savedqueries({v["savedqueryid"]})");
+                patched["fetchxml"] = body!["fetchxml"]!.DeepClone();
+                patched["layoutxml"] = body["layoutxml"]!.DeepClone();
+                return Status(HttpStatusCode.NoContent);
+            case ("GET", _) when path.StartsWith("businessunits?"):
+                return Value(new[] { new JsonObject { ["businessunitid"] = BusinessUnitId } });
+            case ("GET", _) when path.StartsWith("roles?"):
+                return Value(_roles.Where(r => (string)r["name"]! == name));
+            case ("POST", "roles"):
+                var role = new JsonObject { ["roleid"] = NewId(), ["name"] = body!["name"]!.DeepClone() };
+                _roles.Add(role);
+                _rolePrivileges[(string)role["roleid"]!] = new() { [Privilege("prvReadPluginType")] = 8 };
+                if (inSolution != null)
+                    _components.Add((inSolution, 20, (string)role["roleid"]!));
+                return Json(role.DeepClone(), HttpStatusCode.Created);
+            case ("GET", _) when path.StartsWith("privileges?"):
+                return Value(Quoted().Matches(path).Select(m => m.Groups[1].Value).Where(_privileges.ContainsKey)
+                    .Select(n => (JsonNode)new JsonObject { ["name"] = n, ["privilegeid"] = _privileges[n] }));
+            case ("GET", _) when path.StartsWith("roleprivilegescollection?"):
+                var heldBy = path[(path.IndexOf("roleid eq ", StringComparison.Ordinal) + "roleid eq ".Length)..];
+                return Value(_rolePrivileges[heldBy].Select(p => (JsonNode)new JsonObject { ["privilegeid"] = p.Key, ["privilegedepthmask"] = p.Value }));
+            case ("POST", _) when path.EndsWith("/Microsoft.Dynamics.CRM.AddPrivilegesRole"):
+                foreach (var p in body!["Privileges"]!.AsArray())
+                    _rolePrivileges[path["roles(".Length..path.IndexOf(')')]][(string)p!["PrivilegeId"]!] = (string)p["Depth"]! == "Global" ? 8 : 1;
+                return Status(HttpStatusCode.NoContent);
+            case ("POST", _) when path.EndsWith("/Microsoft.Dynamics.CRM.RemovePrivilegeRole"):
+                _rolePrivileges[path["roles(".Length..path.IndexOf(')')]].Remove((string)body!["Privilege"]!["privilegeid"]!);
+                return Status(HttpStatusCode.NoContent);
+            case ("GET", _) when path.StartsWith("solutioncomponents?"):
+                var inId = path[(path.IndexOf("_solutionid_value eq ", StringComparison.Ordinal) + "_solutionid_value eq ".Length)..].Split(' ')[0];
+                var unique = _solutions.Single(x => x.Value == inId).Key;
+                return Value(_components.Where(c => c.Solution == unique && path.Contains($"componenttype eq {c.Type}")).Select(c => (JsonNode)new JsonObject { ["objectid"] = c.Id }));
+            case ("GET", _) when path.StartsWith("customapis("):
+                var byId = _customApis.SingleOrDefault(a => path.StartsWith($"customapis({a["customapiid"]})"));
+                return byId == null ? Status(HttpStatusCode.NotFound) : Json(byId.DeepClone());
+            case ("DELETE", _) when path.StartsWith("customapis("):
+                var removedApi = _customApis.SingleOrDefault(a => path == $"customapis({a["customapiid"]})");
+                if (removedApi == null)
+                    return Status(HttpStatusCode.NotFound);
+                _customApis.Remove(removedApi);
+                _components.RemoveAll(c => c.Id == (string)removedApi["customapiid"]!);
+                return Status(HttpStatusCode.NoContent);
+            case ("PATCH", _) when path.StartsWith("customapis("):
+                var api = _customApis.Single(a => path == $"customapis({a["customapiid"]})");
+                foreach (var (k, v) in body!)
+                    api[k] = v?.DeepClone();
+                return Status(HttpStatusCode.NoContent);
             case ("GET", _) when path.StartsWith("entitydataproviders?"):
                 return Value(name == "BrokerForge" ? new[] { new JsonObject { ["entitydataproviderid"] = ProviderId } } : Array.Empty<JsonNode>());
             case ("GET", _) when path.StartsWith("plugintypes?"):
@@ -106,6 +211,8 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
                 body!["customapiid"] = NewId();
                 body["_plugintypeid_value"] = ((string)body["PluginTypeId@odata.bind"]!)["/plugintypes(".Length..^1];
                 _customApis.Add(body);
+                if (inSolution != null)
+                    _components.Add((inSolution, 10038, (string)body["customapiid"]!));
                 return Status(HttpStatusCode.NoContent);
         }
         if (Entity().Match(path) is { Success: true } e)
@@ -132,7 +239,43 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
         };
         foreach (var attribute in body["Attributes"]!.AsArray())
             AddAttribute(logical, attribute!.AsObject());
+        var primary = (string)_tables[logical]["PrimaryNameAttribute"]!;
+        _forms[logical] = new JsonObject
+        {
+            ["formid"] = NewId(),
+            ["formxml"] = $"<form><tabs><tab><columns><column><sections><section><rows><row><cell><control id=\"{primary}\" datafieldname=\"{primary}\" /></cell></row></rows></section></sections></column></columns></tab></tabs></form>",
+        };
+        var viewId = NewId();
+        _views[logical] = new JsonObject
+        {
+            ["savedqueryid"] = viewId,
+            ["fetchxml"] = $"<fetch version=\"1.0\" mapping=\"logical\"><entity name=\"{logical}\"><attribute name=\"{logical}id\" /><attribute name=\"{primary}\" /></entity></fetch>",
+            ["layoutxml"] = $"<grid name=\"resultset\" object=\"10742\" jump=\"{primary}\" select=\"1\" icon=\"1\" preview=\"1\"><row name=\"result\" id=\"{logical}id\"><cell name=\"{primary}\" width=\"300\" /></row></grid>",
+        };
+        foreach (var verb in new[] { "Read", "Create", "Write", "Delete", "Append", "AppendTo" })
+            Privilege($"prv{verb}{logical}");
         return Status(HttpStatusCode.NoContent);
+    }
+
+    private string Privilege(string name) => _privileges.TryGetValue(name, out var id) ? id : _privileges[name] = NewId();
+
+    /// <summary>What uses an attribute (by MetadataId) or a Custom API: the generated form and view by their XML, and hand-made views.</summary>
+    private IEnumerable<(int Type, string Id)> Dependents(string objectId, int componentType)
+    {
+        if (componentType != 2)
+            yield break;
+        foreach (var (table, attributes) in _attributes)
+        {
+            var column = (string?)attributes.FirstOrDefault(a => (string?)a["MetadataId"] == objectId)?["LogicalName"];
+            if (column == null)
+                continue;
+            if (_forms.TryGetValue(table, out var form) && ((string)form["formxml"]!).Contains($"datafieldname=\"{column}\""))
+                yield return (60, (string)form["formid"]!);
+            if (_views.TryGetValue(table, out var view) && ((string)view["layoutxml"]!).Contains($"<cell name=\"{column}\""))
+                yield return (26, (string)view["savedqueryid"]!);
+            foreach (var hand in _handViews.Where(h => h.Table == table && h.Column == column))
+                yield return (26, hand.ViewId);
+        }
     }
 
     private void AddAttribute(string table, JsonObject payload)
@@ -149,6 +292,8 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             ["Format"] = payload["Format"]?.DeepClone(),
             ["OptionSet"] = payload["OptionSet"]?.DeepClone(),
             ["DisplayName"] = payload["DisplayName"]?.DeepClone(),
+            ["MetadataId"] = NewId(),
+            ["@odata.type"] = payload["@odata.type"]?.DeepClone(),
         });
         // Live: the platform adds a derived <column>name attribute for every picklist (phase 2 findings).
         if (type == "Picklist")
@@ -169,8 +314,34 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     {
         if (!_tables.TryGetValue(table, out var t))
             return Status(HttpStatusCode.NotFound);
-        if (method == "GET" && rest.StartsWith("?"))
+        if (method == "GET" && (rest.StartsWith("?") || rest == ""))
             return Json(t.DeepClone());
+        if (method == "PUT" && rest == "")
+        {
+            t["DisplayName"] = body!["DisplayName"]!.DeepClone();
+            t["DisplayCollectionName"] = body["DisplayCollectionName"]!.DeepClone();
+            return Status(HttpStatusCode.NoContent);
+        }
+        if (Single().Match(rest) is { Success: true } one)
+        {
+            var attribute = _attributes[table].SingleOrDefault(a => (string)a["LogicalName"]! == one.Groups[1].Value);
+            switch (method)
+            {
+                case "GET":
+                    return attribute == null ? Status(HttpStatusCode.NotFound) : Json(attribute.DeepClone());
+                case "PUT":
+                    attribute!["DisplayName"] = body!["DisplayName"]!.DeepClone();
+                    return Status(HttpStatusCode.NoContent);
+                case "DELETE":
+                    if (attribute == null)
+                        return Status(HttpStatusCode.NotFound);
+                    var users = Dependents((string)attribute["MetadataId"]!, 2).ToList();
+                    if (users.Count > 0)
+                        return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = $"referenced by {users.Count} other components" } }, HttpStatusCode.BadRequest);
+                    _attributes[table].Remove(attribute);
+                    return Status(HttpStatusCode.NoContent);
+            }
+        }
         if (method == "POST" && rest == "/Attributes")
         {
             AddAttribute(table, body!);
@@ -181,7 +352,7 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             {
                 ["LogicalName"] = a["LogicalName"]?.DeepClone(), ["AttributeType"] = a["AttributeType"]?.DeepClone(),
                 ["IsCustomAttribute"] = a["IsCustomAttribute"]?.DeepClone(), ["ExternalName"] = a["ExternalName"]?.DeepClone(),
-                ["AttributeOf"] = a["AttributeOf"]?.DeepClone(), ["DisplayName"] = a["DisplayName"]?.DeepClone(),
+                ["AttributeOf"] = a["AttributeOf"]?.DeepClone(), ["DisplayName"] = a["DisplayName"]?.DeepClone(), ["MetadataId"] = a["MetadataId"]?.DeepClone(),
             }));
         if (method == "GET" && rest.StartsWith("/Attributes/Microsoft.Dynamics.CRM."))
         {

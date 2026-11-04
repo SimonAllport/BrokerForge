@@ -164,7 +164,7 @@ cd tools/mock-api && npm test                   # MOCK_API_KEY=<any> npm start t
 tools/spike/sign-plugin.sh                      # Release build, strong name + Authenticode (osslsigncode) -> out/
 tools/dev/deploy.sh                             # Azure dev env (infra/main.bicep), images, Key Vault secrets
 tools/dev/setup-dataverse.sh                    # sign + register core: assembly, both plug-in types, provider, bf_brokerdatasource, bf_HostUrl/bf_HostScope
-tools/dev/generate.sh OrdersAPI BrokerForgeOrders [--dry-run]   # bf generate: data source record, virtual table, columns, Custom APIs
+tools/dev/generate.sh OrdersAPI BrokerForgeOrders [--dry-run] [--confirm <fp>]   # bf generate: table, columns, form and view, role, Custom APIs; exit 4: confirm the printed changes
 dotnet run --project tools/BrokerForge.Cli -- validate descriptors --schemas schemas   # what CI runs
 dotnet run --project tools/BrokerForge.Cli -- draft <openapi> --instance <Name> --prefix ext --out out [--answers a.json]   # exit 3: fill out/<Name>-questions.json, run again
 tools/dev/acceptance.sh                         # Orders: phase 1 done criteria + option set writes, lines read back

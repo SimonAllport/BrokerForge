@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Create or check one source's Dataverse components with `bf generate` (HLD D-22), against the dev environment.
-# Usage: tools/dev/generate.sh <ServiceInstance> <SolutionUniqueName> [--dry-run]
+# Usage: tools/dev/generate.sh <ServiceInstance> <SolutionUniqueName> [--dry-run] [--confirm <fingerprint>]
+# Exit 4: the printed changes need confirming; run again with --confirm and the printed fingerprint.
 # Reads the host URL from ~/.brokerforge/dev-ids.env and the host app ID and org URL from ~/.brokerforge/spike-ids.env.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

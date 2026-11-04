@@ -4,27 +4,62 @@ using BrokerForge.Schema;
 namespace BrokerForge.Generator;
 
 /// <summary>
-/// Creates a source's Dataverse components from its table schema (HLD 5.3): the solution and publisher, the
-/// data source record (host URL, scope and instance name; no secrets), the virtual table and its columns, and
-/// each Custom API. Everything is read first; any difference from the schema refuses the run before a write.
+/// Creates and changes a source's Dataverse components from its table schema (HLD 5.3, D-36): the solution and
+/// publisher, the data source record (host URL, scope and instance name; no secrets), the virtual table and its
+/// columns, the main form and default view showing every column, the Custom APIs and the <c>&lt;Instance&gt; user</c>
+/// role. Everything is read first. A run applies only when nothing is refused or blocked and, for any change other
+/// than an add, the change list is the one confirmed.
 /// </summary>
 public static class Generator
 {
     public const string ProviderName = "BrokerForge";
     private const string Setup = "tools/dev/setup-dataverse.sh";
 
+    private sealed record State(string ProviderId, string? PluginTypeId, JsonObject? Publisher, JsonObject? Solution, JsonObject? DataSource,
+        ExistingTable? Table, IReadOnlyDictionary<string, ExistingCustomApi?> Apis, GeneratedParts? Parts, string Prefix, GenerationPreview Preview);
+
+    /// <summary>What <see cref="RunAsync"/> would do. Reads only.</summary>
+    public static async Task<GenerationPreview> PreviewAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, CancellationToken ct) =>
+        (await ReadAsync(client, schema, o, ct)).Preview;
+
     public static async Task<GenerationResult> RunAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, CancellationToken ct)
     {
-        // ---- read ----
+        var state = await ReadAsync(client, schema, o, ct);
+        var preview = state.Preview;
+        if (preview.Changes.Refusals.Count > 0)
+            throw new GenerationRefusedException(preview.Changes.Refusals);
+        if (preview.Blocked.Count > 0)
+            throw new GenerationRefusedException(preview.Blocked.Select(b => $"{b.Change.Text} is blocked: {b.Dependent} uses it; remove it from there first").ToList());
+        var lines = string.Concat(preview.Changes.Changes.Select(c => "\n - " + c.Text));
+        if (o.ConfirmedFingerprint != null && o.ConfirmedFingerprint != preview.Changes.Fingerprint)
+            throw new GenerationConfirmationException(preview,
+                $"The changes are not the ones confirmed ({o.ConfirmedFingerprint}). Nothing was written. They are now ({preview.Changes.Fingerprint}):{lines}");
+        if (o.ConfirmedFingerprint == null && preview.NeedsConfirmation)
+            throw new GenerationConfirmationException(preview, $"These changes need confirming with fingerprint {preview.Changes.Fingerprint}. Nothing was written:{lines}");
+
+        var step = "start";
+        try
+        {
+            await ApplyAsync(client, schema, o, state, s => step = s, ct);
+        }
+        catch (DataverseException ex)
+        {
+            throw new GenerationFailedException(step, client.Writes.ToList(), ex);
+        }
+        return new GenerationResult(client.Writes);
+    }
+
+    private static async Task<State> ReadAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, CancellationToken ct)
+    {
         var provider = (await client.ListAsync($"entitydataproviders?$select=entitydataproviderid&$filter=name eq {DataverseClient.Literal(ProviderName)}", ct)).FirstOrDefault();
         var refusals = new List<string>();
         if (provider == null)
             refusals.Add($"the {ProviderName} data provider is not registered; run {Setup} (core) first");
         string? pluginTypeId = null;
-        if (schema.CustomApis.Count > 0)
+        if (schema.CustomApis.Count > 0 || schema.Table != null)
         {
             pluginTypeId = (string?)(await client.ListAsync($"plugintypes?$select=plugintypeid&$filter=typename eq {DataverseClient.Literal(CustomApiGenerator.PluginTypeName)}", ct)).FirstOrDefault()?["plugintypeid"];
-            if (pluginTypeId == null)
+            if (pluginTypeId == null && schema.CustomApis.Count > 0)
                 refusals.Add($"plug-in type {CustomApiGenerator.PluginTypeName} is not registered; run {Setup} (core) first");
         }
         if (refusals.Count > 0)
@@ -36,34 +71,68 @@ public static class Generator
         var dataSource = schema.Table == null ? null
             : (await client.ListAsync($"bf_brokerdatasources?$select=bf_brokerdatasourceid,bf_hosturl,bf_scope&$filter=bf_serviceinstance eq {DataverseClient.Literal(o.Instance)}", ct)).FirstOrDefault();
         var table = schema.Table == null ? null : await TableGenerator.ReadAsync(client, schema, ct);
-        var apis = new Dictionary<string, ExistingCustomApi?>();
-        foreach (var api in schema.CustomApis.Keys)
+        var apis = new Dictionary<string, ExistingCustomApi?>(StringComparer.Ordinal);
+        var names = schema.CustomApis.Keys.ToList();
+        if (pluginTypeId != null)
+            names.AddRange((await CustomApiGenerator.InSolutionAsync(client, (string?)solution?["solutionid"], pluginTypeId, ct)).Where(n => !schema.CustomApis.ContainsKey(n)));
+        foreach (var api in names.Distinct(StringComparer.Ordinal))
             apis[api] = await CustomApiGenerator.ReadAsync(client, api, ct);
 
         // The schema parser holds every table, column and Custom API name to one prefix, so one name gives it.
         var prefix = (schema.Table ?? schema.CustomApis.Keys.First()).Split('_')[0];
         var plan = GenerationPlan.Diff(schema, table, apis, providerId, (string?)dataSource?["bf_brokerdatasourceid"], pluginTypeId, o.Instance);
-        var differences = plan.Refusals.ToList();
-        differences.AddRange(plan.Changes.Where(c => c.Kind is not (ChangeKind.AddTable or ChangeKind.AddColumn or ChangeKind.AddApi))
-            .Select(c => c.Kind is ChangeKind.RemoveColumn or ChangeKind.RemoveApi ? $"{c.Text}: it is in Dataverse but not in the schema, and the generator only adds" : $"{c.Text}: the generator only adds"));
-        // Shown in target order, created in schema order.
-        var adding = plan.Changes.Where(c => c.Kind == ChangeKind.AddColumn).Select(c => c.Target[(c.Target.IndexOf('.') + 1)..]).ToHashSet(StringComparer.Ordinal);
-        var columnsToAdd = schema.Columns.Keys.Where(adding.Contains).ToList();
-        var apisToAdd = plan.Changes.Where(c => c.Kind == ChangeKind.AddApi).Select(c => c.Target).ToList();
         if (publisher != null && (string?)publisher["customizationprefix"] is { } existingPrefix && existingPrefix != prefix)
-            differences.Add($"publisher {o.Publisher} has prefix {existingPrefix}, but the schema uses {prefix}");
-        if (differences.Count > 0)
-            throw new GenerationRefusedException(differences);
+            plan = plan with { Refusals = plan.Refusals.Append($"publisher {o.Publisher} has prefix {existingPrefix}, but the schema uses {prefix}").ToList() };
 
-        // ---- write ----
-        if (publisher == null)
+        var parts = table == null ? null : await FormsAndViews.ReadAsync(client, schema.Table!, ct);
+        var blocked = new List<Blocked>();
+        var generated = parts == null ? new HashSet<string>() : new HashSet<string>(new[] { parts.FormId, parts.ViewId }, StringComparer.OrdinalIgnoreCase);
+        foreach (var change in plan.Changes)
+        {
+            var (type, id) = change.Kind switch
+            {
+                ChangeKind.RemoveColumn or ChangeKind.RecreateColumn => (Dependencies.Attribute, table!.Columns.Single(c => $"{schema.Table}.{c.LogicalName}" == change.Target).MetadataId),
+                ChangeKind.RemoveApi or ChangeKind.RecreateApi => (Dependencies.CustomApi, apis[change.Target]!.Id),
+                _ => (0, null),
+            };
+            if (id != null)
+                blocked.AddRange((await Dependencies.ForDeleteAsync(client, type, id, generated, ct)).Select(d => new Blocked(change, d)));
+        }
+
+        var described = new List<string>();
+        if (schema.Table != null)
+        {
+            var all = FormsAndViews.Order(schema, schema.Columns.Keys);
+            if (parts == null || FormsAndViews.Shown(parts) is var (form, view) && !(form.SequenceEqual(all) && view.SequenceEqual(all)))
+                described.Add($"show every column on the main form and the default view of {schema.Table}");
+            if (o.Messages != null)
+            {
+                var role = table == null
+                    ? $"create role {RoleGenerator.RoleName(o.Instance)} with {string.Join(", ", RoleGenerator.Wanted(o.Messages))} on {schema.Table}"
+                    : await RoleGenerator.DescribeAsync(client, schema.Table, o.Instance, o.Messages, ct);
+                if (role != null)
+                    described.Add(role);
+            }
+        }
+        return new State(providerId, pluginTypeId, publisher, solution, dataSource, table, apis, parts, prefix, new GenerationPreview(plan, blocked, described));
+    }
+
+    private static async Task ApplyAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, State s, Action<string> at, CancellationToken ct)
+    {
+        var changes = s.Preview.Changes.Changes;
+        IEnumerable<string> Columns(params ChangeKind[] kinds) =>
+            changes.Where(c => kinds.Contains(c.Kind)).Select(c => c.Target[(c.Target.IndexOf('.') + 1)..]);
+
+        at("publisher");
+        if (s.Publisher == null)
             await client.WriteAsync(HttpMethod.Post, "publishers", new JsonObject
             {
-                ["uniquename"] = o.Publisher, ["friendlyname"] = o.Publisher, ["customizationprefix"] = prefix, ["customizationoptionvalueprefix"] = 10000,
+                ["uniquename"] = o.Publisher, ["friendlyname"] = o.Publisher, ["customizationprefix"] = s.Prefix, ["customizationoptionvalueprefix"] = 10000,
             }, null, ct);
-        if (solution == null)
+        at("solution");
+        if (s.Solution == null)
         {
-            var publisherId = (string?)publisher?["publisherid"]
+            var publisherId = (string?)s.Publisher?["publisherid"]
                 ?? (string?)(await ListAfterWrite(client, $"publishers?$select=publisherid&$filter=uniquename eq {DataverseClient.Literal(o.Publisher)}", ct))?["publisherid"] ?? "(new publisher)";
             await client.WriteAsync(HttpMethod.Post, "solutions", new JsonObject
             {
@@ -71,32 +140,106 @@ public static class Generator
             }, null, ct);
         }
 
-        if (schema.Table != null)
+        if (schema.Table is { } table)
         {
-            var dataSourceId = await EnsureDataSource(client, dataSource, o, ct);
-            var created = false;
-            if (table == null)
+            var entity = $"EntityDefinitions(LogicalName='{table}')";
+            at("data source record");
+            var dataSourceId = await EnsureDataSource(client, s.DataSource, o, ct);
+            var created = changes.Any(c => c.Kind == ChangeKind.AddTable);
+            if (created)
             {
-                await client.WriteAsync(HttpMethod.Post, "EntityDefinitions", TableGenerator.TablePayload(schema, providerId, dataSourceId), o.Solution, ct);
-                created = true;
+                at("create table");
+                await client.WriteAsync(HttpMethod.Post, "EntityDefinitions", TableGenerator.TablePayload(schema, s.ProviderId, dataSourceId), o.Solution, ct);
             }
-            foreach (var column in columnsToAdd)
-                await client.WriteAsync(HttpMethod.Post, $"EntityDefinitions(LogicalName='{schema.Table}')/Attributes",
-                    TableGenerator.ColumnPayload(column, schema.Columns[column]), o.Solution, ct);
-            if (created || columnsToAdd.Count > 0)
-                await client.WriteAsync(HttpMethod.Post, "PublishXml", new JsonObject
-                {
-                    ["ParameterXml"] = $"<importexportxml><entities><entity>{schema.Table}</entity></entities></importexportxml>",
-                }, null, ct);
+
+            // Columns to delete come off the generated form and view first, or the platform refuses the delete.
+            var deleting = Columns(ChangeKind.RemoveColumn, ChangeKind.RecreateColumn).ToHashSet(StringComparer.Ordinal);
+            if (deleting.Count > 0 && s.Parts != null)
+            {
+                at("take columns off the form and view");
+                var keep = FormsAndViews.Order(schema, s.Table!.Columns.Select(c => c.LogicalName).Where(c => schema.Columns.ContainsKey(c) && !deleting.Contains(c)));
+                await FormsAndViews.ShowAsync(client, schema, s.Parts, keep, ct);
+            }
+            foreach (var column in deleting.Order(StringComparer.Ordinal))
+            {
+                at($"delete column {column}");
+                await client.DeleteAsync($"{entity}/Attributes(LogicalName='{column}')", ct);
+            }
+            // Shown in target order, created in schema order.
+            var adding = Columns(ChangeKind.AddColumn, ChangeKind.RecreateColumn).ToHashSet(StringComparer.Ordinal);
+            foreach (var column in schema.Columns.Keys.Where(adding.Contains))
+            {
+                at($"add column {column}");
+                await client.WriteAsync(HttpMethod.Post, $"{entity}/Attributes", TableGenerator.ColumnPayload(column, schema.Columns[column]), o.Solution, ct);
+            }
+            foreach (var column in Columns(ChangeKind.UpdateColumn))
+            {
+                at($"rename column {column}");
+                await TableGenerator.RelabelAsync(client, $"{entity}/Attributes(LogicalName='{column}')",
+                    new Dictionary<string, string> { ["DisplayName"] = schema.Columns[column].DisplayName }, o.Solution, ct);
+            }
+            if (changes.Any(c => c.Kind == ChangeKind.UpdateTable))
+            {
+                at("rename table");
+                await TableGenerator.RelabelAsync(client, entity,
+                    new Dictionary<string, string> { ["DisplayName"] = schema.DisplayName!, ["DisplayCollectionName"] = schema.DisplayCollectionName! }, o.Solution, ct);
+            }
+            if (created || adding.Count > 0 || deleting.Count > 0 || changes.Any(c => c.Kind is ChangeKind.UpdateColumn or ChangeKind.UpdateTable))
+            {
+                at("publish");
+                await PublishAsync(client, table, ct);
+            }
             if (created && !client.DryRun)
-                await CheckTable(client, schema, providerId, dataSourceId, ct);
+                await CheckTable(client, schema, s.ProviderId, dataSourceId, ct);
+
+            at("show every column on the form and view");
+            var all = FormsAndViews.Order(schema, schema.Columns.Keys);
+            if (client.DryRun && (created || deleting.Count > 0))
+            {
+                await client.WriteAsync(HttpMethod.Patch, $"systemforms(main form of {table})", null, null, ct);
+                await client.WriteAsync(HttpMethod.Patch, $"savedqueries(default view of {table})", null, null, ct);
+            }
+            else
+            {
+                var parts = created || deleting.Count > 0 || adding.Count > 0 ? await FormsAndViews.ReadAsync(client, table, ct) : s.Parts;
+                if (parts == null)
+                    throw new DataverseException($"{table} has no main form or default public view to show its columns on");
+                await FormsAndViews.ShowAsync(client, schema, parts, all, ct);
+            }
         }
 
-        foreach (var api in apisToAdd)
-            await client.WriteAsync(HttpMethod.Post, "customapis", CustomApiGenerator.Payload(api, schema.CustomApis[api], pluginTypeId!), o.Solution, ct);
+        foreach (var change in changes.Where(c => c.Kind is ChangeKind.RemoveApi or ChangeKind.RecreateApi))
+        {
+            at($"delete action {change.Target}");
+            await client.DeleteAsync($"customapis({s.Apis[change.Target]!.Id})", ct);
+        }
+        foreach (var change in changes.Where(c => c.Kind is ChangeKind.AddApi or ChangeKind.RecreateApi))
+        {
+            at($"create action {change.Target}");
+            await client.WriteAsync(HttpMethod.Post, "customapis", CustomApiGenerator.Payload(change.Target, schema.CustomApis[change.Target], s.PluginTypeId!), o.Solution, ct);
+        }
+        foreach (var change in changes.Where(c => c.Kind == ChangeKind.UpdateApi))
+        {
+            at($"rename action {change.Target}");
+            var name = schema.CustomApis[change.Target].DisplayName;
+            await client.WriteAsync(HttpMethod.Patch, $"customapis({s.Apis[change.Target]!.Id})", new JsonObject { ["displayname"] = name, ["description"] = name }, null, ct);
+        }
 
-        return new GenerationResult(client.Writes);
+        if (schema.Table != null && o.Messages != null)
+        {
+            at("role");
+            if (client.DryRun && changes.Any(c => c.Kind == ChangeKind.AddTable))
+                await client.WriteAsync(HttpMethod.Post, $"roles ({RoleGenerator.RoleName(o.Instance)})", null, o.Solution, ct);
+            else
+                await RoleGenerator.ApplyAsync(client, schema.Table, o.Instance, o.Messages, o.Solution, ct);
+        }
     }
+
+    public static Task PublishAsync(DataverseClient client, string table, CancellationToken ct) =>
+        client.WriteAsync(HttpMethod.Post, "PublishXml", new JsonObject
+        {
+            ["ParameterXml"] = $"<importexportxml><entities><entity>{table}</entity></entities></importexportxml>",
+        }, null, ct);
 
     private static async Task<JsonObject?> ListAfterWrite(DataverseClient client, string path, CancellationToken ct) =>
         client.DryRun ? null : (await client.ListAsync(path, ct)).FirstOrDefault();

@@ -5,7 +5,37 @@ namespace BrokerForge.Generator;
 /// <param name="Instance">Service instance name; the data source record is found by it.</param>
 /// <param name="Solution">Unique name of the source solution that receives the table and Custom APIs.</param>
 /// <param name="Publisher">Unique name of the publisher whose prefix the schema uses.</param>
-public sealed record GenerateOptions(string Instance, string Solution, string Publisher, string HostUrl, string Scope, bool DryRun);
+/// <param name="Messages">The table messages the descriptors bind (RetrieveMultiple, Retrieve, Create, Update, Delete); they decide the role's privileges.</param>
+/// <param name="ConfirmedFingerprint">The fingerprint of the change list the admin confirmed. Needed for any change other than an add.</param>
+public sealed record GenerateOptions(string Instance, string Solution, string Publisher, string HostUrl, string Scope, bool DryRun,
+    IReadOnlySet<string>? Messages = null, string? ConfirmedFingerprint = null);
+
+/// <summary>A change that can't be applied because something outside BrokerForge's generated parts depends on what it deletes.</summary>
+public sealed record Blocked(Change Change, string Dependent);
+
+/// <summary>
+/// What a run would do. <see cref="Parts"/> lists the form, view and role writes that follow from the schema; they
+/// need no confirmation. Generate applies the run only when nothing is refused or blocked and the change list's
+/// fingerprint is the confirmed one.
+/// </summary>
+public sealed record GenerationPreview(ChangeList Changes, IReadOnlyList<Blocked> Blocked, IReadOnlyList<string> Parts)
+{
+    public bool NeedsConfirmation => Changes.Changes.Any(c => c.Kind is not (ChangeKind.AddTable or ChangeKind.AddColumn or ChangeKind.AddApi));
+}
+
+/// <summary>The change list has changes that need confirming, or not the ones confirmed. Nothing was written.</summary>
+public sealed class GenerationConfirmationException(GenerationPreview preview, string message) : Exception(message)
+{
+    public GenerationPreview Preview { get; } = preview;
+}
+
+/// <summary>A Dataverse call failed while applying. <see cref="WritesDone"/> lists the writes made before it; a fresh preview and run continue from there.</summary>
+public sealed class GenerationFailedException(string step, IReadOnlyList<string> writesDone, Exception inner)
+    : Exception($"Generation failed at step '{step}' after {writesDone.Count} write(s): {inner.Message}", inner)
+{
+    public string Step { get; } = step;
+    public IReadOnlyList<string> WritesDone { get; } = writesDone;
+}
 
 /// <summary><see cref="Writes"/> lists the write calls made, or planned in a dry run; empty when nothing changed.</summary>
 public sealed record GenerationResult(IReadOnlyList<string> Writes);
@@ -18,14 +48,14 @@ public sealed class GenerationRefusedException(IReadOnlyList<string> differences
 }
 
 /// <summary>A column as it exists in Dataverse, described with schema type names (descriptor spec 14).</summary>
-public sealed record ExistingColumn(string LogicalName, string Type, string? ExternalName, int? MaxLength, int? Precision, IReadOnlyList<int>? Options, string? DisplayName = null);
+public sealed record ExistingColumn(string LogicalName, string Type, string? ExternalName, int? MaxLength, int? Precision, IReadOnlyList<int>? Options, string? DisplayName = null, string? MetadataId = null);
 
 /// <summary><see cref="PrimaryName"/>, <see cref="DisplayName"/> and <see cref="DisplayCollectionName"/> are null when not read.</summary>
 public sealed record ExistingTable(string? TableType, string? DataProviderId, string? DataSourceId, string? ExternalName, IReadOnlyList<ExistingColumn> Columns,
     string? PrimaryName = null, string? DisplayName = null, string? DisplayCollectionName = null);
 
 public sealed record ExistingCustomApi(string PluginTypeId, int BindingType, bool IsFunction, IReadOnlyDictionary<string, (int Type, bool Optional)> Inputs,
-    IReadOnlyDictionary<string, int> Outputs, string? DisplayName = null);
+    IReadOnlyDictionary<string, int> Outputs, string? DisplayName = null, string? Id = null);
 
 /// <summary>The order is the order a change list is shown and applied in.</summary>
 public enum ChangeKind { AddTable, UpdateTable, AddColumn, UpdateColumn, RemoveColumn, RecreateColumn, AddApi, UpdateApi, RemoveApi, RecreateApi }

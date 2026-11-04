@@ -22,7 +22,7 @@ public static class TableGenerator
 
         var prefix = name[..(name.IndexOf('_') + 1)];
         // AttributeOf marks attributes the platform derives from another column (ext_statusname for the ext_status picklist).
-        var attributes = (await client.ListAsync($"{entity}/Attributes?$select=LogicalName,AttributeType,IsCustomAttribute,ExternalName,AttributeOf,DisplayName", ct))
+        var attributes = (await client.ListAsync($"{entity}/Attributes?$select=LogicalName,AttributeType,IsCustomAttribute,ExternalName,AttributeOf,DisplayName,MetadataId", ct))
             .Where(a => (bool?)a["IsCustomAttribute"] == true && ((string)a["LogicalName"]!).StartsWith(prefix, StringComparison.Ordinal)
                 && (string)a["LogicalName"]! != schema.PrimaryKey && string.IsNullOrEmpty((string?)a["AttributeOf"]))
             .ToList();
@@ -51,7 +51,7 @@ public static class TableGenerator
             };
             int? maxLength = (int?)(strings.GetValueOrDefault(logical) ?? memos.GetValueOrDefault(logical))?["MaxLength"];
             var options = picklists.GetValueOrDefault(logical)?["OptionSet"]?["Options"]?.AsArray().Select(o => (int)o!["Value"]!).ToList();
-            return new ExistingColumn(logical, type, (string?)a["ExternalName"], maxLength, (int?)decimals.GetValueOrDefault(logical)?["Precision"], options, LabelText(a["DisplayName"]));
+            return new ExistingColumn(logical, type, (string?)a["ExternalName"], maxLength, (int?)decimals.GetValueOrDefault(logical)?["Precision"], options, LabelText(a["DisplayName"]), (string?)a["MetadataId"]);
         }).ToList();
         return new ExistingTable((string?)table["TableType"], (string?)table["DataProviderId"], (string?)table["DataSourceId"], (string?)table["ExternalName"], columns,
             (string?)table["PrimaryNameAttribute"], LabelText(table["DisplayName"]), LabelText(table["DisplayCollectionName"]));
@@ -60,6 +60,17 @@ public static class TableGenerator
     /// <summary>A label's text: the user's localised label, else the first one; null when there is none.</summary>
     public static string? LabelText(JsonNode? label) =>
         (string?)label?["UserLocalizedLabel"]?["Label"] ?? (string?)label?["LocalizedLabels"]?.AsArray().FirstOrDefault()?["Label"];
+
+    /// <summary>Changes display labels in place: the metadata is read whole, relabelled and PUT back with MSCRM.MergeLabels.</summary>
+    public static async Task RelabelAsync(DataverseClient client, string path, IReadOnlyDictionary<string, string> labels, string? solution, CancellationToken ct)
+    {
+        var metadata = client.DryRun ? new JsonObject() : await client.GetAsync(path, ct) ?? throw new DataverseException($"GET {path} returned 404.");
+        foreach (var key in metadata.Select(p => p.Key).Where(k => k.StartsWith("@odata.", StringComparison.Ordinal) && k != "@odata.type").ToList())
+            metadata.Remove(key);
+        foreach (var (key, text) in labels)
+            metadata[key] = Label(text);
+        await client.WriteAsync(HttpMethod.Put, path, metadata, solution, ct, mergeLabels: true);
+    }
 
     public static JsonObject TablePayload(SourceSchema schema, string providerId, string dataSourceId) => new()
     {

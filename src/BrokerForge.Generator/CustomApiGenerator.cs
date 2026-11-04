@@ -22,7 +22,24 @@ public static class CustomApiGenerator
             (bool?)api["isfunction"] ?? false,
             api["CustomAPIRequestParameters"]!.AsArray().ToDictionary(p => (string)p!["uniquename"]!, p => ((int)p!["type"]!, (bool)p["isoptional"]!)),
             api["CustomAPIResponseProperties"]!.AsArray().ToDictionary(p => (string)p!["uniquename"]!, p => (int)p!["type"]!),
-            (string?)api["displayname"]);
+            (string?)api["displayname"], (string?)api["customapiid"]);
+    }
+
+    /// <summary>
+    /// The unique names of the Custom APIs in <paramref name="solution"/> that run BrokerForge's plug-in type. Scoped to
+    /// the source's solution: another source may use the same prefix, and its actions are not this source's to remove.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> InSolutionAsync(DataverseClient client, string? solutionId, string pluginTypeId, CancellationToken ct)
+    {
+        if (solutionId == null)
+            return Array.Empty<string>();
+        var ids = (await client.ListAsync($"solutioncomponents?$select=objectid&$filter=_solutionid_value eq {solutionId} and componenttype eq {Dependencies.CustomApi}", ct))
+            .Select(c => (string)c["objectid"]!).ToList();
+        var names = new List<string>();
+        foreach (var id in ids)
+            if (await client.GetAsync($"customapis({id})?$select=uniquename,_plugintypeid_value", ct) is { } api && GenerationPlan.SameId((string?)api["_plugintypeid_value"], pluginTypeId))
+                names.Add((string)api["uniquename"]!);
+        return names;
     }
 
     /// <summary>The Custom API with its parameters and response properties, created in one deep insert.</summary>

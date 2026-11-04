@@ -21,7 +21,7 @@ public sealed class DataverseClient(HttpClient http, Func<CancellationToken, Tas
     /// <summary>An OData string literal for a $filter: quotes doubled, then percent-encoded so &amp;, # and + survive the query string.</summary>
     public static string Literal(string value) => "'" + Uri.EscapeDataString(value.Replace("'", "''")) + "'";
 
-    /// <summary>"METHOD path" for each write made (or planned, in a dry run).</summary>
+    /// <summary>"METHOD path" for each write that succeeded (or is planned, in a dry run).</summary>
     public IReadOnlyList<string> Writes => _writes;
 
     /// <summary>The JSON body, or null when the resource does not exist (404).</summary>
@@ -41,16 +41,32 @@ public sealed class DataverseClient(HttpClient http, Func<CancellationToken, Tas
     }
 
     /// <summary>POST, PATCH or PUT. Returns the representation when the platform sends one; null in a dry run.</summary>
-    public async Task<JsonObject?> WriteAsync(HttpMethod method, string path, JsonObject? body, string? solution, CancellationToken ct)
+    public async Task<JsonObject?> WriteAsync(HttpMethod method, string path, JsonObject? body, string? solution, CancellationToken ct, bool mergeLabels = false)
     {
-        _writes.Add($"{method.Method} {path}");
         if (dryRun)
+        {
+            _writes.Add($"{method.Method} {path}");
             return null;
-        using var response = await SendAsync(method, path, body, solution, ct);
-        return await ReadAsync(response, method.Method, path, ct);
+        }
+        using var response = await SendAsync(method, path, body, solution, ct, mergeLabels);
+        var result = await ReadAsync(response, method.Method, path, ct);
+        _writes.Add($"{method.Method} {path}");
+        return result;
     }
 
-    private async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, JsonObject? body, string? solution, CancellationToken ct)
+    /// <summary>DELETE. A resource already gone (404) counts as deleted, so a re-run after a failure converges.</summary>
+    public async Task DeleteAsync(string path, CancellationToken ct)
+    {
+        if (!dryRun)
+        {
+            using var response = await SendAsync(HttpMethod.Delete, path, null, null, ct);
+            if (response.StatusCode != HttpStatusCode.NotFound)
+                await ReadAsync(response, "DELETE", path, ct);
+        }
+        _writes.Add($"DELETE {path}");
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, JsonObject? body, string? solution, CancellationToken ct, bool mergeLabels = false)
     {
         var request = new HttpRequestMessage(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await token(ct));
@@ -60,6 +76,8 @@ public sealed class DataverseClient(HttpClient http, Func<CancellationToken, Tas
         request.Headers.Add("Prefer", "return=representation");
         if (solution != null)
             request.Headers.Add("MSCRM.SolutionUniqueName", solution);
+        if (mergeLabels)
+            request.Headers.Add("MSCRM.MergeLabels", "true");
         if (body != null)
             request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
         return await http.SendAsync(request, ct);

@@ -14,7 +14,7 @@ static int Usage()
         usage:
           bf validate <descriptorsRoot> --schemas <schemasRoot>
           bf draft <openapi> --instance <name> --prefix <p> --out <dir> [--answers <json>] [--root <dir>]
-          bf generate --org <url> --schemas <dir> --descriptors <dir> --instance <name> --solution <unique> --publisher <unique> --host-url <url> --scope <scope> [--dry-run]
+          bf generate --org <url> --schemas <dir> --descriptors <dir> --instance <name> --solution <unique> --publisher <unique> --host-url <url> --scope <scope> [--dry-run] [--confirm <fingerprint>]
         """);
     return 2;
 }
