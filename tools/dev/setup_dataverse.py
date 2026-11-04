@@ -6,8 +6,10 @@ from `bf generate` (tools/dev/generate.sh).
 Idempotent: every step looks for its component first. Follows the phase 0 metadata rules
 (docs/findings/phase0.md section 1). Uses the az CLI user's token; no secret is read or written.
 
-Also creates the host managed identity's application user with the `BrokerForge host` role, which can read
-connection designs (web resources) and environment variables and nothing else (HLD D-34).
+Also creates the host managed identity's application user with the `BrokerForge host` role. The role reads
+connection designs (web resources) and environment variables (HLD D-34), and has what Generate needs to run as
+the host (HLD D-36): tables, columns, Custom APIs, forms, views, roles, solutions, web resources, environment
+variables and data source records, plus publishing. That is close to System Customizer.
 
 Usage: python3 setup_dataverse.py <signed plug-in dll>
        python3 setup_dataverse.py --host-user     (only the application user and role)
@@ -159,11 +161,21 @@ def ensure_env_var(schema, display, value, solution):
 HOST_ROLE = "BrokerForge host"
 # The host reads connection designs (web resources) and their environment variables with its own identity (HLD D-34).
 # environmentvariablevalue has no privilege of its own: its rows are read through the definition's (portal-1 findings).
-HOST_PRIVILEGES = ["prvReadWebResource", "prvReadEnvironmentVariableDefinition"]
+# Generate runs as the host too (HLD D-36, granted by Simon on 4 November 2026): it creates, changes and deletes the
+# components below, and sets the lookups (Append on the row, AppendTo on its target) named after them. A Custom API's
+# request parameters and response properties have no privileges of their own: the Custom API's cover them.
+_CRUD = ["Entity", "Attribute", "OptionSet", "CustomAPI", "Role",
+         "SystemForm", "Query", "WebResource", "EnvironmentVariableDefinition", "Solution", "Publisher", "Customization", "EntityDataSource",
+         "bf_brokerdatasource"]
+HOST_PRIVILEGES = sorted({f"prv{v}{c}" for c in _CRUD for v in ("Read", "Create", "Write", "Delete")}
+                         | {"prvPublishCustomization", "prvReadRelationship", "prvReadUser", "prvReadPluginType", "prvReadBusinessUnit", "prvReadEntityDataProvider",
+                            "prvAppendRole", "prvAppendToBusinessUnit", "prvAppendCustomAPI", "prvAppendToPluginType",
+                            "prvAppendToCustomAPI",
+                            "prvAppendSolution", "prvAppendToPublisher", "prvAppendToEnvironmentVariableDefinition"})
 
 
 def ensure_host_user(solution):
-    """The host managed identity's application user, with only the BrokerForge host role (read designs and their variables)."""
+    """The host managed identity's application user, with only the BrokerForge host role (HOST_PRIVILEGES)."""
     step("application user for the host identity, role BrokerForge host")
     client_id = subprocess.check_output(["az", "identity", "show", "-g", DEV["RG"], "-n", "bf-dev-id", "--query", "clientId", "-o", "tsv"], text=True).strip()
     bu = first("businessunits?$select=businessunitid&$filter=_parentbusinessunitid_value eq null")["businessunitid"]

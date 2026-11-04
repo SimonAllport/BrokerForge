@@ -28,16 +28,22 @@ Results of 4 November 2026 against the dev environment. Plan: `docs/superpowers/
 
 One live fix came out of this: `systemform` has no `createdon`, so the main form is now picked by its platform name, Information.
 
-## 3. Not done: generation as the host's own identity
+## 3. Generation as the host's own identity
 
-Granting the `BrokerForge host` role what generation needs is waiting on Simon. That role belongs to the host's managed identity. The privileges are create, write and delete on tables, columns, Custom APIs and roles, plus forms, views, solutions, web resources and variable definitions. Together that is close to a System Customizer.
+On 4 November Simon approved giving the `BrokerForge host` role what generation needs, and `tools/dev/setup_dataverse.py --host-user` now grants it. The list began as create, read, write and delete on the components Generate writes. The platform named three missing privileges, one run at a time: `prvReadRelationship`, `prvReadEntityDataSource` (the data source table is a virtual-table data source, so Create, Write and Delete were added too) and `prvReadUser` (needed for role changes). Custom API request parameters and response properties have no privileges of their own; the Custom API's cover them.
 
-The permission check in this session stopped the setup script from granting them, and the decision is a security one. So these were not run:
+Run inside the container with `tools/dev/generate-in-host.sh` against `WarehouseAPI`:
 
-- task 6 steps 1 and 2: the role update, the deploy, and `generate-in-host.sh` in the container;
-- the check of whether a role holder can grant table privileges it doesn't hold (spike section 5).
+| Step | Result |
+| --- | --- |
+| `--preview` | No table changes; the role found in `BrokerForgeWarehouse`; only the design publish listed |
+| Run | Succeeded, 0 writes, design v1 (the published design was unchanged) |
+| Delete taken off `WarehouseAPI user` by hand, run again | The preview lists the role change. The run failed at step `role` with 0 writes: HTTP 403, 0x80048d3c, "Add/Update/Removal of privilege(s) on a Role requires calling user to have the privilege(s) being modified", naming `prvDeleteext_stockitem` |
+| Restored as the az CLI user | The role holds Delete at organisation depth again |
 
-`tools/dev/setup_dataverse.py` is unchanged.
+**Honest constraint (spike section 5 answered).** A caller can only add a privilege to a role if it holds that privilege itself. Each generated table brings its own privileges (`prv<Verb><table>`), and the host's role doesn't hold them, so the host can't set up `<Instance> user` for a new table or change it for an existing one. Its own role can't take them on either, for the same reason. Every other part ran as the host. Which way round this goes is Simon's decision (it widens what the host identity can do, or moves one step to another identity), so it was stopped here and reported.
+
+Also found: `az containerapp exec` is rate-limited. After about eight calls in a few minutes it returns 429 with `retry-after: 600`.
 
 **Not verified:** done criterion 6 (a non-administrator gets Read through the generated role). The role exists in dev with the right privileges, but no non-administrator token was used.
 
@@ -56,8 +62,17 @@ A fresh review of the branch found three Important problems, each now fixed with
 
 A fourth problem is recorded as a constraint in D-36 instead: the one-job-at-a-time guard holds only within one host process. Plan 4 needs a lock outside the process before `bf_Generate` starts jobs.
 
-## 5. Tests
+## 5. Deferred minors, fixed
 
-- Generator: 62 tests.
-- Contract: 321 tests, 16 of them new for jobs and the admin command.
+- Any failure after the checks (a network error, an HttpClient timeout, a token failure) names the step and the writes made, as Dataverse errors already did. The caller's own cancellation passes through.
+- Dependents the platform deletes with the component (dependency type 1) no longer block. Built-in component types are named, and types from 10000 take their names from `solutioncomponentdefinitions`.
+- The role is the one of that name in the source's solution. A hand-made role of the name is refused before any write.
+- A dry run plans removals and recreates without `--confirm`, and prints the fingerprint a real run will need.
+- The busy guard treats instance names case-insensitively, and a job's final state is stored before its key is freed.
+- `GenerationJob.NeedsConfirmation` replaces matching failure text for the admin command's exit 4.
+
+## 6. Tests
+
+- Generator: 70 tests.
+- Contract: 324 tests, 19 of them new for jobs and the admin command.
 - The full solution passes.
