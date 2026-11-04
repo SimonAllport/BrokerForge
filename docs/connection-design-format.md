@@ -75,6 +75,33 @@ Root:
 | `keyKind` | string | yes | Key kind. |
 | `operations` | object, string to string | yes | Table message to operation name. |
 
+## Answer keys
+
+`answers` holds the admin's answers to the draft service's questions (HLD D-35), as string to string. `<path>` is a column's source JSONPath, such as `$.reference` or `$.state.code`, and `<op>` is an operation name, which is the operationId with a lower-case first letter. An answer whose key no question asks is not applied: the review lists it as unused. An answer that isn't valid for its question is refused, and the question stays open. An empty string counts as no answer.
+
+| Key | Answer | Asked when |
+| --- | --- | --- |
+| `table.collection` | a collection path | more than one collection has an item path |
+| `table.name` | logical name, `<prefix>_` then a lower-case letter, then letters, digits or `_`; at most 50 characters | optional; proposed from the collection |
+| `table.displayName`, `table.collectionName` | 1–100 characters | optional; proposed |
+| `table.key` | a top-level scalar path | the item has no scalar `id` |
+| `table.primaryName` | a string column's path | no string property is called `name` |
+| `column.<path>.name` | logical name as for `table.name`; unique, and not `<table>id` | optional; proposed |
+| `column.<path>.displayName` | 1–100 characters | optional; proposed |
+| `column.<path>.maxLength` | 1–4000 | a string with no `maxLength` |
+| `column.<path>.precision` | 0–10 | a number whose `multipleOf` isn't a power of ten from 1 to 0.0000000001 |
+| `op.<op>.use` | `yes` or `no` | optional; `yes` when absent |
+| `op.<op>.paging` | `cursor`, `offset`, `pageNumber` or `link`, whichever the shape supports, or `none` | every list |
+| `op.<op>.pageBase` | `0` or `1` | `pageNumber`, when `page` has no `minimum` |
+| `op.<op>.pageSizeMax` | 1–5000 | the page size parameter has no `maximum` |
+| `op.<op>.filter.<param>` | `none`, `eq`, `in`, `eq,in` or `like` (string); `none`, `eq`, `in` or `eq,in` (option set); `none` or `eq` (other types) | a query parameter that matches a column |
+| `op.<op>.sort` | `none`, `asc`, `-{field}` or `{field} desc` | a `sort`, `orderBy` or `order_by` parameter |
+| `op.<op>.sort.<path>` | the source's sort field, 1–100 characters, no spaces | optional, once the sort isn't `none`; at least one is needed |
+| `op.<op>.sortStable` | `yes` or `no` | every list |
+| `op.<op>.value.<param>` | 1–200 characters, sent as a static value | a path parameter that isn't the record key, or a required query parameter that matches no column |
+| `op.<op>.error.<status>` | `NotFound`, `Conflict`, `Forbidden`, `Validation` or `Fail` | a documented status other than 2xx, 403, 404, 409 and 422 |
+| `op.<op>.error.<status>.message` | a string path of the error body, or `none`; with no documented body, an optional JSONPath such as `$.error.detail` | a status that maps to `Validation` |
+
 ## Per-environment values
 
 No key in the design is per-environment. Those values are `EnvironmentSettings(BaseUrl, AuthOverrides)` and are supplied as Dataverse environment variables:

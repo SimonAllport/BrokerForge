@@ -13,10 +13,12 @@ components:
         reference: { type: string, maxLength: 20 }
         state:
           type: object
+          required: [code]
           properties:
             code: { type: string, enum: [open, shipped, cancelled] }
         customer:
           type: object
+          required: [ref]
           properties:
             ref: { type: string, maxLength: 100 }
         placedAt: { type: string, format: date-time }
@@ -29,6 +31,7 @@ components:
               qty: { type: integer }
         totals:
           type: object
+          required: [gross]
           properties:
             gross: { type: number }
     OrderInput:

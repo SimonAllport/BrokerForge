@@ -166,7 +166,7 @@ tools/dev/deploy.sh                             # Azure dev env (infra/main.bice
 tools/dev/setup-dataverse.sh                    # sign + register core: assembly, both plug-in types, provider, bf_brokerdatasource, bf_HostUrl/bf_HostScope
 tools/dev/generate.sh OrdersAPI BrokerForgeOrders [--dry-run]   # bf generate: data source record, virtual table, columns, Custom APIs
 dotnet run --project tools/BrokerForge.Cli -- validate descriptors --schemas schemas   # what CI runs
-dotnet run --project tools/BrokerForge.Cli -- draft <openapi> --instance <Name> --prefix ext --table ext_x --out out
+dotnet run --project tools/BrokerForge.Cli -- draft <openapi> --instance <Name> --prefix ext --out out [--answers a.json]   # exit 3: fill out/<Name>-questions.json, run again
 tools/dev/acceptance.sh                         # Orders: phase 1 done criteria + option set writes, lines read back
 tools/dev/acceptance_inventory.sh               # Inventory: the phase 2 onboarding acceptance
 tools/dev/setup-connect-app.sh                  # phase 3 Entra apps (connect app + Tickets API), before deploy.sh; TICKETS_BOB_OID=<second user>

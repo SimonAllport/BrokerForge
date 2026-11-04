@@ -173,11 +173,12 @@ public static class Drafter
             return q.Value!;
         }
 
-        /// <summary>A logical name: the prefix, an underscore, then lower-case ASCII letters and digits; at most 50 characters.</summary>
+        /// <summary>A logical name: the prefix, an underscore, then lower-case ASCII letters, digits and underscores starting with a letter; at most 50 characters.</summary>
         private string? NameCheck(string name) =>
             name.Length <= 50 && name.StartsWith(o.Prefix + "_", StringComparison.Ordinal) && name.Length > o.Prefix.Length + 1
-            && name[(o.Prefix.Length + 1)..].All(c => char.IsAsciiDigit(c) || char.IsAsciiLetterLower(c))
-                ? null : $"must be {o.Prefix}_ followed by lower-case letters and digits, at most 50 characters";
+            && char.IsAsciiLetterLower(name[o.Prefix.Length + 1])
+            && name[(o.Prefix.Length + 1)..].All(c => char.IsAsciiDigit(c) || char.IsAsciiLetterLower(c) || c == '_')
+                ? null : $"must be {o.Prefix}_ followed by a lower-case letter, then lower-case letters, digits and underscores, at most 50 characters";
 
         private static string? DisplayCheck(string name) =>
             name.Trim().Length > 0 && name.Length <= 100 && name == name.Trim() ? null : "must be 1 to 100 characters, with no leading or trailing spaces";

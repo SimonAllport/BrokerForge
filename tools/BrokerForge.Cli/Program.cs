@@ -13,7 +13,7 @@ static int Usage()
     Console.Error.WriteLine("""
         usage:
           bf validate <descriptorsRoot> --schemas <schemasRoot>
-          bf draft <openapi> --instance <name> --prefix <p> --table <logical> --out <dir> [--root <dir>]
+          bf draft <openapi> --instance <name> --prefix <p> --out <dir> [--answers <json>] [--root <dir>]
           bf generate --org <url> --schemas <dir> --descriptors <dir> --instance <name> --solution <unique> --publisher <unique> --host-url <url> --scope <scope> [--dry-run]
         """);
     return 2;
