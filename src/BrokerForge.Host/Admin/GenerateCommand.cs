@@ -10,19 +10,21 @@ namespace BrokerForge.Host.Admin;
 /// One-off admin command (until plan 4's bf_Generate): runs one generation job as the host's own identity, inside the
 /// host container (managed identity) or locally (DefaultAzureCredential falls back to the az CLI user).
 /// <code>dotnet BrokerForge.Host.dll generate --environment &lt;id&gt; --instance &lt;Instance&gt; --solution &lt;S&gt; --publisher &lt;P&gt;
-///   (--design-file &lt;path&gt; | --from-environment) [--base-url &lt;url&gt;] [--auth-file &lt;path&gt;] [--preview] [--confirm &lt;fingerprint&gt;]</code>
+///   (--design-file &lt;path&gt; | --from-environment) [--base-url &lt;url&gt;] [--auth-file &lt;path&gt;] [--preview] [--confirm &lt;fingerprint&gt;] [--with-role]</code>
 /// <c>--from-environment</c> regenerates from the design already published there. It prints the change list, the
-/// parts and the result; never the design text. Exit codes: 0 done (or previewed), 1 failed, 2 usage, 4 the changes
-/// need confirming with <c>--confirm</c> and the printed fingerprint.
+/// parts and the result; never the design text. The host's identity can't grant a generated table's privileges, so the
+/// role is left to an administrator and printed as pending; <c>--with-role</c> applies it too, for an administrator running
+/// the command locally as themselves. Exit codes: 0 done (or previewed), 1 failed, 2 usage, 3 done except what an
+/// administrator still has to do (printed), 4 the changes need confirming with <c>--confirm</c> and the printed fingerprint.
 /// </summary>
 public static class GenerateCommand
 {
     public const string Name = "generate";
 
     private const string Usage = "usage: generate --environment <id> --instance <Instance> --solution <unique> --publisher <unique> "
-        + "(--design-file <path> | --from-environment) [--base-url <url>] [--auth-file <path>] [--preview] [--confirm <fingerprint>]";
+        + "(--design-file <path> | --from-environment) [--base-url <url>] [--auth-file <path>] [--preview] [--confirm <fingerprint>] [--with-role]";
 
-    private static readonly string[] Flags = ["from-environment", "preview"];
+    private static readonly string[] Flags = ["from-environment", "preview", "with-role"];
     private static readonly string[] Values = ["environment", "instance", "solution", "publisher", "design-file", "base-url", "auth-file", "confirm"];
 
     /// <summary>Splits the admin command off the host's arguments; <paramref name="command"/> is null for any other start.</summary>
@@ -73,7 +75,7 @@ public static class GenerateCommand
             return await Fail(output, $"The design is for {design.Instance}, not {instance}.", 1);
 
         var request = new GenerationRequest(environment, design, options["solution"], options["publisher"], options.GetValueOrDefault("base-url"), auth,
-            options.GetValueOrDefault("confirm"), $"generate-{Guid.NewGuid():N}");
+            options.GetValueOrDefault("confirm"), $"generate-{Guid.NewGuid():N}", ApplyRole: options.ContainsKey("with-role"));
         try
         {
             var preview = await jobs.PreviewAsync(request, ct);
@@ -88,6 +90,8 @@ public static class GenerateCommand
                 await output.WriteLineAsync($" ! {b.Change.Text} is blocked: {b.Dependent} uses it");
             foreach (var p in preview.Parts)
                 await output.WriteLineAsync(" + " + p);
+            foreach (var p in preview.Pending)
+                await output.WriteLineAsync(" ? needs an administrator: " + p);
             if (options.ContainsKey("preview"))
                 return 0;
             if (preview.Changes.Refusals.Count > 0 || preview.Blocked.Count > 0)
@@ -97,8 +101,10 @@ public static class GenerateCommand
 
             var job = await jobs.WaitAsync(jobs.Start(request).Id);
             await output.WriteLineAsync($"{instance}: {job.State}, {job.Writes.Count} write(s){(job.DesignVersion is { } v ? $", design v{v}" : "")}");
+            foreach (var p in job.Pending)
+                await output.WriteLineAsync($"{instance}: needs an administrator: {p} (run this command as an administrator with --with-role)");
             if (job.State == JobState.Succeeded)
-                return 0;
+                return job.Pending.Count > 0 ? 3 : 0;
             return await Fail(output, job.Failure ?? "failed", job.NeedsConfirmation ? 4 : 1);
         }
         catch (Exception ex) when (ex is BrokerForge.Abstractions.ConfigurationException or GenerationBusyException or BrokerForge.Generator.GenerationRefusedException

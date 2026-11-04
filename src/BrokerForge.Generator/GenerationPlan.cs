@@ -8,8 +8,13 @@ namespace BrokerForge.Generator;
 /// <param name="Messages">The table messages the descriptors bind (RetrieveMultiple, Retrieve, Create, Update, Delete); they decide the role's privileges.</param>
 /// <param name="ConfirmedFingerprint">The fingerprint of the change list the admin confirmed. Needed for any change other than an add.</param>
 /// <param name="Design">The connection design to publish with its parts, last (DesignPublisher); null to leave the design alone.</param>
+/// <summary>
+/// <see cref="ApplyRole"/> false leaves the role to an administrator: Dataverse lets a caller add a privilege to a role
+/// only when it holds that privilege itself, and the host doesn't hold a generated table's (portal-3 findings section 3).
+/// The role change is then reported as pending, never skipped silently.
+/// </summary>
 public sealed record GenerateOptions(string Instance, string Solution, string Publisher, string HostUrl, string Scope, bool DryRun,
-    IReadOnlySet<string>? Messages = null, string? ConfirmedFingerprint = null, DesignPublish? Design = null);
+    IReadOnlySet<string>? Messages = null, string? ConfirmedFingerprint = null, DesignPublish? Design = null, bool ApplyRole = true);
 
 /// <summary>A design and this environment's own values for its two variables (null leaves a value as it is).</summary>
 public sealed record DesignPublish(BrokerForge.Connections.ConnectionDesign Design, string? BaseUrl, string? AuthJson);
@@ -22,7 +27,8 @@ public sealed record Blocked(Change Change, string Dependent);
 /// need no confirmation. Generate applies the run only when nothing is refused or blocked and the change list's
 /// fingerprint is the confirmed one.
 /// </summary>
-public sealed record GenerationPreview(ChangeList Changes, IReadOnlyList<Blocked> Blocked, IReadOnlyList<string> Parts)
+/// <summary><see cref="Pending"/> lists what this run will not do and an administrator must (the role, when <see cref="GenerateOptions.ApplyRole"/> is false).</summary>
+public sealed record GenerationPreview(ChangeList Changes, IReadOnlyList<Blocked> Blocked, IReadOnlyList<string> Parts, IReadOnlyList<string> Pending)
 {
     public bool NeedsConfirmation => Changes.Changes.Any(c => c.Kind is not (ChangeKind.AddTable or ChangeKind.AddColumn or ChangeKind.AddApi));
 }
@@ -42,8 +48,12 @@ public sealed class GenerationFailedException(string step, IReadOnlyList<string>
     public IReadOnlyList<string> WritesDone { get; } = writesDone;
 }
 
-/// <summary><see cref="Writes"/> lists the write calls made, or planned in a dry run; empty when nothing changed. <see cref="DesignVersion"/> is the design version now published, when a design was given.</summary>
-public sealed record GenerationResult(IReadOnlyList<string> Writes, int? DesignVersion = null);
+/// <summary><see cref="Writes"/> lists the write calls made, or planned in a dry run; empty when nothing changed. <see cref="DesignVersion"/> is the design version now published, when a design was given. <see cref="Pending"/> is what an administrator still has to do.</summary>
+public sealed record GenerationResult(IReadOnlyList<string> Writes, int? DesignVersion = null, IReadOnlyList<string>? Pending = null)
+{
+    /// <summary>What an administrator still has to do; empty when the run did everything.</summary>
+    public IReadOnlyList<string> Pending { get; init; } = Pending ?? Array.Empty<string>();
+}
 
 /// <summary>The schema and the environment disagree in a way the generator will not change. Nothing was written.</summary>
 public sealed class GenerationRefusedException(IReadOnlyList<string> differences)

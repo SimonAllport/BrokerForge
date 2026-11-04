@@ -90,7 +90,7 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
             client = clients.Create(org);
             var (schema, options) = await OptionsAsync(client, r, timeout.Token);
             var result = await Generator.Generator.RunAsync(client, schema, options, timeout.Token);
-            job = job with { State = JobState.Succeeded, Writes = result.Writes, DesignVersion = result.DesignVersion, Finished = DateTimeOffset.UtcNow };
+            job = job with { State = JobState.Succeeded, Writes = result.Writes, DesignVersion = result.DesignVersion, Pending = result.Pending, Finished = DateTimeOffset.UtcNow };
             configs.Invalidate(r.EnvironmentId);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
@@ -158,7 +158,7 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
         var hostUrl = await VariableAsync(client, "bf_HostUrl", ct);
         var scope = await VariableAsync(client, "bf_HostScope", ct);
         return (schema, new GenerateOptions(r.Design.Instance, r.Solution, r.Publisher, hostUrl, scope, DryRun: false, messages, r.ConfirmedFingerprint,
-            new DesignPublish(r.Design, r.BaseUrl, r.AuthJson)));
+            new DesignPublish(r.Design, r.BaseUrl, r.AuthJson), r.ApplyRole));
     }
 
     /// <summary>An environment variable's current value, else its default. The core setup sets bf_HostUrl and bf_HostScope.</summary>

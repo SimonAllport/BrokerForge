@@ -51,7 +51,7 @@ public static class Generator
         {
             throw new GenerationFailedException(step, client.Writes.ToList(), ex);
         }
-        return new GenerationResult(client.Writes, version);
+        return new GenerationResult(client.Writes, version, preview.Pending);
     }
 
     private static async Task<State> ReadAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, CancellationToken ct)
@@ -121,6 +121,7 @@ public static class Generator
         }
 
         var described = new List<string>();
+        var pending = new List<string>();
         if (schema.Table != null)
         {
             var all = FormsAndViews.Order(schema, schema.Columns.Keys);
@@ -132,12 +133,12 @@ public static class Generator
                     ? $"create role {RoleGenerator.RoleName(o.Instance)} with {string.Join(", ", RoleGenerator.Wanted(o.Messages))} on {schema.Table}"
                     : await RoleGenerator.DescribeAsync(client, schema.Table, o.Instance, o.Messages, (string?)solution?["solutionid"], ct);
                 if (role != null)
-                    described.Add(role);
+                    (o.ApplyRole ? described : pending).Add(role);
             }
         }
         if (o.Design != null)
             described.Add($"publish the {o.Instance} design and its environment variables bf_{o.Instance}_BaseUrl and bf_{o.Instance}_Auth (the design version goes up only if it changed)");
-        return new State(providerId, pluginTypeId, publisher, solution, dataSource, table, apis, parts, prefix, new GenerationPreview(plan, blocked, described));
+        return new State(providerId, pluginTypeId, publisher, solution, dataSource, table, apis, parts, prefix, new GenerationPreview(plan, blocked, described, pending));
     }
 
     private static async Task<int?> ApplyAsync(DataverseClient client, SourceSchema schema, GenerateOptions o, State s, Action<string> at, CancellationToken ct)
@@ -248,7 +249,7 @@ public static class Generator
             await client.WriteAsync(HttpMethod.Patch, $"customapis({s.Apis[change.Target]!.Id})", new JsonObject { ["displayname"] = name, ["description"] = name }, null, ct);
         }
 
-        if (schema.Table != null && o.Messages != null)
+        if (schema.Table != null && o.Messages != null && o.ApplyRole)
         {
             at("role");
             if (client.DryRun && changes.Any(c => c.Kind == ChangeKind.AddTable))

@@ -240,10 +240,34 @@ public class GenerationJobTests
         var design = EnvironmentConfigTests.Warehouse();
         var (code, output) = await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext",
             "--design-file", DesignFile(design), "--base-url", "https://inventory.contoso.example");
-        Assert.True(code == 0, output);
+        Assert.True(code == 3, output);
         Assert.Contains("Succeeded", output);
         Assert.Contains("design v1", output);
+        Assert.Contains("needs an administrator: create role WarehouseAPI user with Read", output);
         Assert.DoesNotContain(design.OpenApi[..Math.Min(40, design.OpenApi.Length)], output);
+    }
+
+    [Fact]
+    public async Task Job_RoleLeftToAdmin_PendingNoRoleWrites()
+    {
+        var jobs = Jobs();
+        var done = await jobs.WaitAsync(jobs.Start(Request()).Id);
+        Assert.True(done.State == JobState.Succeeded, done.Failure);
+        Assert.StartsWith("create role WarehouseAPI user with ", done.Pending.Single());
+        Assert.DoesNotContain(_fakes[OrgA].Writes, w => w.Path.StartsWith("roles", StringComparison.Ordinal));
+        var admin = await jobs.WaitAsync(jobs.Start(Request() with { ApplyRole = true }).Id);
+        Assert.Empty(admin.Pending);
+        Assert.Contains(_fakes[OrgA].Writes, w => w.Path == "roles");
+    }
+
+    [Fact]
+    public async Task Command_WithRole_AppliesRoleExit0()
+    {
+        var (code, output) = await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext",
+            "--design-file", DesignFile(EnvironmentConfigTests.Warehouse()), "--with-role");
+        Assert.True(code == 0, output);
+        Assert.DoesNotContain("needs an administrator", output);
+        Assert.Contains(_fakes[OrgA].Writes, w => w.Path == "roles");
     }
 
     [Fact]
@@ -278,7 +302,7 @@ public class GenerationJobTests
         Assert.Equal(before, _fakes[OrgA].Writes.Count());
         (code, output) = await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext",
             "--design-file", changed, "--confirm", fingerprint);
-        Assert.True(code == 0, output);
+        Assert.True(code == 3, output); // done; the role is still the administrator's
         Assert.Contains("design v2", output);
     }
 

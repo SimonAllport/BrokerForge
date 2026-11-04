@@ -276,6 +276,32 @@ public class ChangeApplyTests
     }
 
     [Fact]
+    public async Task Run_RoleLeftToAdmin_PendingNamedNoRoleWrites()
+    {
+        var fake = new FakeDataverse();
+        var asHost = Options with { ApplyRole = false };
+        var preview = await Preview(fake, Schema(), asHost);
+        Assert.Equal(new[] { "create role InventoryAPI user with Read, Create, Write, Delete on ext_item" }, preview.Pending);
+        Assert.DoesNotContain(preview.Parts, p => p.Contains("role"));
+        var result = await Run(fake, Schema(), asHost);
+        Assert.Equal(preview.Pending, result.Pending);
+        Assert.DoesNotContain(fake.Writes, w => w.Path.StartsWith("roles", StringComparison.Ordinal));
+
+        await Run(fake, Schema());
+        Assert.Empty((await Preview(fake, Schema(), asHost)).Pending);
+        Assert.Empty((await Run(fake, Schema(), asHost)).Pending);
+    }
+
+    [Fact]
+    public async Task Run_RoleLeftToAdmin_HandMadeRoleStillRefused()
+    {
+        var fake = new FakeDataverse();
+        fake.AddRole("InventoryAPI user");
+        await Assert.ThrowsAsync<GenerationRefusedException>(() => Run(fake, Schema(), Options with { ApplyRole = false }));
+        Assert.Empty(fake.Writes);
+    }
+
+    [Fact]
     public async Task Run_NetworkFailureHalfway_FailedNamingStepAndWrites()
     {
         var fake = new FakeDataverse { ThrowWrite = 4 };
