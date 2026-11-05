@@ -192,7 +192,9 @@ HOST_PRIVILEGES = sorted({f"prv{v}{c}" for c in _CRUD for v in ("Read", "Create"
                             # The admin app (plan 4): connection rows read and written (progress), teams read for the administrator check.
                             "prvReadbf_connection", "prvWritebf_connection", "prvReadTeam",
                             # A new table gets its default control configuration (found creating one as the host, plan 4).
-                            "prvCreateCustomControlDefaultConfig", "prvWriteCustomControlDefaultConfig", "prvDeleteCustomControlDefaultConfig"})
+                            "prvCreateCustomControlDefaultConfig", "prvWriteCustomControlDefaultConfig", "prvDeleteCustomControlDefaultConfig",
+                            # Creating a table queues system jobs, which the creator must be able to read and own (Simon, 5 November 2026).
+                            "prvReadAsyncOperation", "prvCreateAsyncOperation", "prvWriteAsyncOperation", "prvAppendAsyncOperation"})
 
 
 def ensure_host_user(solution):
