@@ -29,9 +29,13 @@ public sealed record EndpointReview(string Operation, string Method, string Path
 
 public sealed record ColumnProposal(string SourcePath, string LogicalName, string DisplayName, string Type);
 
-/// <summary>The proposed table. <see cref="Collection"/> is null until the collection question is answered.</summary>
+/// <summary>
+/// The proposed table. <see cref="Collection"/> is null until the collection question is answered. <see cref="KeyKind"/> is
+/// the key's type as a key kind (Guid for a uuid string, Int64 for an int64 integer, Int32 for another integer, String
+/// otherwise), null while the key is unknown.
+/// </summary>
 public sealed record TableProposal(string? Collection, string LogicalName, string DisplayName, string CollectionName, string? KeyPath, string? PrimaryName,
-    IReadOnlyList<ColumnProposal> Columns, IReadOnlyList<Question> Questions);
+    IReadOnlyList<ColumnProposal> Columns, IReadOnlyList<Question> Questions, string? KeyKind = null);
 
 /// <summary>
 /// What the admin reviews (spec 5, screen 2). <see cref="Result"/> is set only when nothing is open: no problems, at least

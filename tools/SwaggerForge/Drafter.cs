@@ -33,6 +33,7 @@ public static class Drafter
         private List<Field>? _fields;
         private string? _tableUnsupported;
         private string? _keyPath;
+        private string? _keyKind;
         private string? _primaryName;
         private string _table = "";
         private string _tableDisplay = "";
@@ -175,7 +176,7 @@ public static class Drafter
             if (tableUnused)
                 _notes.Add("No table endpoint is in use, so no table is drafted.");
             var table = tableUnused || (resource == null && candidates.Count < 2) ? null : new TableProposal(resource?.Collection, _table, _tableDisplay, _tableCollection, _keyPath, _primaryName,
-                (_fields ?? new()).Select(f => new ColumnProposal(f.SourcePath, f.Column, f.DisplayName, f.Type)).ToList(), _tableQuestions);
+                (_fields ?? new()).Select(f => new ColumnProposal(f.SourcePath, f.Column, f.DisplayName, f.Type)).ToList(), _tableQuestions, _keyKind);
 
             var used = endpoints.Where(e => e.Status != EndpointStatus.NotUsed && e.Status != EndpointStatus.Unsupported).ToList();
             DraftResult? result = null;
@@ -311,6 +312,13 @@ public static class Drafter
                 _keyProp = scalars.FirstOrDefault(n => "$" + Heuristics.Step(n) == key.Answer);
             }
             _keyPath = _keyProp == null ? null : "$" + Heuristics.Step(_keyProp);
+            _keyKind = _keyProp == null ? null : item.Properties[_keyProp] switch
+            {
+                { Type: "string", Format: "uuid" } => "Guid",
+                { Type: "integer", Format: "int64" } => "Int64",
+                { Type: "integer" } => "Int32",
+                _ => "String",
+            };
 
             var fields = new List<Field>();
             var asked = new Dictionary<string, List<Question>>(StringComparer.Ordinal);

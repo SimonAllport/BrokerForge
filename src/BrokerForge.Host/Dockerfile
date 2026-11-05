@@ -3,6 +3,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY src/ src/
+COPY tools/SwaggerForge/ tools/SwaggerForge/
 RUN dotnet publish src/BrokerForge.Host/BrokerForge.Host.csproj -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0

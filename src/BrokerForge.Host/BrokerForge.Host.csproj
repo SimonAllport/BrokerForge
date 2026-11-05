@@ -22,6 +22,7 @@
     <ProjectReference Include="..\BrokerForge.Adapters.Rest\BrokerForge.Adapters.Rest.csproj" />
     <ProjectReference Include="..\BrokerForge.Connections\BrokerForge.Connections.csproj" />
     <ProjectReference Include="..\BrokerForge.Generator\BrokerForge.Generator.csproj" />
+    <ProjectReference Include="..\..\tools\SwaggerForge\SwaggerForge.csproj" />
   </ItemGroup>
 
 </Project>
