@@ -7,14 +7,25 @@ internal static class ConnectPages
 {
     private static string E(string? value) => HtmlEncoder.Default.Encode(value ?? "");
 
-    public static IResult Page(int status, string title, string body) => Results.Content(
+    public static IResult Page(int status, string title, string body) => new NoFraming(Results.Content(
         $$"""
         <!doctype html>
         <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{{E(title)}}</title>
         <style>body{font:16px/1.5 system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:0 1rem}label{display:block;margin:.5rem 0}input{width:100%}button{margin-top:.75rem}</style>
         </head><body><h1>{{E(title)}}</h1>{{body}}</body></html>
-        """, "text/html; charset=utf-8", statusCode: status);
+        """, "text/html; charset=utf-8", statusCode: status));
+
+    /// <summary>The pages are forms (keys, the role step, connect): no other site may frame them.</summary>
+    private sealed class NoFraming(IResult inner) : IResult
+    {
+        public Task ExecuteAsync(HttpContext http)
+        {
+            http.Response.Headers.ContentSecurityPolicy = "frame-ancestors 'none'";
+            http.Response.Headers.XFrameOptions = "DENY";
+            return inner.ExecuteAsync(http);
+        }
+    }
 
     public static IResult Message(int status, string title, string message) => Page(status, title, $"<p>{E(message)}</p>");
 

@@ -4,6 +4,8 @@
     <TargetFramework>net462</TargetFramework>
     <LangVersion>7.3</LangVersion>
     <RootNamespace>BrokerForge.Plugin</RootNamespace>
+    <!-- The plug-in is committed inside solution/ in a public repo: keep the build machine's paths out of it. -->
+    <PathMap>$(MSBuildProjectDirectory)=/_/</PathMap>
     <AssemblyVersion>0.1.0.0</AssemblyVersion>
     <FileVersion>0.1.0.0</FileVersion>
   </PropertyGroup>

@@ -92,8 +92,13 @@ internal sealed partial class AdminDataverse
     [GeneratedRegex(@"^(systemusers|teams)\(([0-9a-f-]{36})\)/(systemuserroles_association|teammembership_association|teamroles_association)")]
     private static partial Regex Related();
 
+    /// <summary>Requests whose path starts with this answer 403, as Dataverse does when the host role lacks a privilege.</summary>
+    public string? Forbid { get; set; }
+
     private HttpResponseMessage? Route(string method, string path, JsonObject? body)
     {
+        if (Forbid != null && path.StartsWith(Forbid, StringComparison.Ordinal))
+            return Json(new JsonObject { ["error"] = new JsonObject { ["code"] = "0x80040220", ["message"] = "SecLib::CheckPrivilege failed (test)" } }, HttpStatusCode.Forbidden);
         if (RowPath().Match(path) is { Success: true } r)
         {
             var id = Guid.Parse(r.Groups[1].Value);

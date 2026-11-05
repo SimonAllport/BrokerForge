@@ -8,6 +8,8 @@ using BrokerForge.Host.Config;
 using BrokerForge.Host.Generation;
 using BrokerForge.Host.Ingress;
 using BrokerForge.SwaggerForge;
+using BrokerForge.Schema;
+using BrokerForge.Descriptors.Parsing;
 
 namespace BrokerForge.Host.Admin;
 
@@ -34,6 +36,9 @@ public sealed class AdminApi(IGenerationClientFactory clients, GenerationJobs jo
     public async Task<CanonicalResponse> HandleAsync(CanonicalRequest request, CancellationToken ct)
     {
         var correlationId = request.CorrelationId!;
+        // An async call runs as nobody who clicked anything: never an administrator's, whatever the registration allows.
+        if (request.Caller?.Async == true)
+            throw new CallerRejectedException("BrokerForge admin messages cannot run async: " + AdminCheck.Refusal);
         var host = clients.Create(jobs.OrgUrlOf(request.EnvironmentId!));
         await AdminCheck.RequireAsync(host, request.Caller?.UserObjectId, correlationId, ct);
         var outputs = request.Message switch
@@ -60,17 +65,26 @@ public sealed class AdminApi(IGenerationClientFactory clients, GenerationJobs jo
         if (review.Ready)
         {
             var design = DesignBuilder.Build(row, review, correlationId);
-            var p = await jobs.PreviewAsync(new GenerationRequest(env, design, DesignBuilder.SolutionOf(row), DesignBuilder.PublisherOf(row), row.BaseUrl, null, null, correlationId), ct);
-            preview = new JsonObject
+            try
             {
-                ["fingerprint"] = p.Changes.Fingerprint,
-                ["changes"] = Strings(p.Changes.Changes.Select(c => c.Text)),
-                ["refused"] = Strings(p.Changes.Refusals),
-                ["blocked"] = Strings(p.Blocked.Select(b => $"{b.Change.Text} is blocked: {b.Dependent} uses it")),
-                ["parts"] = Strings(p.Parts),
-                ["pending"] = Strings(p.Pending),
-                ["needsConfirmation"] = p.NeedsConfirmation,
-            };
+                var p = await jobs.PreviewAsync(new GenerationRequest(env, design, DesignBuilder.SolutionOf(row), DesignBuilder.PublisherOf(row), row.BaseUrl, null, null, correlationId), ct);
+                preview = new JsonObject
+                {
+                    // The change list's fingerprint and the design's, so an answer that changes only a descriptor is caught too.
+                    ["fingerprint"] = $"{p.Changes.Fingerprint}-{DesignFingerprint(design)}",
+                    ["changes"] = Strings(p.Changes.Changes.Select(c => c.Text)),
+                    ["refused"] = Strings(p.Changes.Refusals),
+                    ["blocked"] = Strings(p.Blocked.Select(b => $"{b.Change.Text} is blocked: {b.Dependent} uses it")),
+                    ["parts"] = Strings(p.Parts),
+                    ["pending"] = Strings(p.Pending),
+                    ["needsConfirmation"] = p.NeedsConfirmation,
+                };
+            }
+            catch (Exception ex) when (ex is GenerationRefusedException or DataverseException or SchemaException or DescriptorException or BrokerForge.Abstractions.ConfigurationException)
+            {
+                // The review is fine; working out what Generate would change was not. Say why, rather than a bare 500.
+                preview = new JsonObject { ["error"] = ex.Message };
+            }
         }
         var secretNames = DesignBuilder.Auth(row).SecretNames;
         var keys = new JsonArray();
@@ -100,11 +114,22 @@ public sealed class AdminApi(IGenerationClientFactory clients, GenerationJobs jo
         await ConnectionList.RowAsync(host, row.Name, ct, correlationId);
         var design = DesignBuilder.Build(row, DesignBuilder.Review(row, correlationId), correlationId);
         var fingerprint = request.Inputs?.FirstOrDefault(c => c.Col == "Fingerprint")?.Value is { Length: > 0 } f ? f : null;
+        string? changes = null;
+        if (fingerprint != null)
+        {
+            var parts = fingerprint.Split('-');
+            if (parts.Length != 2)
+                throw new MappedSourceException(SourceErrorKinds.Validation, $"Fingerprint {fingerprint} is not one bf_ReadDefinition returned.", correlationId);
+            if (parts[1] != DesignFingerprint(design))
+                throw new MappedSourceException(SourceErrorKinds.Conflict,
+                    $"The connection's answers or definition changed since the review ({fingerprint}); nothing was generated. Read the definition again and confirm the new list.", correlationId);
+            changes = parts[0];
+        }
         GenerationJob job;
         try
         {
             job = await jobs.StartAsync(new GenerationRequest(request.EnvironmentId!, design, DesignBuilder.SolutionOf(row), DesignBuilder.PublisherOf(row), row.BaseUrl, null,
-                fingerprint, correlationId, ApplyRole: false, ConnectionId: id), ct);
+                changes, correlationId, ApplyRole: false, ConnectionId: id), ct);
         }
         catch (GenerationBusyException ex)
         {
@@ -119,6 +144,11 @@ public sealed class AdminApi(IGenerationClientFactory clients, GenerationJobs jo
         var config = await (configs ?? throw new InvalidOperationException("AdminApi has no config provider.")).ForEnvironmentAsync(env, ct);
         return await ConnectionList.ListAsync(host, config, env, secrets, instance => PageUrl(env, instance, "secret"), ct);
     }
+
+    /// <summary>The first 16 hex characters of SHA-256 over the serialised design (version left out, as publishing sets it).</summary>
+    internal static string DesignFingerprint(BrokerForge.Connections.ConnectionDesign design) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            BrokerForge.Connections.DesignSerializer.Serialize(design with { Version = 0 }))))[..16].ToLowerInvariant();
 
     /// <summary>Ready; Invalid when the definition or an endpoint has problems; otherwise NeedsAnswers.</summary>
     internal static string Status(DraftReview review) =>

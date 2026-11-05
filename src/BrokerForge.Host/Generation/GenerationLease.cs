@@ -26,12 +26,18 @@ public static class GenerationLeases
     /// <summary>Dataverse names are case-insensitive, so WarehouseAPI and warehouseapi are one source.</summary>
     public static string Key(string environmentId, string instance) => $"{environmentId.ToLowerInvariant()}|{instance.ToLowerInvariant()}";
 
-    /// <summary>The credential table when <c>Credentials:TableEndpoint</c> is set (production); otherwise in memory, for tests and local runs.</summary>
-    public static IGenerationLease Create(IConfiguration configuration, TokenCredential credential, TimeProvider time)
+    /// <summary>
+    /// The credential table when <c>Credentials:TableEndpoint</c> is set (production). Without it, in memory: a host with
+    /// connection designs may run several replicas, so it then refuses to start unless <c>Credentials:InMemory</c> asks
+    /// for that, as the credential stores do.
+    /// </summary>
+    public static IGenerationLease Create(IConfiguration configuration, TokenCredential credential, TimeProvider time, bool designs)
     {
         var endpoint = configuration["Credentials:TableEndpoint"];
         if (string.IsNullOrWhiteSpace(endpoint))
-            return new InMemoryGenerationLease(time);
+            return !designs || configuration.GetValue("Credentials:InMemory", false)
+                ? new InMemoryGenerationLease(time)
+                : throw new ConfigurationException("Credentials:TableEndpoint is required: connection designs are generated under a lock that every host replica must share.");
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != "https")
             throw new ConfigurationException("Credentials:TableEndpoint must be the storage account's https table endpoint.");
         return new TableGenerationLease(new TableClient(uri, configuration["Credentials:TableName"] ?? Config.CredentialStores.DefaultTable, credential), time);

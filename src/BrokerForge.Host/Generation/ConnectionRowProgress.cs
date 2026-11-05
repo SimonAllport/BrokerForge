@@ -24,6 +24,15 @@ public sealed class ConnectionRowProgress(IGenerationProgress inner, IOptions<Tr
             log.LogWarning("Generation {Instance} in {EnvironmentId} has no OrgUrl to report on its connection row", job.Instance, job.EnvironmentId);
             return;
         }
+        var client = clients.Create(org);
+        // A job that reports after its lease expired must not replace the status of a job started after it.
+        var current = await client.GetAsync($"{ConnectionRows.EntitySet}({id:D})?$select=bf_generationjobid,bf_generationstarted", ct);
+        if ((string?)current?["bf_generationjobid"] is { } other && Guid.TryParse(other, out var otherId) && otherId != job.Id
+            && DateTimeOffset.TryParse((string?)current["bf_generationstarted"], out var otherStarted) && otherStarted > job.Started)
+        {
+            log.LogWarning("Generation {Instance} job {JobId} not reported on its row: job {OtherJob} started after it", job.Instance, job.Id, otherId);
+            return;
+        }
         var result = new JsonObject
         {
             ["writes"] = new JsonArray(job.Writes.Select(w => (JsonNode)JsonValue.Create(w)!).ToArray()),
@@ -32,7 +41,7 @@ public sealed class ConnectionRowProgress(IGenerationProgress inner, IOptions<Tr
             ["designVersion"] = job.DesignVersion,
             ["needsConfirmation"] = job.NeedsConfirmation,
         };
-        await clients.Create(org).WriteAsync(HttpMethod.Patch, $"{ConnectionRows.EntitySet}({id:D})", new JsonObject
+        await client.WriteAsync(HttpMethod.Patch, $"{ConnectionRows.EntitySet}({id:D})", new JsonObject
         {
             ["bf_generationstate"] = job.State.ToString(),
             ["bf_generationjobid"] = job.Id.ToString("D"),

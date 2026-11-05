@@ -89,22 +89,46 @@ public class GenerateApiTests
         Assert.Contains(_dv.Fake.Writes, w => w.Path == "EntityDefinitions" && w.Solution == "BrokerForgeInventoryAPI");
     }
 
-    [Fact]
-    public async Task Generate_AnswersChangedSinceReview_NeedsConfirmationNothingWritten()
+    [Theory]
+    [InlineData("column.$.sku.displayName", "Stock code")]   // changes the table metadata
+    [InlineData("op.listItems.sortStable", "no")]            // changes only a descriptor (M1)
+    public async Task Generate_AnswersChangedSinceReview_RefusedNothingWritten(string key, string value)
     {
         var id = _dv.AddRow(DesignBuilderTests.Inventory());
         var reviewed = await Fingerprint(id);
         var answers = JsonNode.Parse(DesignBuilderTests.InventoryAnswers)!.AsObject();
-        answers["column.$.sku.displayName"] = "Stock code";
+        answers[key] = value;
         Row(id)["bf_answers"] = answers.ToJsonString();
 
-        var job = await Started(id, reviewed);
-        Assert.Equal(JobState.Failed, job.State);
-        Assert.True(job.NeedsConfirmation);
-        Assert.Empty(_dv.Fake.Writes.Where(w => !w.Path.StartsWith("bf_connections(")));
-        Assert.Equal("Failed", (string?)Row(id)["bf_generationstate"]);
-        Assert.True((bool)Result(id)["needsConfirmation"]!);
-        Assert.Contains(reviewed, (string?)Result(id)["failure"]);
+        var ex = await Assert.ThrowsAsync<MappedSourceException>(() => _api.HandleAsync(Generate(id, reviewed), CancellationToken.None));
+        Assert.Equal(SourceErrorKinds.Conflict, ex.Kind);
+        Assert.Contains("changed since", ex.Message);
+        Assert.Empty(_dv.Fake.Writes);
+    }
+
+    [Fact]
+    public async Task Generate_ReviewedFingerprint_Accepted()
+    {
+        var id = _dv.AddRow(DesignBuilderTests.Inventory());
+        var job = await Started(id, await Fingerprint(id));
+        Assert.Equal(JobState.Succeeded, job.State);
+    }
+
+    [Fact]
+    public async Task Generate_LateReportOfOlderJob_DoesNotOverwriteNewerRow()
+    {
+        // M4c: a job that reports after its lease expired must not replace the status of a job started after it.
+        var id = _dv.AddRow(DesignBuilderTests.Inventory());
+        var newer = Guid.NewGuid();
+        Row(id)["bf_generationjobid"] = newer.ToString("D");
+        Row(id)["bf_generationstate"] = "Running";
+        Row(id)["bf_generationstarted"] = DateTimeOffset.UtcNow.ToString("O");
+        var progress = new ConnectionRowProgress(new LoggingGenerationProgress(NullLogger<LoggingGenerationProgress>.Instance), AdminApiTests.Trust,
+            new AdminApiTests.Clients(_dv), NullLogger<ConnectionRowProgress>.Instance);
+        await progress.ReportAsync(new GenerationJob(Guid.NewGuid(), AdminApiTests.Env, "InventoryAPI", JobState.Failed, Array.Empty<string>(), null, "timed out",
+            DateTimeOffset.UtcNow.AddMinutes(-25), DateTimeOffset.UtcNow, "corr", ConnectionId: id), CancellationToken.None);
+        Assert.Equal("Running", (string?)Row(id)["bf_generationstate"]);
+        Assert.Equal(newer.ToString("D"), (string?)Row(id)["bf_generationjobid"]);
     }
 
     [Fact]

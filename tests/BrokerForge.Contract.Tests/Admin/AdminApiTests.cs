@@ -96,6 +96,16 @@ public class AdminApiTests
     }
 
     [Fact]
+    public async Task Admin_AsyncCall_Refused()
+    {
+        // M3: an async call is never an administrator's, whatever the registration allows.
+        var request = Request("bf_ReadDefinition", Inventory());
+        request.Caller!.Async = true;
+        var ex = await Assert.ThrowsAsync<CallerRejectedException>(() => Api.HandleAsync(request, CancellationToken.None));
+        Assert.Contains("async", ex.Message);
+    }
+
+    [Fact]
     public async Task Admin_UnknownUser_Refused() =>
         await Assert.ThrowsAsync<CallerRejectedException>(() => Read(Inventory(), "00000000-0000-0000-0000-00000000a0ff"));
 
@@ -132,7 +142,7 @@ public class AdminApiTests
         Assert.Equal("Ready", (string?)read["status"]);
         Assert.NotNull(read["review"]!["result"]);
         var preview = read["preview"]!.AsObject();
-        Assert.Matches("^[0-9a-f]{16}$", (string)preview["fingerprint"]!);
+        Assert.Matches("^[0-9a-f]{16}-[0-9a-f]{16}$", (string)preview["fingerprint"]!);
         Assert.Contains(preview["changes"]!.AsArray(), c => ((string)c!).Contains("ext_item"));
         Assert.Contains(preview["pending"]!.AsArray(), p => ((string)p!).Contains("InventoryAPI user"));
         Assert.Equal($"{PublicUrl}/admin/{Env}/InventoryAPI/secret", (string?)read["secretUrl"]);
@@ -158,6 +168,30 @@ public class AdminApiTests
         var read = await Read(id);
         Assert.Equal("Invalid", (string?)read["status"]);
         Assert.NotEmpty(read["review"]!["problems"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task Read_NoDefinitionOrTooLong_ProblemNotError()
+    {
+        // M5: a row with no OpenAPI text, and text over the draft service's limit.
+        foreach (var text in new[] { null, new string('a', BrokerForge.SwaggerForge.DraftService.MaxDefinitionLength + 1) })
+        {
+            var id = Dv.AddRow(DesignBuilderTests.Inventory() with { Id = Guid.NewGuid(), Name = "Api" + Guid.NewGuid().ToString("N")[..6], OpenApi = text });
+            var read = await Read(id);
+            Assert.Equal("Invalid", (string?)read["status"]);
+            Assert.NotEmpty(read["review"]!["problems"]!.AsArray());
+        }
+    }
+
+    [Fact]
+    public async Task Read_PreviewFails_CauseNamedInReview()
+    {
+        // M2: a Dataverse refusal while working out the change list is shown with its cause, not a generic 500.
+        Dv.Forbid = "EntityDefinitions";
+        var read = await Read(Inventory());
+        Assert.Equal("Ready", (string?)read["status"]);
+        Assert.Contains("SecLib::CheckPrivilege failed (test)", (string?)read["preview"]!["error"]);
+        Assert.Null(read["preview"]!["fingerprint"]);
     }
 
     [Fact]

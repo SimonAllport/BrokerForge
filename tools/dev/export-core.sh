@@ -12,5 +12,11 @@ OUT="$ROOT/out/core"
 "$PAC" solution unpack --zipfile "$OUT/BrokerForgeCore.zip" --folder "$ROOT/solution/BrokerForgeCore" --packagetype Both --allowDelete true --allowWrite true --clobber true
 # The assembly's managed identity is a record of this environment; install-core.sh binds the assembly to the target's own.
 find "$ROOT/solution/BrokerForgeCore/PluginAssemblies" -name '*.data.xml' -exec sed -i.bak '/<ManagedIdentityId>/d' {} \; -exec rm -f {}.bak \;
+# The repo is public: no build machine path may travel in the source (the plug-in builds with a PathMap).
+if grep -rlaE '/(Users|home)/[^/]+/' "$ROOT/solution/BrokerForgeCore" >/dev/null; then
+  echo "solution/BrokerForgeCore contains a local path:" >&2
+  grep -rlaE '/(Users|home)/[^/]+/' "$ROOT/solution/BrokerForgeCore" >&2
+  exit 1
+fi
 "$PAC" solution pack --zipfile "$ROOT/out/BrokerForgeCore_managed.zip" --folder "$ROOT/solution/BrokerForgeCore" --packagetype Managed
 echo "source: solution/BrokerForgeCore; managed package: out/BrokerForgeCore_managed.zip"

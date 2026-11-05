@@ -43,8 +43,18 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
         lock (_active)
             if (_active.TryGetValue(key, out var running))
                 throw new GenerationBusyException($"Generation of {r.Design.Instance} in environment {r.EnvironmentId} is already running (job {running}); wait for it to finish.");
-        var token = await _lease.TryAcquireAsync(r.EnvironmentId, r.Design.Instance, _limit + LeaseMargin, ct)
-            ?? throw new GenerationBusyException($"Generation of {r.Design.Instance} in environment {r.EnvironmentId} is already running in another host; wait for it to finish.");
+        string? token;
+        try
+        {
+            // Not the caller's token: a lease taken just as the caller gives up would hold the source with no job for 20 minutes.
+            token = await _lease.TryAcquireAsync(r.EnvironmentId, r.Design.Instance, _limit + LeaseMargin, CancellationToken.None);
+        }
+        catch (Azure.RequestFailedException ex)
+        {
+            throw new GenerationBusyException($"The generation lock could not be taken (storage answered HTTP {ex.Status}); nothing was generated. Try again.");
+        }
+        if (token == null)
+            throw new GenerationBusyException($"Generation of {r.Design.Instance} in environment {r.EnvironmentId} is already running in another host; wait for it to finish.");
         lock (_active)
         {
             if (_active.TryGetValue(key, out var running))

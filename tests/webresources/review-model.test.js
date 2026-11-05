@@ -82,3 +82,7 @@ test("doneLinks encodes the table name", () => {
   assert.equal(links.open, "https://contoso.crm4.dynamics.com/main.aspx?pagetype=entitylist&etn=ext_item");
   assert.equal(model.doneLinks("https://contoso.crm4.dynamics.com", "a&b").open, "https://contoso.crm4.dynamics.com/main.aspx?pagetype=entitylist&etn=a%26b");
 });
+
+test("canGenerate false when the change list could not be worked out", () => {
+  assert.equal(model.canGenerate({ ...ready(), preview: { error: "SecLib::CheckPrivilege failed" } }), false);
+});

@@ -21,7 +21,7 @@
   // Generate is enabled only when every ticked endpoint is Ready (spec 5): the review is ready and the change list has
   // nothing refused or blocked. A missing key does not block it; the page shows "needs key" beside it.
   function canGenerate(read) {
-    if (!read || read.readOnly || read.status !== "Ready" || !read.preview) return false;
+    if (!read || read.readOnly || read.status !== "Ready" || !read.preview || read.preview.error) return false;
     return (read.preview.blocked || []).length === 0 && (read.preview.refused || []).length === 0;
   }
 

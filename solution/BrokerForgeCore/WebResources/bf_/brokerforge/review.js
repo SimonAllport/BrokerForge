@@ -161,6 +161,7 @@
     box.textContent = "";
     var p = read.preview;
     if (!p) { box.appendChild(el("p", "Answer every question above to see what Generate will do.", "muted")); }
+    else if (p.error) { box.appendChild(el("p", "What Generate would change could not be worked out: " + p.error, "bad")); }
     else {
       if (p.changes.length) { box.appendChild(el("p", "Changes:")); box.appendChild(list(p.changes)); }
       else box.appendChild(el("p", "No changes to the table or actions.", "muted"));

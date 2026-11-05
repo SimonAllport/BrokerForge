@@ -3,6 +3,7 @@
   <IsCustomizable>1</IsCustomizable>
   <IsAutoAssigned>0</IsAutoAssigned>
   <RolePrivileges>
+    <RolePrivilege name="prvAppendAsyncOperation" level="Global" />
     <RolePrivilege name="prvAppendCustomAPI" level="Global" />
     <RolePrivilege name="prvAppendRole" level="Global" />
     <RolePrivilege name="prvAppendSolution" level="Global" />
@@ -11,9 +12,11 @@
     <RolePrivilege name="prvAppendToEnvironmentVariableDefinition" level="Global" />
     <RolePrivilege name="prvAppendToPluginType" level="Global" />
     <RolePrivilege name="prvAppendToPublisher" level="Global" />
+    <RolePrivilege name="prvCreateAsyncOperation" level="Global" />
     <RolePrivilege name="prvCreateAttribute" level="Global" />
     <RolePrivilege name="prvCreatebf_brokerdatasource" level="Global" />
     <RolePrivilege name="prvCreateCustomAPI" level="Global" />
+    <RolePrivilege name="prvCreateCustomControlDefaultConfig" level="Global" />
     <RolePrivilege name="prvCreateCustomization" level="Global" />
     <RolePrivilege name="prvCreateEntity" level="Global" />
     <RolePrivilege name="prvCreateEntityDataSource" level="Global" />
@@ -21,6 +24,7 @@
     <RolePrivilege name="prvCreateOptionSet" level="Global" />
     <RolePrivilege name="prvCreatePublisher" level="Global" />
     <RolePrivilege name="prvCreateQuery" level="Global" />
+    <RolePrivilege name="prvCreateRelationship" level="Global" />
     <RolePrivilege name="prvCreateRole" level="Global" />
     <RolePrivilege name="prvCreateSharePointData" level="Global" />
     <RolePrivilege name="prvCreateSolution" level="Global" />
@@ -29,6 +33,7 @@
     <RolePrivilege name="prvDeleteAttribute" level="Global" />
     <RolePrivilege name="prvDeletebf_brokerdatasource" level="Global" />
     <RolePrivilege name="prvDeleteCustomAPI" level="Global" />
+    <RolePrivilege name="prvDeleteCustomControlDefaultConfig" level="Global" />
     <RolePrivilege name="prvDeleteCustomization" level="Global" />
     <RolePrivilege name="prvDeleteEntity" level="Global" />
     <RolePrivilege name="prvDeleteEntityDataSource" level="Global" />
@@ -36,11 +41,13 @@
     <RolePrivilege name="prvDeleteOptionSet" level="Global" />
     <RolePrivilege name="prvDeletePublisher" level="Global" />
     <RolePrivilege name="prvDeleteQuery" level="Global" />
+    <RolePrivilege name="prvDeleteRelationship" level="Global" />
     <RolePrivilege name="prvDeleteRole" level="Global" />
     <RolePrivilege name="prvDeleteSolution" level="Global" />
     <RolePrivilege name="prvDeleteSystemForm" level="Global" />
     <RolePrivilege name="prvDeleteWebResource" level="Global" />
     <RolePrivilege name="prvPublishCustomization" level="Global" />
+    <RolePrivilege name="prvReadAsyncOperation" level="Global" />
     <RolePrivilege name="prvReadAttribute" level="Global" />
     <RolePrivilege name="prvReadbf_brokerdatasource" level="Global" />
     <RolePrivilege name="prvReadbf_connection" level="Global" />
@@ -58,6 +65,7 @@
     <RolePrivilege name="prvReadQuery" level="Global" />
     <RolePrivilege name="prvReadRelationship" level="Global" />
     <RolePrivilege name="prvReadRole" level="Global" />
+    <RolePrivilege name="prvReadSavedQueryVisualizations" level="Global" />
     <RolePrivilege name="prvReadSdkMessage" level="Global" />
     <RolePrivilege name="prvReadSdkMessageProcessingStep" level="Global" />
     <RolePrivilege name="prvReadSdkMessageProcessingStepImage" level="Global" />
@@ -68,10 +76,12 @@
     <RolePrivilege name="prvReadTeam" level="Global" />
     <RolePrivilege name="prvReadUser" level="Global" />
     <RolePrivilege name="prvReadWebResource" level="Global" />
+    <RolePrivilege name="prvWriteAsyncOperation" level="Global" />
     <RolePrivilege name="prvWriteAttribute" level="Global" />
     <RolePrivilege name="prvWritebf_brokerdatasource" level="Global" />
     <RolePrivilege name="prvWritebf_connection" level="Global" />
     <RolePrivilege name="prvWriteCustomAPI" level="Global" />
+    <RolePrivilege name="prvWriteCustomControlDefaultConfig" level="Global" />
     <RolePrivilege name="prvWriteCustomization" level="Global" />
     <RolePrivilege name="prvWriteEntity" level="Global" />
     <RolePrivilege name="prvWriteEntityDataSource" level="Global" />
@@ -79,6 +89,7 @@
     <RolePrivilege name="prvWriteOptionSet" level="Global" />
     <RolePrivilege name="prvWritePublisher" level="Global" />
     <RolePrivilege name="prvWriteQuery" level="Global" />
+    <RolePrivilege name="prvWriteRelationship" level="Global" />
     <RolePrivilege name="prvWriteRole" level="Global" />
     <RolePrivilege name="prvWriteSharePointData" level="Global" />
     <RolePrivilege name="prvWriteSolution" level="Global" />

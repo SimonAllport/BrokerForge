@@ -39,6 +39,7 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
     private readonly EnvironmentConfigTests.FakeDesigns _designs = new();
     private readonly InMemoryInstanceSecretStore _secrets = new();
     private readonly Exchange _exchange = new();
+    private readonly ConnectTests.MutableTime _time = new();
     private HostFactory? _host;
 
     private HostFactory Host => _host ??= Create();
@@ -62,6 +63,7 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
             s.Replace(ServiceDescriptor.Singleton<IAdminTokenExchange>(_exchange));
             s.AddSingleton<IDesignSource>(_designs);
             s.AddSingleton<IInstanceSecretStore>(_secrets);
+            s.AddSingleton<TimeProvider>(_time);
         });
     }
 
@@ -235,6 +237,63 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
         var callback = await browser.GetAsync(path);
         Assert.Equal(HttpStatusCode.BadRequest, callback.StatusCode);
         Assert.Empty(_exchange.Calls);
+    }
+
+    [Fact]
+    public async Task Role_StartWithoutAntiforgery_Refused()
+    {
+        var id = Row();
+        await Generated(id);
+        var start = await Post(Browser(), RolePath + "/start", null);
+        Assert.Equal(HttpStatusCode.BadRequest, start.StatusCode);
+    }
+
+    [Fact]
+    public async Task Role_CallbackInAnotherBrowser_Refused()
+    {
+        // No nonce cookie: the sign-in was not started in this browser.
+        var id = Row();
+        await Generated(id);
+        var path = await StartRole(Browser());
+        var callback = await Browser().GetAsync(path);
+        Assert.Equal(HttpStatusCode.BadRequest, callback.StatusCode);
+        Assert.Contains("not started in this browser", await callback.Content.ReadAsStringAsync());
+        Assert.Empty(_exchange.Calls);
+    }
+
+    [Fact]
+    public async Task Role_CallbackAfterTenMinutes_Refused()
+    {
+        var id = Row();
+        await Generated(id);
+        var browser = Browser();
+        var path = await StartRole(browser);
+        _time.Now += TimeSpan.FromMinutes(11);
+        var callback = await browser.GetAsync(path);
+        Assert.Equal(HttpStatusCode.BadRequest, callback.StatusCode);
+        Assert.Contains("longer than 10 minutes", await callback.Content.ReadAsStringAsync());
+        Assert.Empty(_exchange.Calls);
+    }
+
+    [Fact]
+    public async Task Role_CallbackWithConnectPageState_Refused()
+    {
+        // A state the connect page issued (no role: prefix) is not a role sign-in.
+        var protection = Host.Services.GetRequiredService<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>();
+        var state = new BrokerForge.Host.Connect.ConnectState("InventoryAPI", AdminDataverse.AdminOid, "verifier", "nonce", _time.Now, Env).Protect(protection);
+        var callback = await Browser().GetAsync($"/admin/callback?code=c&state={Uri.EscapeDataString(state)}");
+        Assert.Equal(HttpStatusCode.BadRequest, callback.StatusCode);
+        Assert.Empty(_exchange.Calls);
+    }
+
+    [Fact]
+    public async Task AdminPages_RefuseFraming()
+    {
+        // M6: the secret and role pages are forms; another site must not frame them.
+        Row();
+        var (page, _, _) = await Page(Browser(), SecretPath());
+        Assert.Contains("frame-ancestors 'none'", page.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Equal("DENY", page.Headers.GetValues("X-Frame-Options").Single());
     }
 
     [Fact]

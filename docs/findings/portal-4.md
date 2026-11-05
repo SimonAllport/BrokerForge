@@ -78,14 +78,17 @@ The two Important findings are fixed, each with a test that failed first:
 - **I1:** a disabled Dataverse user who still held the administrator role passed the check. Only enabled users count now.
 - **I2:** two connections with one name (any case) broke the list and would have generated onto one instance, its keys and its lease. Generate and the host pages now refuse with a 409 naming the clash, and the list shows both rows as "duplicate name".
 
-Deferred minors:
+The seven minors were then fixed too, at Simon's request (5 November), each with a test that fails without its fix:
 
-- the fingerprint covers Dataverse metadata only, so an answer that changes only a descriptor is published without a new confirmation;
-- some preview failures say "Unexpected host failure";
-- the admin API does not check `Caller.Async`;
-- three lease edge cases;
-- missing tests for null and too-long definitions, role-start antiforgery, and the callback's nonce and expiry;
-- no anti-framing header on the host pages;
-- the committed plug-in DLL carries the local build path.
+- **M1:** the fingerprint `bf_ReadDefinition` returns covers the design as well as the change list. An answer changed after the review, even one that changes only a descriptor, refuses Generate with a 409 and writes nothing.
+- **M2:** a failure while working out the change list (a Dataverse refusal, a generator refusal, a schema or descriptor error) is returned in `preview.error` with its cause, and the page keeps Generate disabled.
+- **M3:** async calls to the admin APIs are refused.
+- **M4:** three lease fixes.
+  - A host with designs and no credential table refuses to start unless `Credentials:InMemory` asks for the in-memory lease.
+  - The lease is taken without the caller's cancellation token, and a storage failure there is a "try again" refusal.
+  - A late report from an older job no longer overwrites the row of a job started after it.
+- **M5:** tests added for a null and a too-long definition, role start without antiforgery, a callback in another browser, after 10 minutes, and with a connect-page state.
+- **M6:** every host page sends `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
+- **M7:** the plug-in builds with a `PathMap`. It was re-signed, re-registered and re-exported, and `export-core.sh` refuses to write source that contains a home-directory path.
 
-Tests after the fixes: Contract 396, node 12.
+Tests after the fixes: Contract 411, node 13.
