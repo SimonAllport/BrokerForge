@@ -194,7 +194,11 @@ HOST_PRIVILEGES = sorted({f"prv{v}{c}" for c in _CRUD for v in ("Read", "Create"
                             # A new table gets its default control configuration (found creating one as the host, plan 4).
                             "prvCreateCustomControlDefaultConfig", "prvWriteCustomControlDefaultConfig", "prvDeleteCustomControlDefaultConfig",
                             # Creating a table queues system jobs, which the creator must be able to read and own (Simon, 5 November 2026).
-                            "prvReadAsyncOperation", "prvCreateAsyncOperation", "prvWriteAsyncOperation", "prvAppendAsyncOperation"})
+                            "prvReadAsyncOperation", "prvCreateAsyncOperation", "prvWriteAsyncOperation", "prvAppendAsyncOperation",
+                            # Publishing a new table writes its system relationships.
+                            "prvCreateRelationship", "prvWriteRelationship", "prvDeleteRelationship",
+                            # Publishing a table reads its system charts.
+                            "prvReadSavedQueryVisualizations"})
 
 
 def ensure_host_user(solution):
