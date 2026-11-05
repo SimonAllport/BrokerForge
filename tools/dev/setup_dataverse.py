@@ -190,7 +190,9 @@ HOST_PRIVILEGES = sorted({f"prv{v}{c}" for c in _CRUD for v in ("Read", "Create"
                             "prvAppendToCustomAPI",
                             "prvAppendSolution", "prvAppendToPublisher", "prvAppendToEnvironmentVariableDefinition",
                             # The admin app (plan 4): connection rows read and written (progress), teams read for the administrator check.
-                            "prvReadbf_connection", "prvWritebf_connection", "prvReadTeam"})
+                            "prvReadbf_connection", "prvWritebf_connection", "prvReadTeam",
+                            # A new table gets its default control configuration (found creating one as the host, plan 4).
+                            "prvCreateCustomControlDefaultConfig", "prvWriteCustomControlDefaultConfig", "prvDeleteCustomControlDefaultConfig"})
 
 
 def ensure_host_user(solution):
