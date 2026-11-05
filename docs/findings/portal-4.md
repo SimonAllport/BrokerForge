@@ -68,3 +68,24 @@ Results of 5 November 2026, in the dev environment. Plan: `docs/superpowers/plan
 ## 6. Tests
 
 Contract 392, node 12 (`node --test 'tests/webresources/*.test.js'`), SwaggerForge 86. The full suite passes.
+
+## 7. Final review
+
+A fresh review of the whole branch found nothing Critical, two Important findings and seven Minor ones.
+
+The two Important findings are fixed, each with a test that failed first:
+
+- **I1:** a disabled Dataverse user who still held the administrator role passed the check. Only enabled users count now.
+- **I2:** two connections with one name (any case) broke the list and would have generated onto one instance, its keys and its lease. Generate and the host pages now refuse with a 409 naming the clash, and the list shows both rows as "duplicate name".
+
+Deferred minors:
+
+- the fingerprint covers Dataverse metadata only, so an answer that changes only a descriptor is published without a new confirmation;
+- some preview failures say "Unexpected host failure";
+- the admin API does not check `Caller.Async`;
+- three lease edge cases;
+- missing tests for null and too-long definitions, role-start antiforgery, and the callback's nonce and expiry;
+- no anti-framing header on the host pages;
+- the committed plug-in DLL carries the local build path.
+
+Tests after the fixes: Contract 396, node 12.
