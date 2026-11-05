@@ -6,6 +6,7 @@ using BrokerForge.Descriptors.Mapping;
 using BrokerForge.Descriptors.Model;
 using BrokerForge.Descriptors.Planning;
 using BrokerForge.Descriptors.Rendering;
+using BrokerForge.Host.Admin;
 using BrokerForge.Host.Config;
 using BrokerForge.Host.Errors;
 using BrokerForge.Host.Execution;
@@ -39,6 +40,7 @@ public static partial class ExecuteEndpoint
         PageTokenKey tokenKey,
         IConfiguration configuration,
         ILoggerFactory loggers,
+        AdminApi admin,
         CancellationToken ct)
     {
         var log = loggers.CreateLogger("BrokerForge.Execute");
@@ -62,6 +64,13 @@ public static partial class ExecuteEndpoint
         try
         {
             guard.Check(http.User, request);
+            // The admin Custom APIs (spec 5, 6) answer from the connection rows, not a descriptor, and need no loaded config.
+            if (AdminApi.Messages.Contains(request.Message ?? ""))
+            {
+                var answer = await admin.HandleAsync(request, ct);
+                log.LogInformation("Completed admin message {Message} in {ElapsedMs} ms", request.Message, watch.ElapsedMilliseconds);
+                return Results.Json(answer);
+            }
             var config = await configs.ForEnvironmentAsync(request.EnvironmentId!, ct);
             var timeout = TimeSpan.FromSeconds(configuration.GetValue("Host:TimeoutSeconds", 90));
             if (PrimaryKeyLookup(request, router, config) is { } lookup)

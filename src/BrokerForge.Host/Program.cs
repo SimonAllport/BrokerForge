@@ -212,6 +212,8 @@ builder.Services.AddSingleton<IGenerationClientFactory>(sp => new HostDataverseC
 builder.Services.AddSingleton<IGenerationProgress, LoggingGenerationProgress>();
 builder.Services.AddSingleton(sp => new GenerationJobs(sp.GetRequiredService<IOptions<TrustOptions>>(), sp.GetRequiredService<IGenerationClientFactory>(),
     sp.GetRequiredService<IHostConfigProvider>(), sp.GetRequiredService<IGenerationProgress>(), sp.GetRequiredService<ILogger<GenerationJobs>>()));
+builder.Services.AddSingleton(sp => new AdminApi(sp.GetRequiredService<IOptions<TrustOptions>>(), sp.GetRequiredService<IGenerationClientFactory>(),
+    sp.GetRequiredService<GenerationJobs>(), sp.GetRequiredService<IInstanceSecretStore>(), sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<CallerGuard>();
 builder.Services.AddSingleton<RequestRouter>();
 builder.Services.AddSingleton(sp => PageTokenKey.LoadAsync(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<ISecretResolver>()).GetAwaiter().GetResult());

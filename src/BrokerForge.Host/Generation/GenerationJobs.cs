@@ -32,7 +32,7 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
     /// <exception cref="GenerationBusyException">A job for this environment and instance is still queued or running.</exception>
     public GenerationJob Start(GenerationRequest r)
     {
-        var org = OrgUrl(r.EnvironmentId);
+        var org = OrgUrlOf(r.EnvironmentId);
         // Dataverse names are case-insensitive, so WarehouseAPI and warehouseapi are one source.
         var key = (r.EnvironmentId.ToLowerInvariant(), r.Design.Instance.ToLowerInvariant());
         GenerationJob job;
@@ -59,7 +59,7 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
     /// <summary>The design published in the environment for <paramref name="instance"/>, read as the host (for regenerating it).</summary>
     public async Task<ConnectionDesign> ReadPublishedAsync(string environmentId, string instance, CancellationToken ct)
     {
-        var client = clients.Create(OrgUrl(environmentId));
+        var client = clients.Create(OrgUrlOf(environmentId));
         var suffix = $"_/brokerforge/{instance}/design.xml";
         var found = (await client.ListAsync(DataverseDesignSource.DesignQuery, ct))
             .Where(w => ((string?)w["name"])?.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) == true).ToList();
@@ -75,7 +75,7 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
     /// <summary>What Generate would change, for the admin to confirm. Reads only.</summary>
     public async Task<GenerationPreview> PreviewAsync(GenerationRequest r, CancellationToken ct)
     {
-        var client = clients.Create(OrgUrl(r.EnvironmentId));
+        var client = clients.Create(OrgUrlOf(r.EnvironmentId));
         var (schema, options) = await OptionsAsync(client, r, ct);
         return await Generator.Generator.PreviewAsync(client, schema, options, ct);
     }
@@ -174,7 +174,9 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
         throw new ConfigurationException($"Environment variable {schema} has no value in this environment; run the core setup (tools/dev/setup-dataverse.sh) first.");
     }
 
-    private string OrgUrl(string environmentId)
+    /// <summary>The environment's Dataverse URL from Trust:AllowedCallers.</summary>
+    /// <exception cref="ConfigurationException">The environment is not one the host serves, or has no OrgUrl.</exception>
+    public string OrgUrlOf(string environmentId)
     {
         var caller = trust.Value.AllowedCallers.FirstOrDefault(c => string.Equals(c.EnvironmentId, environmentId, StringComparison.OrdinalIgnoreCase))
             ?? throw new ConfigurationException($"Environment {environmentId} is not one this host serves (Trust:AllowedCallers).");

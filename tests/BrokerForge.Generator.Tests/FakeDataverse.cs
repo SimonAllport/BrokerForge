@@ -42,6 +42,12 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     private readonly List<(string Table, string Column, int Type, string Id, int DependencyType)> _dependents = new();
     private readonly Dictionary<int, string> _definitions = new();
 
+    /// <summary>
+    /// Routes a test adds for tables the generator never touches (connection rows, users, teams); null falls through.
+    /// Asked before the built-in routes, so it may also answer a query they would (the core solution, for example).
+    /// </summary>
+    public Func<string, string, JsonObject?, HttpResponseMessage?>? ExtraRoute { get; set; }
+
     /// <summary>Each request waits this long first (cancellable), to hold a job open.</summary>
     public TimeSpan Delay { get; set; }
 
@@ -154,6 +160,8 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
 
     private HttpResponseMessage Route(string method, string path, JsonObject? body, string? inSolution)
     {
+        if (ExtraRoute?.Invoke(method, path, body) is { } early)
+            return early;
         var name = Quoted().Match(path) is { Success: true } q ? q.Groups[1].Value.Replace("''", "'") : null;
         if (DependenciesCall().Match(path) is { Success: true } dep)
             return Value(Dependents(dep.Groups[1].Value, int.Parse(dep.Groups[2].Value)).Select(d => (JsonNode)new JsonObject
