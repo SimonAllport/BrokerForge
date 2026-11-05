@@ -8,7 +8,6 @@ using BrokerForge.Host.Config;
 using BrokerForge.Host.Generation;
 using BrokerForge.Host.Ingress;
 using BrokerForge.SwaggerForge;
-using Microsoft.Extensions.Options;
 
 namespace BrokerForge.Host.Admin;
 
@@ -17,7 +16,7 @@ namespace BrokerForge.Host.Admin;
 /// answered here rather than by a descriptor. Every call first checks that the caller is a BrokerForge administrator,
 /// reading Dataverse as the host's own application user. Nothing here returns or logs a secret value.
 /// </summary>
-public sealed class AdminApi(IOptions<TrustOptions> trust, IGenerationClientFactory clients, GenerationJobs jobs, IInstanceSecretStore secrets, IConfiguration configuration,
+public sealed class AdminApi(IGenerationClientFactory clients, GenerationJobs jobs, IInstanceSecretStore secrets, IConfiguration configuration,
     IHostConfigProvider? configs = null)
 {
     public const string ReadDefinition = "bf_ReadDefinition";

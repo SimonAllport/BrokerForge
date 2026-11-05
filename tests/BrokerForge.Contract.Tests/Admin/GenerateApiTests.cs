@@ -22,7 +22,7 @@ public class GenerateApiTests
         var progress = new ConnectionRowProgress(new LoggingGenerationProgress(NullLogger<LoggingGenerationProgress>.Instance), AdminApiTests.Trust, clients,
             NullLogger<ConnectionRowProgress>.Instance);
         _jobs = new GenerationJobs(AdminApiTests.Trust, clients, new AdminApiTests.Configs(), progress, NullLogger<GenerationJobs>.Instance);
-        _api = new AdminApi(AdminApiTests.Trust, clients, _jobs, new InMemoryInstanceSecretStore(), new ConfigurationBuilder().Build());
+        _api = new AdminApi(clients, _jobs, new InMemoryInstanceSecretStore(), new ConfigurationBuilder().Build());
     }
 
     private static CanonicalRequest Generate(Guid id, string? fingerprint = null, string? oid = AdminDataverse.AdminOid)

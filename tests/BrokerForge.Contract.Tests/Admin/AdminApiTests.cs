@@ -49,7 +49,7 @@ public class AdminApiTests
     public AdminApiTests()
     {
         Jobs = new GenerationJobs(Trust, new Clients(Dv), new Configs(), new LoggingGenerationProgress(NullLogger<LoggingGenerationProgress>.Instance), NullLogger<GenerationJobs>.Instance);
-        Api = new AdminApi(Trust, new Clients(Dv), Jobs, Secrets,
+        Api = new AdminApi(new Clients(Dv), Jobs, Secrets,
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Connect:PublicBaseUrl"] = PublicUrl }).Build());
     }
 

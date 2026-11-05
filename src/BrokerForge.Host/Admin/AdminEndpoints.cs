@@ -267,7 +267,7 @@ public static class AdminEndpoints
         }
         catch (DataverseException ex)
         {
-            log.LogWarning("Role {Role} for {Instance} in environment {EnvironmentId} not set: {Reason}", RoleGenerator.RoleName(plan.Instance), plan.Instance, env, ex.Message);
+            log.LogWarning("Role {Role} for {Instance} in environment {EnvironmentId} not set: {Reason}", RoleGenerator.RoleName(plan!.Instance), plan.Instance, env, ex.Message);
             return ConnectPages.Message(502, "Role not set", $"Dataverse refused the role change: {ex.Message}");
         }
         log.LogInformation("Role {Role} set for {Instance} in environment {EnvironmentId} by {UserObjectId}", RoleGenerator.RoleName(plan.Instance), plan.Instance, env, state.UserObjectId);
