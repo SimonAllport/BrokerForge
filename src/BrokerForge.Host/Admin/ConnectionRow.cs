@@ -14,10 +14,10 @@ public sealed record ConnectionRow(Guid Id, string Name, string? BaseUrl, string
     public const string Select = "bf_connectionid,bf_name,bf_baseurl,bf_authmode,bf_statickind,bf_headername,bf_queryparam,bf_username,bf_scope,bf_ssokind,"
         + "bf_authorizeurl,bf_tokenurl,bf_oauthscopes,bf_clientid,bf_usesconnectapp,bf_prefix,bf_solution,bf_openapi,bf_answers";
 
-    /// <summary><c>bf_authmode</c> choice values.</summary>
+    /// <summary><c>bf_authmode</c> choice values, with the bf publisher's option prefix 10001 (tools/dev/core_admin.py).</summary>
     public static readonly IReadOnlyDictionary<int, string> Modes = new Dictionary<int, string>
     {
-        [1] = "ServiceAccount", [2] = "Static", [3] = "OAuth", [4] = "Impersonate", [5] = "Sso",
+        [100010000] = "ServiceAccount", [100010001] = "Static", [100010002] = "OAuth", [100010003] = "Impersonate", [100010004] = "Sso",
     };
 
     public static ConnectionRow FromJson(JsonObject row)

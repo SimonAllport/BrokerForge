@@ -11,8 +11,12 @@ connection designs (web resources) and environment variables (HLD D-34), and has
 the host (HLD D-36): tables, columns, Custom APIs, forms, views, roles, solutions, web resources, environment
 variables and data source records, plus publishing. That is close to System Customizer.
 
+Also the admin app (tools/dev/core_admin.py): the bf_connection table, its form and the review page, the admin Custom
+APIs, the BrokerForge administrator role and the BrokerForge model-driven app.
+
 Usage: python3 setup_dataverse.py <signed plug-in dll>
        python3 setup_dataverse.py --host-user     (only the application user and role)
+       python3 setup_dataverse.py --admin-app     (only the admin app, then the application user and role)
 """
 import base64, json, os, subprocess, sys, urllib.error, urllib.parse, urllib.request
 
@@ -39,9 +43,11 @@ DEV = ids(DEV_PATH)
 TOKEN = subprocess.check_output(["az", "account", "get-access-token", "--resource", ORG, "--query", "accessToken", "-o", "tsv"], text=True).strip()
 
 
-def call(method, path, body=None, solution=None, ok=(200, 201, 204)):
+def call(method, path, body=None, solution=None, ok=(200, 201, 204), representation=True):
     headers = {"Authorization": "Bearer " + TOKEN, "Accept": "application/json", "Content-Type": "application/json; charset=utf-8",
-               "OData-Version": "4.0", "OData-MaxVersion": "4.0", "Prefer": "return=representation"}
+               "OData-Version": "4.0", "OData-MaxVersion": "4.0"}
+    if representation:
+        headers["Prefer"] = "return=representation"
     if solution:
         headers["MSCRM.SolutionUniqueName"] = solution
     data = None if body is None else json.dumps(body).encode()
@@ -171,7 +177,9 @@ HOST_PRIVILEGES = sorted({f"prv{v}{c}" for c in _CRUD for v in ("Read", "Create"
                          | {"prvPublishCustomization", "prvReadRelationship", "prvReadUser", "prvReadPluginType", "prvReadBusinessUnit", "prvReadEntityDataProvider",
                             "prvAppendRole", "prvAppendToBusinessUnit", "prvAppendCustomAPI", "prvAppendToPluginType",
                             "prvAppendToCustomAPI",
-                            "prvAppendSolution", "prvAppendToPublisher", "prvAppendToEnvironmentVariableDefinition"})
+                            "prvAppendSolution", "prvAppendToPublisher", "prvAppendToEnvironmentVariableDefinition",
+                            # The admin app (plan 4): connection rows read and written (progress), teams read for the administrator check.
+                            "prvReadbf_connection", "prvWritebf_connection", "prvReadTeam"})
 
 
 def ensure_host_user(solution):
@@ -254,6 +262,10 @@ def main(dll_path):
     ensure_env_var("bf_HostScope", "BrokerForge host token scope", f"api://{SPIKE['HOST_APP']}/.default", core)
     call("POST", "PublishXml", {"ParameterXml": "<importexportxml><entities><entity>bf_brokerdatasource</entity></entities></importexportxml>"})
 
+    # The admin app before the host user: the host role needs the connection table's privileges, which the table creates.
+    from core_admin import ensure_admin_app
+    ensure_admin_app(core, api_pt_id)
+
     ensure_host_user(core)
 
     values = dict(DEV, DEV_ASM=asm_id, DEV_PT=pt_id, DEV_API_PT=api_pt_id, DEV_DP=dp_id)
@@ -264,4 +276,12 @@ def main(dll_path):
 
 if __name__ == "__main__":
     # --host-user: only the host's application user and role, without re-registering the plug-in.
-    ensure_host_user("BrokerForgeCore") if sys.argv[1] == "--host-user" else main(sys.argv[1])
+    # --admin-app: only the admin app (plan 4) and then the host user, with the plug-in type already registered.
+    if sys.argv[1] == "--host-user":
+        ensure_host_user("BrokerForgeCore")
+    elif sys.argv[1] == "--admin-app":
+        from core_admin import ensure_admin_app
+        ensure_admin_app("BrokerForgeCore", DEV["DEV_API_PT"])
+        ensure_host_user("BrokerForgeCore")
+    else:
+        main(sys.argv[1])

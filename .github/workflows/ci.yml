@@ -36,5 +36,8 @@ jobs:
         working-directory: tools/mock-api
         run: npm test
 
+      - name: Web resource tests
+        run: node --test 'tests/webresources/*.test.js'
+
       - name: Validate descriptors
         run: dotnet run --project tools/BrokerForge.Cli --no-build -- validate descriptors --schemas schemas
