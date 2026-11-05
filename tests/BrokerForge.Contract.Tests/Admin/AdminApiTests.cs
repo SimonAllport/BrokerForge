@@ -86,6 +86,16 @@ public class AdminApiTests
     }
 
     [Fact]
+    public async Task Admin_DisabledUserWithRole_Refused()
+    {
+        // Final review I1: a user removed from the environment is disabled but keeps their role assignments.
+        const string former = "00000000-0000-0000-0000-00000000a006";
+        Dv.AddUser(former, AdminDataverse.AdminRoleId);
+        Dv.Disable(former);
+        await Assert.ThrowsAsync<CallerRejectedException>(() => Read(Inventory(), former));
+    }
+
+    [Fact]
     public async Task Admin_UnknownUser_Refused() =>
         await Assert.ThrowsAsync<CallerRejectedException>(() => Read(Inventory(), "00000000-0000-0000-0000-00000000a0ff"));
 

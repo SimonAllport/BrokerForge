@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using BrokerForge.Auth.Credentials;
+using BrokerForge.Contracts;
 using BrokerForge.Generator;
 using BrokerForge.Host.Config;
 
@@ -15,11 +16,22 @@ public static class ConnectionList
     public static async Task<JsonArray> ListAsync(DataverseClient host, HostConfigStore config, string environmentId, IInstanceSecretStore secrets,
         Func<string, string?> secretUrl, CancellationToken ct)
     {
-        var rows = (await ConnectionRows.ListAsync(host, ct)).ToDictionary(r => r.Name, StringComparer.OrdinalIgnoreCase);
+        var all = await ConnectionRows.ListAsync(host, ct);
+        var duplicates = all.GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).ToList();
+        var list = new JsonArray();
+        // Two rows with one name (any case) would generate onto one instance; show both, say why, and generate neither.
+        foreach (var row in duplicates.SelectMany(g => g))
+            list.Add(new JsonObject
+            {
+                ["name"] = row.Name, ["rowId"] = row.Id.ToString("D"), ["readOnly"] = false, ["status"] = "duplicate name",
+                ["designVersion"] = null, ["baseUrlVariable"] = $"bf_{row.Name}_BaseUrl", ["secretUrl"] = null,
+            });
+        var rows = all.Where(r => !duplicates.Any(g => string.Equals(g.Key, r.Name, StringComparison.OrdinalIgnoreCase)))
+            .ToDictionary(r => r.Name, StringComparer.OrdinalIgnoreCase);
         var designs = config.Instances.Where(i => string.Equals(i.EnvironmentId, environmentId, StringComparison.OrdinalIgnoreCase))
             .ToDictionary(i => i.Name, StringComparer.OrdinalIgnoreCase);
-        var list = new JsonArray();
-        foreach (var name in rows.Keys.Union(designs.Keys, StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
+        foreach (var name in rows.Keys.Union(designs.Keys.Where(d => !duplicates.Any(g => string.Equals(g.Key, d, StringComparison.OrdinalIgnoreCase))),
+                     StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
         {
             var row = rows.GetValueOrDefault(name);
             var design = designs.GetValueOrDefault(name);
@@ -50,10 +62,17 @@ public static class ConnectionList
         return list;
     }
 
-    /// <summary>The row for <paramref name="instance"/> in this environment, or null.</summary>
-    public static async Task<ConnectionRow?> RowAsync(DataverseClient host, string instance, CancellationToken ct) =>
-        (await host.ListAsync($"{ConnectionRows.EntitySet}?$select={ConnectionRow.Select}&$filter=bf_name eq {DataverseClient.Literal(instance)}", ct))
-            .Select(ConnectionRow.FromJson).FirstOrDefault();
+    /// <summary>The row for <paramref name="instance"/> in this environment (names compare without case), or null.</summary>
+    /// <exception cref="MappedSourceException">Conflict: more than one row has the name.</exception>
+    public static async Task<ConnectionRow?> RowAsync(DataverseClient host, string instance, CancellationToken ct, string correlationId = "")
+    {
+        var rows = (await host.ListAsync($"{ConnectionRows.EntitySet}?$select={ConnectionRow.Select}&$filter=bf_name eq {DataverseClient.Literal(instance)}", ct))
+            .Select(ConnectionRow.FromJson).ToList();
+        if (rows.Count > 1)
+            throw new MappedSourceException(SourceErrorKinds.Conflict,
+                $"{rows.Count} connections are called {instance} in this environment; rename or delete all but one before generating.", correlationId);
+        return rows.FirstOrDefault();
+    }
 
     /// <summary>
     /// The instance secrets a connection needs: from its row where it is edited, else from the design that arrived by

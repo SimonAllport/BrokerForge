@@ -108,6 +108,18 @@ public class GenerateApiTests
     }
 
     [Fact]
+    public async Task Generate_DuplicateName_RefusedNothingStarted()
+    {
+        // Final review I2: two rows called the same (any case) would generate onto one instance, its keys and its lease.
+        var id = _dv.AddRow(DesignBuilderTests.Inventory());
+        _dv.AddRow(DesignBuilderTests.Inventory("inventoryapi") with { Id = Guid.Parse("00000000-0000-0000-0000-00000000c002") });
+        var ex = await Assert.ThrowsAsync<MappedSourceException>(() => _api.HandleAsync(Generate(id), CancellationToken.None));
+        Assert.Equal(SourceErrorKinds.Conflict, ex.Kind);
+        Assert.Contains("2 connections are called InventoryAPI", ex.Message);
+        Assert.Empty(_dv.Fake.Writes);
+    }
+
+    [Fact]
     public async Task Generate_Busy_Conflict()
     {
         var id = _dv.AddRow(DesignBuilderTests.Inventory());

@@ -35,6 +35,18 @@ public static class AdminEndpoints
     public static void Map(WebApplication app)
     {
         var group = app.MapGroup("/admin").RequireAuthorization(ConnectEndpoints.Policy);
+        // Two connections with one name: say so on a page rather than pick one (final review I2).
+        group.AddEndpointFilter(async (context, next) =>
+        {
+            try
+            {
+                return await next(context);
+            }
+            catch (BrokerForge.Contracts.MappedSourceException ex) when (ex.Kind == BrokerForge.Contracts.SourceErrorKinds.Conflict)
+            {
+                return ConnectPages.Message(409, "Not available", ex.Message);
+            }
+        });
         group.MapGet("/callback", RoleCallback);
         group.MapGet("/{environmentId:guid}/{instance}/secret", Secret);
         group.MapPost("/{environmentId:guid}/{instance}/secret", SaveSecret);

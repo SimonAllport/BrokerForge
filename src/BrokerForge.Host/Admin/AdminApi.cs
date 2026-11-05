@@ -97,6 +97,7 @@ public sealed class AdminApi(IGenerationClientFactory clients, GenerationJobs jo
     {
         var correlationId = request.CorrelationId!;
         var row = await ConnectionRows.ReadAsync(host, id, correlationId, ct);
+        await ConnectionList.RowAsync(host, row.Name, ct, correlationId);
         var design = DesignBuilder.Build(row, DesignBuilder.Review(row, correlationId), correlationId);
         var fingerprint = request.Inputs?.FirstOrDefault(c => c.Col == "Fingerprint")?.Value is { Length: > 0 } f ? f : null;
         GenerationJob job;

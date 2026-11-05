@@ -293,6 +293,27 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
     }
 
     [Fact]
+    public async Task List_DuplicateNames_BothShownNamedAsDuplicates()
+    {
+        // Final review I2: the list must not fail; both rows show, each saying the name is taken twice.
+        Row();
+        _dv.AddRow(DesignBuilderTests.Inventory("inventoryapi") with { Id = Guid.Parse("00000000-0000-0000-0000-00000000c002") });
+        var list = await List();
+        Assert.Equal(2, list.Count);
+        Assert.All(list, e => Assert.Equal("duplicate name", (string?)e!["status"]));
+    }
+
+    [Fact]
+    public async Task Secret_DuplicateName_Conflict()
+    {
+        Row();
+        _dv.AddRow(DesignBuilderTests.Inventory("inventoryapi") with { Id = Guid.Parse("00000000-0000-0000-0000-00000000c002") });
+        var (page, html, _) = await Page(Browser(), SecretPath());
+        Assert.Equal(HttpStatusCode.Conflict, page.StatusCode);
+        Assert.Contains("2 connections are called InventoryAPI", html);
+    }
+
+    [Fact]
     public async Task List_RowWithoutDesign_NotGenerated()
     {
         var id = Row();

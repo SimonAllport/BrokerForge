@@ -31,7 +31,8 @@ public static class AdminCheck
         if (!Guid.TryParse(userObjectId, out var oid) || oid == Guid.Empty)
             return false;
         var root = await RootRoleAsync(host, ct);
-        var user = (await host.ListAsync($"systemusers?$select=systemuserid&$filter=azureactivedirectoryobjectid eq {oid:D}", ct)).FirstOrDefault();
+        // A disabled user (removed from the environment) keeps their role assignments, so only an enabled one counts.
+        var user = (await host.ListAsync($"systemusers?$select=systemuserid&$filter=azureactivedirectoryobjectid eq {oid:D} and isdisabled eq false", ct)).FirstOrDefault();
         if (user?["systemuserid"] is not { } userId)
             return false;
         if ((await host.ListAsync($"systemusers({userId})/systemuserroles_association?$select=roleid,_parentrootroleid_value", ct)).Any(r => IsCopyOf(r, root)))

@@ -25,6 +25,10 @@ internal sealed partial class AdminDataverse
 
     private readonly List<(string Id, string Name)> _namedRoles = new() { (AdminRoleId, AdminCheck.RoleName) };
     private readonly Dictionary<string, (string UserId, List<(string RoleId, string Root)> Roles, List<string> Teams)> _users = new();
+    private readonly HashSet<string> _disabled = new();
+
+    /// <summary>The user is disabled in Dataverse, as one removed from the environment is, but keeps their roles.</summary>
+    public void Disable(string oid) => _disabled.Add(oid);
     private readonly Dictionary<string, List<(string RoleId, string Root)>> _teams = new();
     private int _ids;
 
@@ -78,6 +82,10 @@ internal sealed partial class AdminDataverse
     [GeneratedRegex(@"^bf_connections\(([0-9a-f-]{36})\)")]
     private static partial Regex RowPath();
 
+    // Dataverse compares strings without regard to case.
+    [GeneratedRegex(@"bf_name eq '((?:[^']|'')+)'")]
+    private static partial Regex BfName();
+
     [GeneratedRegex(@"azureactivedirectoryobjectid eq ([0-9a-f-]{36})")]
     private static partial Regex Oid();
 
@@ -102,7 +110,9 @@ internal sealed partial class AdminDataverse
         if (method != "GET")
             return null;
         if (path.StartsWith("bf_connections?"))
-            return Value(Rows.Values);
+            return Value(BfName().Match(path) is { Success: true } n
+                ? Rows.Values.Where(r => string.Equals((string?)r["bf_name"], n.Groups[1].Value.Replace("''", "'"), StringComparison.OrdinalIgnoreCase))
+                : Rows.Values);
         if (path.StartsWith("solutions?") && path.Contains($"'{AdminCheck.CoreSolution}'"))
             return Value(new[] { new JsonObject { ["solutionid"] = CoreSolutionId } });
         if (path.StartsWith("solutioncomponents?") && path.Contains(CoreSolutionId))
@@ -110,7 +120,8 @@ internal sealed partial class AdminDataverse
         if (path.StartsWith("roles?") && path.Contains(AdminCheck.RoleName))
             return Value(_namedRoles.Select(n => new JsonObject { ["roleid"] = n.Id }));
         if (path.StartsWith("systemusers?") && Oid().Match(path) is { Success: true } o)
-            return Value(_users.TryGetValue(o.Groups[1].Value, out var u) ? new[] { new JsonObject { ["systemuserid"] = u.UserId } } : Array.Empty<JsonObject>());
+            return Value(_users.TryGetValue(o.Groups[1].Value, out var u) && !(path.Contains("isdisabled eq false") && _disabled.Contains(o.Groups[1].Value))
+                ? new[] { new JsonObject { ["systemuserid"] = u.UserId } } : Array.Empty<JsonObject>());
         if (Related().Match(path) is { Success: true } rel)
         {
             var owner = rel.Groups[2].Value;
