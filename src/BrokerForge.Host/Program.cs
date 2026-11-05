@@ -209,7 +209,9 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<IHostConfigProvider>()
 // Generation (plan 3, D-36) writes metadata as the host's application user; a table create can take minutes per call.
 builder.Services.AddHttpClient("generation", c => c.Timeout = TimeSpan.FromMinutes(10)).RemoveAllLoggers();
 builder.Services.AddSingleton<IGenerationClientFactory>(sp => new HostDataverseClientFactory(sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IHttpClientFactory>()));
-builder.Services.AddSingleton<IGenerationProgress, LoggingGenerationProgress>();
+builder.Services.AddSingleton<LoggingGenerationProgress>();
+builder.Services.AddSingleton<IGenerationProgress>(sp => new ConnectionRowProgress(sp.GetRequiredService<LoggingGenerationProgress>(), sp.GetRequiredService<IOptions<TrustOptions>>(),
+    sp.GetRequiredService<IGenerationClientFactory>(), sp.GetRequiredService<ILogger<ConnectionRowProgress>>()));
 builder.Services.AddSingleton(sp => new GenerationJobs(sp.GetRequiredService<IOptions<TrustOptions>>(), sp.GetRequiredService<IGenerationClientFactory>(),
     sp.GetRequiredService<IHostConfigProvider>(), sp.GetRequiredService<IGenerationProgress>(), sp.GetRequiredService<ILogger<GenerationJobs>>(), null,
     GenerationLeases.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TokenCredential>(), TimeProvider.System)));

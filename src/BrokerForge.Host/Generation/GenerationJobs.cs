@@ -53,7 +53,8 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
                 throw new GenerationBusyException($"Generation of {r.Design.Instance} in environment {r.EnvironmentId} is already running (job {running}); wait for it to finish.");
             }
             Forget();
-            job = new GenerationJob(Guid.NewGuid(), r.EnvironmentId, r.Design.Instance, JobState.Queued, Array.Empty<string>(), null, null, DateTimeOffset.UtcNow, null, r.CorrelationId);
+            job = new GenerationJob(Guid.NewGuid(), r.EnvironmentId, r.Design.Instance, JobState.Queued, Array.Empty<string>(), null, null, DateTimeOffset.UtcNow, null, r.CorrelationId,
+                ConnectionId: r.ConnectionId);
             _jobs[job.Id] = job;
             _done[job.Id] = new TaskCompletionSource<GenerationJob>(TaskCreationOptions.RunContinuationsAsynchronously);
             _active[key] = job.Id;

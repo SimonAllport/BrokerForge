@@ -19,8 +19,9 @@ namespace BrokerForge.Host.Admin;
 public sealed class AdminApi(IOptions<TrustOptions> trust, IGenerationClientFactory clients, GenerationJobs jobs, IInstanceSecretStore secrets, IConfiguration configuration)
 {
     public const string ReadDefinition = "bf_ReadDefinition";
+    public const string Generate = "bf_Generate";
 
-    public static readonly IReadOnlySet<string> Messages = new HashSet<string>(StringComparer.Ordinal) { ReadDefinition };
+    public static readonly IReadOnlySet<string> Messages = new HashSet<string>(StringComparer.Ordinal) { ReadDefinition, Generate };
 
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -36,6 +37,7 @@ public sealed class AdminApi(IOptions<TrustOptions> trust, IGenerationClientFact
         var outputs = request.Message switch
         {
             ReadDefinition => new List<Cell> { Text("Review", (await ReadAsync(host, request, ConnectionId(request), ct)).ToJsonString()) },
+            Generate => await GenerateAsync(host, request, ConnectionId(request), ct),
             _ => throw new UnsupportedQueryException($"Message {request.Message} is not a BrokerForge admin message.", correlationId),
         };
         return new CanonicalResponse { CorrelationId = correlationId, Outputs = outputs };
@@ -81,6 +83,30 @@ public sealed class AdminApi(IOptions<TrustOptions> trust, IGenerationClientFact
             ["roleUrl"] = PageUrl(env, row.Name, "role"),
             ["readOnly"] = false,
         };
+    }
+
+    /// <summary>
+    /// Starts Generate for the row and returns at once (spec 6 step 3); progress goes to the row. The review is computed
+    /// again here, so a row changed since the admin looked at it gives a different change list, which the confirmed
+    /// fingerprint then refuses. As the host, the role is left to an administrator (D-36).
+    /// </summary>
+    private async Task<List<Cell>> GenerateAsync(DataverseClient host, CanonicalRequest request, Guid id, CancellationToken ct)
+    {
+        var correlationId = request.CorrelationId!;
+        var row = await ConnectionRows.ReadAsync(host, id, correlationId, ct);
+        var design = DesignBuilder.Build(row, DesignBuilder.Review(row, correlationId), correlationId);
+        var fingerprint = request.Inputs?.FirstOrDefault(c => c.Col == "Fingerprint")?.Value is { Length: > 0 } f ? f : null;
+        GenerationJob job;
+        try
+        {
+            job = await jobs.StartAsync(new GenerationRequest(request.EnvironmentId!, design, DesignBuilder.SolutionOf(row), DesignBuilder.PublisherOf(row), row.BaseUrl, null,
+                fingerprint, correlationId, ApplyRole: false, ConnectionId: id), ct);
+        }
+        catch (GenerationBusyException ex)
+        {
+            throw new MappedSourceException(SourceErrorKinds.Conflict, ex.Message, correlationId);
+        }
+        return new List<Cell> { Text("JobId", job.Id.ToString("D")), Text("State", job.State.ToString()) };
     }
 
     /// <summary>Ready; Invalid when the definition or an endpoint has problems; otherwise NeedsAnswers.</summary>
