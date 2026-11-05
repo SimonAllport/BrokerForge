@@ -99,7 +99,7 @@ public static class GenerateCommand
             if (preview.NeedsConfirmation && request.ConfirmedFingerprint == null)
                 return await Fail(output, $"To apply exactly these changes, run again with --confirm {preview.Changes.Fingerprint}.", 4);
 
-            var job = await jobs.WaitAsync(jobs.Start(request).Id);
+            var job = await jobs.WaitAsync((await jobs.StartAsync(request, ct)).Id);
             await output.WriteLineAsync($"{instance}: {job.State}, {job.Writes.Count} write(s){(job.DesignVersion is { } v ? $", design v{v}" : "")}");
             foreach (var p in job.Pending)
                 await output.WriteLineAsync($"{instance}: needs an administrator: {p} (run this command as an administrator with --with-role)");

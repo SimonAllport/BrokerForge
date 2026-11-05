@@ -5,5 +5,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\BrokerForge.Host\BrokerForge.Host.csproj" />
     <Compile Include="..\BrokerForge.Generator.Tests\FakeDataverse.cs" Link="Generation\FakeDataverse.cs" />
+    <Compile Include="..\BrokerForge.Auth.Tests\AzuriteFixture.cs" Link="Generation\AzuriteFixture.cs" />
   </ItemGroup>
 </Project>

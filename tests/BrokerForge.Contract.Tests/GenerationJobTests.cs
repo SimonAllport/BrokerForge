@@ -59,7 +59,7 @@ public class GenerationJobTests
         return fake;
     }
 
-    private GenerationJobs Jobs(TimeSpan? limit = null) => new(
+    private GenerationJobs Jobs(TimeSpan? limit = null, IGenerationLease? lease = null) => new(
         Options.Create(new TrustOptions
         {
             AllowedCallers =
@@ -69,7 +69,7 @@ public class GenerationJobTests
                 new AllowedCaller { ClientId = "c", EnvironmentId = "00000000-0000-0000-0000-00000000000c" },
             },
         }),
-        new Clients(_fakes), _configs, _progress, NullLogger<GenerationJobs>.Instance, limit);
+        new Clients(_fakes), _configs, _progress, NullLogger<GenerationJobs>.Instance, limit, lease);
 
     private static GenerationRequest Request(string env = EnvA, ConnectionDesign? design = null) =>
         new(env, design ?? EnvironmentConfigTests.Warehouse(), "BrokerForgeWarehouse", "brokerforgeext", "https://inventory.contoso.example", null, null, "corr-1");
@@ -79,7 +79,7 @@ public class GenerationJobTests
     {
         _fakes[OrgA].Delay = TimeSpan.FromMilliseconds(20);
         var jobs = Jobs();
-        var job = jobs.Start(Request());
+        var job = (await jobs.StartAsync(Request()));
         Assert.Equal(JobState.Queued, job.State);
         var done = await jobs.WaitAsync(job.Id);
         Assert.True(done.State == JobState.Succeeded, done.Failure);
@@ -95,12 +95,39 @@ public class GenerationJobTests
     {
         _fakes[OrgA].Delay = TimeSpan.FromMilliseconds(50);
         var jobs = Jobs();
-        var first = jobs.Start(Request());
-        var ex = Assert.Throws<GenerationBusyException>(() => jobs.Start(Request()));
+        var first = (await jobs.StartAsync(Request()));
+        var ex = await Assert.ThrowsAsync<GenerationBusyException>(() => jobs.StartAsync(Request()));
         Assert.Contains("WarehouseAPI", ex.Message);
         await jobs.WaitAsync(first.Id);
-        var again = jobs.Start(Request());
+        var again = (await jobs.StartAsync(Request()));
         Assert.Equal(JobState.Succeeded, (await jobs.WaitAsync(again.Id)).State);
+    }
+
+    [Fact]
+    public async Task Jobs_TwoHostsShareLease_SecondBusy()
+    {
+        // Two GenerationJobs with one lease stand for two host processes: neither knows the other's jobs.
+        _fakes[OrgA].Delay = TimeSpan.FromMilliseconds(50);
+        var lease = new InMemoryGenerationLease(TimeProvider.System);
+        var replicaA = Jobs(lease: lease);
+        var replicaB = Jobs(lease: lease);
+        var first = await replicaA.StartAsync(Request(), CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<GenerationBusyException>(() => replicaB.StartAsync(Request(), CancellationToken.None));
+        Assert.Contains("another host", ex.Message);
+        await replicaA.WaitAsync(first.Id);
+        var again = await replicaB.StartAsync(Request(), CancellationToken.None);
+        Assert.Equal(JobState.Succeeded, (await replicaB.WaitAsync(again.Id)).State);
+    }
+
+    [Fact]
+    public async Task Jobs_LeaseReleasedAfterFailure()
+    {
+        var lease = new InMemoryGenerationLease(TimeProvider.System);
+        _fakes[OrgA] = new Fake();
+        var jobs = Jobs(lease: lease);
+        var failed = await jobs.WaitAsync((await jobs.StartAsync(Request(), CancellationToken.None)).Id);
+        Assert.Equal(JobState.Failed, failed.State);
+        Assert.NotNull(await lease.TryAcquireAsync(EnvA, "WarehouseAPI", TimeSpan.FromMinutes(1), CancellationToken.None));
     }
 
     [Fact]
@@ -108,9 +135,9 @@ public class GenerationJobTests
     {
         _fakes[OrgA].Delay = TimeSpan.FromMilliseconds(50);
         var jobs = Jobs();
-        var first = jobs.Start(Request());
+        var first = (await jobs.StartAsync(Request()));
         var lower = EnvironmentConfigTests.Warehouse() with { Instance = "warehouseapi" };
-        Assert.Throws<GenerationBusyException>(() => jobs.Start(Request(design: lower)));
+        await Assert.ThrowsAsync<GenerationBusyException>(() => jobs.StartAsync(Request(design: lower)));
         await jobs.WaitAsync(first.Id);
     }
 
@@ -119,7 +146,7 @@ public class GenerationJobTests
     {
         _fakes[OrgA].ThrowWrite = 4;
         var jobs = Jobs();
-        var done = await jobs.WaitAsync(jobs.Start(Request()).Id);
+        var done = await jobs.WaitAsync((await jobs.StartAsync(Request())).Id);
         Assert.Equal(JobState.Failed, done.State);
         Assert.Contains("injected network failure", done.Failure);
         Assert.Contains("step", done.Failure);
@@ -131,8 +158,8 @@ public class GenerationJobTests
     {
         _fakes[OrgA].Delay = _fakes[OrgB].Delay = TimeSpan.FromMilliseconds(20);
         var jobs = Jobs();
-        var a = jobs.Start(Request(EnvA));
-        var b = jobs.Start(Request(EnvB));
+        var a = (await jobs.StartAsync(Request(EnvA)));
+        var b = (await jobs.StartAsync(Request(EnvB)));
         Assert.Equal(JobState.Succeeded, (await jobs.WaitAsync(a.Id)).State);
         Assert.Equal(JobState.Succeeded, (await jobs.WaitAsync(b.Id)).State);
         Assert.Contains(_fakes[OrgB].Writes, w => w.Path == "EntityDefinitions");
@@ -143,7 +170,7 @@ public class GenerationJobTests
     {
         _fakes[OrgA].FailWrite = 4;
         var jobs = Jobs();
-        var done = await jobs.WaitAsync(jobs.Start(Request()).Id);
+        var done = await jobs.WaitAsync((await jobs.StartAsync(Request())).Id);
         Assert.Equal(JobState.Failed, done.State);
         Assert.Contains("injected failure", done.Failure);
         Assert.Contains("step", done.Failure);
@@ -156,16 +183,16 @@ public class GenerationJobTests
     public async Task Job_NeedsConfirmation_FailedNamingFingerprint()
     {
         var jobs = Jobs();
-        await jobs.WaitAsync(jobs.Start(Request()).Id);
+        await jobs.WaitAsync((await jobs.StartAsync(Request())).Id);
         var design = EnvironmentConfigTests.Warehouse();
         var changed = design with { Schema = design.Schema.Replace("displayName: SKU", "displayName: Stock code") };
         var preview = await jobs.PreviewAsync(Request(design: changed), CancellationToken.None);
         var fingerprint = Assert.Single(preview.Changes.Changes.Select(_ => preview.Changes.Fingerprint).Distinct());
-        var refused = await jobs.WaitAsync(jobs.Start(Request(design: changed)).Id);
+        var refused = await jobs.WaitAsync((await jobs.StartAsync(Request(design: changed))).Id);
         Assert.Equal(JobState.Failed, refused.State);
         Assert.Contains(fingerprint, refused.Failure);
         Assert.True(refused.NeedsConfirmation);
-        var confirmed = await jobs.WaitAsync(jobs.Start(Request(design: changed) with { ConfirmedFingerprint = fingerprint }).Id);
+        var confirmed = await jobs.WaitAsync((await jobs.StartAsync(Request(design: changed) with { ConfirmedFingerprint = fingerprint })).Id);
         Assert.True(confirmed.State == JobState.Succeeded, confirmed.Failure);
         Assert.Equal(2, confirmed.DesignVersion);
         Assert.False(confirmed.NeedsConfirmation);
@@ -176,7 +203,7 @@ public class GenerationJobTests
     {
         _fakes[OrgA].Delay = TimeSpan.FromSeconds(5);
         var jobs = Jobs(TimeSpan.FromMilliseconds(100));
-        var done = await jobs.WaitAsync(jobs.Start(Request()).Id);
+        var done = await jobs.WaitAsync((await jobs.StartAsync(Request())).Id);
         Assert.Equal(JobState.Failed, done.State);
         Assert.StartsWith("Generation timed out after", done.Failure);
         Assert.Contains("writes made:", done.Failure);
@@ -186,7 +213,7 @@ public class GenerationJobTests
     public async Task Job_Succeeded_InvalidatesThatEnvironmentOnly()
     {
         var jobs = Jobs();
-        await jobs.WaitAsync(jobs.Start(Request(EnvB)).Id);
+        await jobs.WaitAsync((await jobs.StartAsync(Request(EnvB))).Id);
         Assert.Equal(new[] { EnvB }, _configs.Invalidated);
     }
 
@@ -195,7 +222,7 @@ public class GenerationJobTests
     {
         var jobs = Jobs();
         _fakes[OrgA].FailWrite = 2;
-        await jobs.WaitAsync(jobs.Start(Request()).Id);
+        await jobs.WaitAsync((await jobs.StartAsync(Request())).Id);
         var openApi = EnvironmentConfigTests.Warehouse().OpenApi;
         Assert.All(_progress.Reports, r => Assert.DoesNotContain(openApi[..Math.Min(40, openApi.Length)], (r.Failure ?? "") + string.Join("", r.Writes)));
     }
@@ -203,9 +230,9 @@ public class GenerationJobTests
     [Theory]
     [InlineData("00000000-0000-0000-0000-00000000000c")]
     [InlineData("00000000-0000-0000-0000-0000000000ff")]
-    public void Start_UnknownEnvironment_ConfigurationException(string env)
+    public async Task Start_UnknownEnvironment_ConfigurationException(string env)
     {
-        var ex = Assert.Throws<ConfigurationException>(() => Jobs().Start(Request(env)));
+        var ex = await Assert.ThrowsAsync<ConfigurationException>(() => Jobs().StartAsync(Request(env)));
         Assert.Contains(env, ex.Message);
     }
 
@@ -214,7 +241,7 @@ public class GenerationJobTests
     {
         _fakes[OrgA] = new Fake();
         var jobs = Jobs();
-        var failed = await jobs.WaitAsync(jobs.Start(Request()).Id);
+        var failed = await jobs.WaitAsync((await jobs.StartAsync(Request())).Id);
         Assert.Equal(JobState.Failed, failed.State);
         Assert.Contains("bf_HostUrl", failed.Failure);
         Assert.Empty(_fakes[OrgA].Writes);
@@ -251,11 +278,11 @@ public class GenerationJobTests
     public async Task Job_RoleLeftToAdmin_PendingNoRoleWrites()
     {
         var jobs = Jobs();
-        var done = await jobs.WaitAsync(jobs.Start(Request()).Id);
+        var done = await jobs.WaitAsync((await jobs.StartAsync(Request())).Id);
         Assert.True(done.State == JobState.Succeeded, done.Failure);
         Assert.StartsWith("create role WarehouseAPI user with ", done.Pending.Single());
         Assert.DoesNotContain(_fakes[OrgA].Writes, w => w.Path.StartsWith("roles", StringComparison.Ordinal));
-        var admin = await jobs.WaitAsync(jobs.Start(Request() with { ApplyRole = true }).Id);
+        var admin = await jobs.WaitAsync((await jobs.StartAsync(Request() with { ApplyRole = true })).Id);
         Assert.Empty(admin.Pending);
         Assert.Contains(_fakes[OrgA].Writes, w => w.Path == "roles");
     }
@@ -323,7 +350,7 @@ public class GenerationJobTests
         var unbound = design with { Descriptors = design.Descriptors.Where(d => !d.Value.Contains("customapi:")).ToDictionary(d => d.Key, d => d.Value) };
         Assert.NotEqual(design.Descriptors.Count, unbound.Descriptors.Count);
         var jobs = Jobs();
-        var failed = await jobs.WaitAsync(jobs.Start(Request(design: unbound)).Id);
+        var failed = await jobs.WaitAsync((await jobs.StartAsync(Request(design: unbound))).Id);
         Assert.Equal(JobState.Failed, failed.State);
         Assert.Contains("no descriptor binds it", failed.Failure);
         Assert.Empty(_fakes[OrgA].Writes);

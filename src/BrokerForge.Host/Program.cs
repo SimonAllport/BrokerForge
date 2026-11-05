@@ -211,7 +211,8 @@ builder.Services.AddHttpClient("generation", c => c.Timeout = TimeSpan.FromMinut
 builder.Services.AddSingleton<IGenerationClientFactory>(sp => new HostDataverseClientFactory(sp.GetRequiredService<TokenCredential>(), sp.GetRequiredService<IHttpClientFactory>()));
 builder.Services.AddSingleton<IGenerationProgress, LoggingGenerationProgress>();
 builder.Services.AddSingleton(sp => new GenerationJobs(sp.GetRequiredService<IOptions<TrustOptions>>(), sp.GetRequiredService<IGenerationClientFactory>(),
-    sp.GetRequiredService<IHostConfigProvider>(), sp.GetRequiredService<IGenerationProgress>(), sp.GetRequiredService<ILogger<GenerationJobs>>()));
+    sp.GetRequiredService<IHostConfigProvider>(), sp.GetRequiredService<IGenerationProgress>(), sp.GetRequiredService<ILogger<GenerationJobs>>(), null,
+    GenerationLeases.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TokenCredential>(), TimeProvider.System)));
 builder.Services.AddSingleton(sp => new AdminApi(sp.GetRequiredService<IOptions<TrustOptions>>(), sp.GetRequiredService<IGenerationClientFactory>(),
     sp.GetRequiredService<GenerationJobs>(), sp.GetRequiredService<IInstanceSecretStore>(), sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<CallerGuard>();

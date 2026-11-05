@@ -14,11 +14,15 @@ namespace BrokerForge.Host.Generation;
 /// <summary>
 /// Runs Generate in the background as the host's own application user (spec 6 step 3): a plug-in call has two
 /// minutes, a generation can take longer. One job at a time per environment and instance; each has a time limit.
-/// A job that succeeds reloads that environment's connections. Finished jobs are kept for a day in memory.
+/// A job that succeeds reloads that environment's connections. Finished jobs are kept for a day in memory. Across processes
+/// (replicas, the admin command) a lease (<see cref="IGenerationLease"/>) keeps one job per environment and instance; it
+/// lasts the time limit plus 5 minutes, so a process that stops mid-job frees the source within that time.
 /// </summary>
 public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClientFactory clients, IHostConfigProvider configs, IGenerationProgress progress,
-    ILogger<GenerationJobs> log, TimeSpan? timeLimit = null)
+    ILogger<GenerationJobs> log, TimeSpan? timeLimit = null, IGenerationLease? lease = null)
 {
+    private static readonly TimeSpan LeaseMargin = TimeSpan.FromMinutes(5);
+    private readonly IGenerationLease _lease = lease ?? new InMemoryGenerationLease(TimeProvider.System);
     public static readonly TimeSpan DefaultTimeLimit = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan Keep = TimeSpan.FromDays(1);
 
@@ -29,24 +33,32 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
 
     /// <summary>Queues the job and returns at once.</summary>
     /// <exception cref="ConfigurationException">The environment is not one the host serves, or has no OrgUrl.</exception>
-    /// <exception cref="GenerationBusyException">A job for this environment and instance is still queued or running.</exception>
-    public GenerationJob Start(GenerationRequest r)
+    /// <exception cref="GenerationBusyException">A job for this environment and instance is still queued or running, here or in another host.</exception>
+    public async Task<GenerationJob> StartAsync(GenerationRequest r, CancellationToken ct = default)
     {
         var org = OrgUrlOf(r.EnvironmentId);
         // Dataverse names are case-insensitive, so WarehouseAPI and warehouseapi are one source.
         var key = (r.EnvironmentId.ToLowerInvariant(), r.Design.Instance.ToLowerInvariant());
         GenerationJob job;
         lock (_active)
-        {
             if (_active.TryGetValue(key, out var running))
                 throw new GenerationBusyException($"Generation of {r.Design.Instance} in environment {r.EnvironmentId} is already running (job {running}); wait for it to finish.");
+        var token = await _lease.TryAcquireAsync(r.EnvironmentId, r.Design.Instance, _limit + LeaseMargin, ct)
+            ?? throw new GenerationBusyException($"Generation of {r.Design.Instance} in environment {r.EnvironmentId} is already running in another host; wait for it to finish.");
+        lock (_active)
+        {
+            if (_active.TryGetValue(key, out var running))
+            {
+                _ = _lease.ReleaseAsync(r.EnvironmentId, r.Design.Instance, token, CancellationToken.None);
+                throw new GenerationBusyException($"Generation of {r.Design.Instance} in environment {r.EnvironmentId} is already running (job {running}); wait for it to finish.");
+            }
             Forget();
             job = new GenerationJob(Guid.NewGuid(), r.EnvironmentId, r.Design.Instance, JobState.Queued, Array.Empty<string>(), null, null, DateTimeOffset.UtcNow, null, r.CorrelationId);
             _jobs[job.Id] = job;
             _done[job.Id] = new TaskCompletionSource<GenerationJob>(TaskCreationOptions.RunContinuationsAsynchronously);
             _active[key] = job.Id;
         }
-        _ = Task.Run(() => RunAsync(job, r, org, key));
+        _ = Task.Run(() => RunAsync(job, r, org, key, token));
         return job;
     }
 
@@ -80,7 +92,7 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
         return await Generator.Generator.PreviewAsync(client, schema, options, ct);
     }
 
-    private async Task RunAsync(GenerationJob job, GenerationRequest r, string org, (string, string) key)
+    private async Task RunAsync(GenerationJob job, GenerationRequest r, string org, (string, string) key, string leaseToken)
     {
         DataverseClient? client = null;
         using var timeout = new CancellationTokenSource(_limit);
@@ -123,6 +135,15 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
             _active.Remove(key);
         }
         await Report(job);
+        try
+        {
+            await _lease.ReleaseAsync(r.EnvironmentId, r.Design.Instance, leaseToken, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // An unreleased lease only delays the next Generate until it expires.
+            log.LogWarning(ex, "Generation lease for {Instance} in {EnvironmentId} could not be released; it expires by itself", r.Design.Instance, r.EnvironmentId);
+        }
         _done[job.Id].TrySetResult(job);
     }
 
