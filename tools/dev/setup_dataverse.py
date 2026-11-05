@@ -148,20 +148,31 @@ def ensure_plugin_type(asm_id, typename, friendly, solution):
 
 
 def ensure_env_var(schema, display, value, solution):
-    """A string environment variable (type 100000000) with its current value set; the plug-in reads the value, else the default."""
-    d = first(f"environmentvariabledefinitions?$select=environmentvariabledefinitionid&$filter=schemaname eq '{schema}'")
+    """A string environment variable (type 100000000) in the solution with no default, and this environment's value set
+    outside it, so the value never travels: another environment sets its own (tools/dev/install-core.sh, plan 4)."""
+    d = first(f"environmentvariabledefinitions?$select=environmentvariabledefinitionid,defaultvalue&$filter=schemaname eq '{schema}'")
     if d:
         def_id = d["environmentvariabledefinitionid"]
+        if d.get("defaultvalue"):
+            call("PATCH", f"environmentvariabledefinitions({def_id})", {"defaultvalue": None})
     else:
-        _, body, _ = call("POST", "environmentvariabledefinitions", {"schemaname": schema, "displayname": display, "type": 100000000,
-                                                                     "defaultvalue": value}, solution)
+        _, body, _ = call("POST", "environmentvariabledefinitions", {"schemaname": schema, "displayname": display, "type": 100000000}, solution)
         def_id = body["environmentvariabledefinitionid"]
     v = first(f"environmentvariablevalues?$select=environmentvariablevalueid,value&$filter=_environmentvariabledefinitionid_value eq {def_id}")
     if not v:
         call("POST", "environmentvariablevalues", {"schemaname": schema, "value": value,
-                                                   "EnvironmentVariableDefinitionId@odata.bind": f"/environmentvariabledefinitions({def_id})"}, solution)
-    elif v.get("value") != value:
-        call("PATCH", f"environmentvariablevalues({v['environmentvariablevalueid']})", {"value": value})
+                                                   "EnvironmentVariableDefinitionId@odata.bind": f"/environmentvariabledefinitions({def_id})"})
+    else:
+        if v.get("value") != value:
+            call("PATCH", f"environmentvariablevalues({v['environmentvariablevalueid']})", {"value": value})
+        # Earlier setups created the value in the solution; take it out (component type 381) so it stays here.
+        sol = first(f"solutions?$select=solutionid&$filter=uniquename eq '{solution}'")
+        inside = sol and first(f"solutioncomponents?$select=solutioncomponentid&$filter=_solutionid_value eq {sol['solutionid']} and objectid eq {v['environmentvariablevalueid']}")
+        if inside:
+            # The action names the component by its own ID, in the solutioncomponentid field.
+            call("POST", "RemoveSolutionComponent", {"SolutionComponent": {"@odata.type": "Microsoft.Dynamics.CRM.solutioncomponent",
+                                                                           "solutioncomponentid": v["environmentvariablevalueid"]},
+                                                     "ComponentType": 381, "SolutionUniqueName": solution})
 
 
 HOST_ROLE = "BrokerForge host"
@@ -279,6 +290,9 @@ if __name__ == "__main__":
     # --admin-app: only the admin app (plan 4) and then the host user, with the plug-in type already registered.
     if sys.argv[1] == "--host-user":
         ensure_host_user("BrokerForgeCore")
+    elif sys.argv[1] == "--host-variables":
+        ensure_env_var("bf_HostUrl", "BrokerForge host URL", DEV["DEV_HOST_URL"], "BrokerForgeCore")
+        ensure_env_var("bf_HostScope", "BrokerForge host token scope", f"api://{SPIKE['HOST_APP']}/.default", "BrokerForgeCore")
     elif sys.argv[1] == "--admin-app":
         from core_admin import ensure_admin_app
         ensure_admin_app("BrokerForgeCore", DEV["DEV_API_PT"])

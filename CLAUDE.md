@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Read this first, then `docs/hld.md` and `docs/descriptor-spec.md`.
 
-**Current state:** phases 1 to 3 built and verified live (`docs/findings/phase1.md`, `phase2.md`, `phase3.md`). Phase 3 keeps per-user credentials in an encrypted Azure Table (`src/BrokerForge.Auth/Credentials`, D-25) and serves the connect page from the host (`src/BrokerForge.Host/Connect`, D-26); the Tickets mock (`/tk`) is the per-user source, as `TicketsAPI` (OAuth) and `TicketsEntraAPI` (Impersonate). Contract tests that use the credential store start Azurite through `npx`. Not in the layout below yet: `solution/`. Check `git ls-files` before assuming a project is there. Config still comes from host settings plus `descriptors/` and `schemas/` files (HLD D-10, D-16); the Dataverse config tables are phase 2b. `src/BrokerForge.Abstractions` holds the host-side shared interfaces (D-13). Phase 2 added `src/BrokerForge.Schema` (table schema files, spec 14), `src/BrokerForge.Generator`, `tools/SwaggerForge` and the `bf` CLI in `tools/BrokerForge.Cli` (D-22).
+**Current state:** phases 1 to 3 built and verified live (`docs/findings/phase1.md`, `phase2.md`, `phase3.md`). Phase 3 keeps per-user credentials in an encrypted Azure Table (`src/BrokerForge.Auth/Credentials`, D-25) and serves the connect page from the host (`src/BrokerForge.Host/Connect`, D-26); the Tickets mock (`/tk`) is the per-user source, as `TicketsAPI` (OAuth) and `TicketsEntraAPI` (Impersonate). Contract tests that use the credential store start Azurite through `npx`. `solution/BrokerForgeCore` is the core solution as unpacked source (`tools/dev/export-core.sh`). Check `git ls-files` before assuming a project is there. Config still comes from host settings plus `descriptors/` and `schemas/` files (HLD D-10, D-16); the Dataverse config tables are phase 2b. `src/BrokerForge.Abstractions` holds the host-side shared interfaces (D-13). Phase 2 added `src/BrokerForge.Schema` (table schema files, spec 14), `src/BrokerForge.Generator`, `tools/SwaggerForge` and the `bf` CLI in `tools/BrokerForge.Cli` (D-22).
 
 ## What this is
 
@@ -170,7 +170,11 @@ dotnet run --project tools/BrokerForge.Cli -- draft <openapi> --instance <Name> 
 tools/dev/generate-in-host.sh WarehouseAPI BrokerForgeWarehouse [--preview | --confirm <fp> | --with-role]   # Generate as the host from the published design; exit 3: the role needs --with-role (runs locally as you). exec is rate-limited: ~8 calls, then 10 minutes
 tools/dev/acceptance.sh                         # Orders: phase 1 done criteria + option set writes, lines read back
 tools/dev/acceptance_inventory.sh               # Inventory: the phase 2 onboarding acceptance
-tools/dev/setup-connect-app.sh                  # phase 3 Entra apps (connect app + Tickets API), before deploy.sh; TICKETS_BOB_OID=<second user>
+tools/dev/setup-connect-app.sh                  # phase 3 Entra apps (connect app + Tickets API), before deploy.sh; TICKETS_BOB_OID=<second user>; the connect app also has Dynamics user_impersonation for the role page
+/usr/bin/python3 tools/dev/setup_dataverse.py --admin-app   # only the admin app (bf_connection, review page, admin Custom APIs, administrator role, BrokerForge app) and the host user
+tools/dev/export-core.sh                        # BrokerForgeCore from dev -> solution/BrokerForgeCore (unpacked source) + out/BrokerForgeCore_managed.zip (needs pac)
+tools/dev/install-core.sh <org url> <env id>    # managed core into another environment, then its own identity, host variables and host user
+node --test 'tests/webresources/*.test.js'      # the admin pages' logic (src/BrokerForge.WebResources)
                                                 # per-user live acceptance is manual: docs/findings/phase3.md (connect at {host}/connect/<instance>)
 source tools/spike/dv.sh && dv GET ext_orders   # Web API call as the az CLI user
 ```
