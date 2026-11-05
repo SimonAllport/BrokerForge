@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using BrokerForge.Auth.Credentials;
 using BrokerForge.Contracts;
 using BrokerForge.Generator;
+using BrokerForge.Host.Config;
 using BrokerForge.Host.Generation;
 using BrokerForge.Host.Ingress;
 using BrokerForge.SwaggerForge;
@@ -16,12 +17,14 @@ namespace BrokerForge.Host.Admin;
 /// answered here rather than by a descriptor. Every call first checks that the caller is a BrokerForge administrator,
 /// reading Dataverse as the host's own application user. Nothing here returns or logs a secret value.
 /// </summary>
-public sealed class AdminApi(IOptions<TrustOptions> trust, IGenerationClientFactory clients, GenerationJobs jobs, IInstanceSecretStore secrets, IConfiguration configuration)
+public sealed class AdminApi(IOptions<TrustOptions> trust, IGenerationClientFactory clients, GenerationJobs jobs, IInstanceSecretStore secrets, IConfiguration configuration,
+    IHostConfigProvider? configs = null)
 {
     public const string ReadDefinition = "bf_ReadDefinition";
     public const string Generate = "bf_Generate";
+    public const string ListConnections = "bf_ListConnections";
 
-    public static readonly IReadOnlySet<string> Messages = new HashSet<string>(StringComparer.Ordinal) { ReadDefinition, Generate };
+    public static readonly IReadOnlySet<string> Messages = new HashSet<string>(StringComparer.Ordinal) { ReadDefinition, Generate, ListConnections };
 
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -38,6 +41,7 @@ public sealed class AdminApi(IOptions<TrustOptions> trust, IGenerationClientFact
         {
             ReadDefinition => new List<Cell> { Text("Review", (await ReadAsync(host, request, ConnectionId(request), ct)).ToJsonString()) },
             Generate => await GenerateAsync(host, request, ConnectionId(request), ct),
+            ListConnections => new List<Cell> { Text("Connections", (await ListAsync(host, request.EnvironmentId!, ct)).ToJsonString()) },
             _ => throw new UnsupportedQueryException($"Message {request.Message} is not a BrokerForge admin message.", correlationId),
         };
         return new CanonicalResponse { CorrelationId = correlationId, Outputs = outputs };
@@ -107,6 +111,13 @@ public sealed class AdminApi(IOptions<TrustOptions> trust, IGenerationClientFact
             throw new MappedSourceException(SourceErrorKinds.Conflict, ex.Message, correlationId);
         }
         return new List<Cell> { Text("JobId", job.Id.ToString("D")), Text("State", job.State.ToString()) };
+    }
+
+    /// <summary>This environment's rows and imported designs with their status (spec 9). A design that failed to load is in the config's failures, not here.</summary>
+    private async Task<JsonArray> ListAsync(DataverseClient host, string env, CancellationToken ct)
+    {
+        var config = await (configs ?? throw new InvalidOperationException("AdminApi has no config provider.")).ForEnvironmentAsync(env, ct);
+        return await ConnectionList.ListAsync(host, config, env, secrets, instance => PageUrl(env, instance, "secret"), ct);
     }
 
     /// <summary>Ready; Invalid when the definition or an endpoint has problems; otherwise NeedsAnswers.</summary>

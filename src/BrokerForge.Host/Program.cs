@@ -216,7 +216,12 @@ builder.Services.AddSingleton(sp => new GenerationJobs(sp.GetRequiredService<IOp
     sp.GetRequiredService<IHostConfigProvider>(), sp.GetRequiredService<IGenerationProgress>(), sp.GetRequiredService<ILogger<GenerationJobs>>(), null,
     GenerationLeases.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TokenCredential>(), TimeProvider.System)));
 builder.Services.AddSingleton(sp => new AdminApi(sp.GetRequiredService<IOptions<TrustOptions>>(), sp.GetRequiredService<IGenerationClientFactory>(),
-    sp.GetRequiredService<GenerationJobs>(), sp.GetRequiredService<IInstanceSecretStore>(), sp.GetRequiredService<IConfiguration>()));
+    sp.GetRequiredService<GenerationJobs>(), sp.GetRequiredService<IInstanceSecretStore>(), sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHostConfigProvider>()));
+// The role page (HLD D-36): the administrator's own Dataverse token, from the connect app, for that request only.
+builder.Services.AddSingleton<IDelegatedDataverseFactory>(sp => (HostDataverseClientFactory)sp.GetRequiredService<IGenerationClientFactory>());
+builder.Services.AddSingleton<IAdminTokenExchange>(sp => new EntraAdminTokenExchange(sp.GetRequiredService<IOptions<TrustOptions>>().Value.TenantId,
+    () => sp.GetService<IConnectAppClient>(),
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("tokens")));
 builder.Services.AddSingleton<CallerGuard>();
 builder.Services.AddSingleton<RequestRouter>();
 builder.Services.AddSingleton(sp => PageTokenKey.LoadAsync(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<ISecretResolver>()).GetAwaiter().GetResult());
@@ -255,6 +260,7 @@ app.UseAuthorization();
 app.MapGet("/healthz", () => Results.Ok("ok"));
 ExecuteEndpoint.Map(app);
 ConnectEndpoints.Map(app);
+AdminEndpoints.Map(app);
 app.Run();
 
 public partial class Program;

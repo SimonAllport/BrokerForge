@@ -19,8 +19,11 @@ public class AdminApiTests
     internal const string Org = "https://contoso-dev.crm4.dynamics.com";
     internal const string PublicUrl = "https://bf-host.contoso.example";
 
-    internal sealed class Clients(AdminDataverse dv) : IGenerationClientFactory
+    internal sealed class Clients(AdminDataverse dv) : IGenerationClientFactory, IDelegatedDataverseFactory
     {
+        public DataverseClient Create(string orgUrl, string bearerToken) =>
+            new(new HttpClient(dv.Fake) { BaseAddress = new Uri(orgUrl + "/api/data/v9.2/") }, _ => Task.FromResult(bearerToken), false);
+
         public string? LastToken { get; private set; }
         public DataverseClient Create(string orgUrl) =>
             new(new HttpClient(dv.Fake) { BaseAddress = new Uri(orgUrl + "/api/data/v9.2/") }, _ => Task.FromResult(LastToken = "host-token"), false);

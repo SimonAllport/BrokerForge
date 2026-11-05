@@ -23,6 +23,10 @@ internal static class ConnectPages
 
     public static string Paragraph(string text) => $"<p>{E(text)}</p>";
 
+    /// <summary>One instance secret: its name as a hidden field and the value as a password field that is never filled in.</summary>
+    public static string SecretFields(string name) =>
+        $"""<input type="hidden" name="name" value="{E(name)}"><label>{E(name)} <input name="value" type="password" autocomplete="off"></label>""";
+
     public static string SsoFields(bool needsUsername) =>
         (needsUsername ? """<label>Username <input name="username" autocomplete="username"></label>""" : "")
         + """<label>Password or key <input name="secret" type="password" autocomplete="current-password"></label>""";

@@ -4,6 +4,8 @@
 #   BrokerForge Connect (dev)          users sign in to the connect page with it, and it is the OAuth client of
 #                                      the Impersonate flow. It has no secret: the host's managed identity is
 #                                      its federated credential.
+#                                      It also signs administrators in for Dataverse on the host's role page
+#                                      (HLD D-36): delegated Dynamics CRM user_impersonation (Simon, 5 November 2026).
 #   BrokerForge Tickets mock API (dev) the Entra resource the Impersonate source calls (scope user_impersonation).
 # Optional: TICKETS_BOB_OID=<object ID of a second test user> maps that user to the mock's bob.
 set -euo pipefail
@@ -44,9 +46,12 @@ if [ -z "${CONNECT_APP:-}" ]; then
   CONNECT_APP="$(az ad app create --display-name "BrokerForge Connect (dev)" --sign-in-audience AzureADMyOrg --query appId -o tsv)"
   setvar CONNECT_APP "$CONNECT_APP"
 fi
-# Graph openid, profile, offline_access (delegated) and the Tickets API scope.
+# Graph openid, profile, offline_access (delegated), the Tickets API scope, and Dynamics CRM user_impersonation for the
+# role page, which sets <Instance> user with the signed-in administrator's own Dataverse token.
 GRAPH=00000003-0000-0000-c000-000000000000
-graph_patch "$CONNECT_APP" "{\"web\":{\"redirectUris\":[\"$DEV_HOST_URL/signin-oidc\",\"$DEV_HOST_URL/connect/callback\"]},\"requiredResourceAccess\":[{\"resourceAppId\":\"$GRAPH\",\"resourceAccess\":[{\"id\":\"37f7f235-527c-4136-accd-4a02d197296e\",\"type\":\"Scope\"},{\"id\":\"14dad69e-099b-42c9-810b-d002981feec1\",\"type\":\"Scope\"},{\"id\":\"7427e0e9-2fba-42fe-b0c0-848c9e6a8182\",\"type\":\"Scope\"}]},{\"resourceAppId\":\"$TICKETS_API_APP\",\"resourceAccess\":[{\"id\":\"$SCOPE_ID\",\"type\":\"Scope\"}]}]}"
+DYNAMICS=00000007-0000-0000-c000-000000000000
+DYNAMICS_USER_IMPERSONATION=78ce3f0f-a1ce-49c2-8cde-64b5c0896db4
+graph_patch "$CONNECT_APP" "{\"web\":{\"redirectUris\":[\"$DEV_HOST_URL/signin-oidc\",\"$DEV_HOST_URL/connect/callback\",\"$DEV_HOST_URL/admin/callback\"]},\"requiredResourceAccess\":[{\"resourceAppId\":\"$GRAPH\",\"resourceAccess\":[{\"id\":\"37f7f235-527c-4136-accd-4a02d197296e\",\"type\":\"Scope\"},{\"id\":\"14dad69e-099b-42c9-810b-d002981feec1\",\"type\":\"Scope\"},{\"id\":\"7427e0e9-2fba-42fe-b0c0-848c9e6a8182\",\"type\":\"Scope\"}]},{\"resourceAppId\":\"$TICKETS_API_APP\",\"resourceAccess\":[{\"id\":\"$SCOPE_ID\",\"type\":\"Scope\"}]},{\"resourceAppId\":\"$DYNAMICS\",\"resourceAccess\":[{\"id\":\"$DYNAMICS_USER_IMPERSONATION\",\"type\":\"Scope\"}]}]}"
 ensure_sp "$CONNECT_APP"
 
 MI_PRINCIPAL="$(az identity show -g "$RG" -n bf-dev-id --query principalId -o tsv)"
