@@ -5,7 +5,7 @@
 (function () {
   "use strict";
   var model = window.BrokerForgeReview;
-  var form, xrm, read, edits = {}, poll;
+  var form, xrm, read, edits = {}, poll, startedJob;
 
   function $(id) { return document.getElementById(id); }
 
@@ -33,10 +33,10 @@
   function call(name, inputs) {
     var request = { getMetadata: function () {
       var types = {};
-      Object.keys(inputs).forEach(function (k) { types[k] = { typeName: k === "ConnectionId" ? "Edm.Guid" : "Edm.String", structuralProperty: 1 }; });
+      Object.keys(inputs).forEach(function (k) { types[k] = { typeName: model.actionParameter(k, inputs[k]).typeName, structuralProperty: 1 }; });
       return { boundParameter: null, parameterTypes: types, operationType: 0, operationName: name };
     } };
-    Object.keys(inputs).forEach(function (k) { request[k] = inputs[k]; });
+    Object.keys(inputs).forEach(function (k) { request[k] = model.actionParameter(k, inputs[k]).value; });
     return xrm.WebApi.online.execute(request).then(function (r) { return r.json(); });
   }
 
@@ -44,8 +44,9 @@
     message((e && e.message) || String(e), "bad");
   }
 
-  function savedAnswers() {
-    try { return JSON.parse(form.getAttribute("bf_answers").getValue() || "{}"); } catch (e) { return {}; }
+  // bf_answers is not on the form: it is read and written on the row through Xrm.WebApi.
+  function parseAnswers(text) {
+    try { return JSON.parse(text || "{}"); } catch (e) { return {}; }
   }
 
   function readDefinition() {
@@ -177,6 +178,7 @@
 
   function render() {
     $("page").hidden = false;
+    $("saveAnswers").disabled = false;
     message(read.status === "Ready" ? "Ready to generate." : read.status === "Invalid" ? "The definition has problems." : "Some questions need answers.",
       read.status === "Ready" ? "good" : "bad");
     var problems = $("problems");
@@ -190,12 +192,13 @@
   }
 
   function refreshRow() {
-    return xrm.WebApi.retrieveRecord("bf_connection", rowId(), "?$select=bf_generationstate,bf_generationstarted,bf_generationresult").then(function (row) {
+    return xrm.WebApi.retrieveRecord("bf_connection", rowId(), "?$select=bf_generationstate,bf_generationstarted,bf_generationresult,bf_generationjobid").then(function (row) {
       var status = $("status");
       status.textContent = "";
-      status.appendChild(el("p", model.statusLine(row, new Date())));
+      var waiting = model.isRunning(row, startedJob) && !model.isRunning(row);
+      status.appendChild(el("p", waiting ? "Generate is starting…" : model.statusLine(row, new Date())));
       if (model.needsRole(row) && read && read.roleUrl) {
-        var a = el("a", "Apply the role");
+        var a = el("a", "Finish as administrator");
         a.href = read.roleUrl;
         a.target = "_blank";
         a.rel = "noopener";
@@ -215,12 +218,14 @@
         });
       }
       clearTimeout(poll);
-      if (model.isRunning(row) && model.statusLine(row, new Date()).indexOf("stopped") < 0)
+      if (model.isRunning(row, startedJob) && (waiting || model.statusLine(row, new Date()).indexOf("stopped") < 0))
         poll = setTimeout(refreshRow, 5000);
       else if (row.bf_generationstate === "Succeeded" && poll !== undefined) {
         poll = undefined;
+        startedJob = undefined;
         readDefinition();
       }
+      else startedJob = undefined;
     }, failed);
   }
 
@@ -229,15 +234,20 @@
   }
 
   function saveAnswers() {
-    form.getAttribute("bf_answers").setValue(JSON.stringify(model.answersFrom(savedAnswers(), edits)));
-    return saveThenRead();
+    message("Saving answers…");
+    return form.data.save().then(function () {
+      return xrm.WebApi.retrieveRecord("bf_connection", rowId(), "?$select=bf_answers");
+    }).then(function (row) {
+      return xrm.WebApi.updateRecord("bf_connection", rowId(), { bf_answers: JSON.stringify(model.answersFrom(parseAnswers(row.bf_answers), edits)) });
+    }).then(readDefinition, failed);
   }
 
   function generate() {
     $("generate").disabled = true;
     message("Starting Generate…");
-    return call("bf_Generate", { ConnectionId: rowId(), Fingerprint: read.preview.fingerprint }).then(function () {
+    return call("bf_Generate", { ConnectionId: rowId(), Fingerprint: read.preview.fingerprint }).then(function (r) {
       message("Generate started. This page follows it.");
+      startedJob = r.JobId;
       poll = 0;
       return refreshRow();
     }, failed);
@@ -250,7 +260,7 @@
       $("read").onclick = saveThenRead;
       $("saveAnswers").onclick = saveAnswers;
       $("generate").onclick = generate;
-      if (!rowId()) { message("Fill in the connection and save it, then read the definition."); return; }
+      if (!rowId()) { message("Fill in the connection, then save it and read the definition."); return; }
       readDefinition();
     },
   };
