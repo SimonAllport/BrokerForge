@@ -63,6 +63,8 @@
 
   function questionInput(q) {
     var wrap = el("div", null, "question");
+    // The answer key, so a script (the how-to recording) can find a question without matching its wording.
+    wrap.setAttribute("data-key", q.key);
     var label = el("label", q.text);
     var input;
     if (q.kind === "Choice") {
