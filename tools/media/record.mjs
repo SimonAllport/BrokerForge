@@ -161,15 +161,18 @@ async function part1() {
   await s.type(field('Name'), 'InventoryAPI');
   const baseUrl = field('Base URL');
   // A typed value can't be masked like page text, so the field is covered with the placeholder address while it shows.
-  const box = await baseUrl.boundingBox();
-  await page.evaluate(({ x, y, width, height }) => {
+  // The cover sits inside the field's own box, so it scrolls with it.
+  await baseUrl.evaluate(input => {
+    const host = input.parentElement;
+    if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
     const c = document.createElement('div');
     c.id = 'bf-cover-baseurl';
     c.textContent = 'https://inventory.contoso.example';
-    Object.assign(c.style, { position: 'fixed', left: x + 'px', top: y + 'px', width: width + 'px', height: height + 'px', background: '#f5f5f5',
-      display: 'flex', alignItems: 'center', padding: '0 8px', boxSizing: 'border-box', font: '14px "Segoe UI", sans-serif', color: '#242424', zIndex: 2147483640, pointerEvents: 'none' });
-    document.body.appendChild(c);
-  }, box);
+    Object.assign(c.style, { position: 'absolute', left: input.offsetLeft + 'px', top: input.offsetTop + 'px', width: input.offsetWidth + 'px',
+      height: input.offsetHeight + 'px', background: getComputedStyle(input).backgroundColor || '#f5f5f5', display: 'flex', alignItems: 'center',
+      padding: getComputedStyle(input).padding, boxSizing: 'border-box', font: getComputedStyle(input).font, color: '#242424', zIndex: 10, pointerEvents: 'none' });
+    host.appendChild(c);
+  });
   await s.type(baseUrl, execFileSync('bash', ['-c', `source ~/.brokerforge/dev-ids.env; az containerapp show -g "$RG" -n bf-dev-orders-mock --query properties.configuration.ingress.fqdn -o tsv`], { encoding: 'utf8' }).trim().replace(/^/, 'https://'));
   await choose(page, s, 'Authentication', 'Static');
   await s.type(field('Static kind'), 'apiKeyQuery');
