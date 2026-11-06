@@ -199,8 +199,8 @@ HOST_PRIVILEGES = sorted({f"prv{v}{c}" for c in _CRUD for v in ("Read", "Create"
                             "prvCreateRelationship", "prvWriteRelationship", "prvDeleteRelationship",
                             # Publishing a table reads its system charts.
                             "prvReadSavedQueryVisualizations",
-                            # Creating a Custom API creates its SDK message (Simon, 6 November 2026, one privilege at a time).
-                            "prvCreateSdkMessage", "prvCreateSdkMessageProcessingStep",
+                            # Not prvCreateSdkMessage or prvCreateSdkMessageProcessingStep: actions are the administrator's step (D-38),
+                            # and Dataverse drops the step privilege from the host's effective rights anyway (portal-5 findings).
                             # Deleting a column reads its attribute maps (Simon, 6 November 2026, done criterion 5).
                             "prvReadAttributeMap"})
 

@@ -86,6 +86,10 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
         return (page, html, match.Success ? HttpUtility.HtmlDecode(match.Groups[1].Value) : "");
     }
 
+    /// <summary>The change list's fingerprint the administrator's page shows, in its form.</summary>
+    private static string Fingerprint(string html) =>
+        System.Text.RegularExpressions.Regex.Match(html, "name=\"fingerprint\" value=\"([0-9a-f]+)\"").Groups[1].Value;
+
     private static Task<HttpResponseMessage> Post(HttpClient browser, string path, string? token, params (string, string)[] fields) =>
         browser.PostAsync(path, new FormUrlEncodedContent(fields.Select(f => new KeyValuePair<string, string>(f.Item1, f.Item2))
             .Concat(token == null ? Array.Empty<KeyValuePair<string, string>>() : new[] { new KeyValuePair<string, string>("__RequestVerificationToken", token) })));
@@ -195,7 +199,7 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
         var (page, html, token) = await Page(browser, RolePath);
         Assert.Equal(HttpStatusCode.OK, page.StatusCode);
         Assert.Contains("InventoryAPI user", html);
-        var start = await Post(browser, RolePath + "/start", token);
+        var start = await Post(browser, RolePath + "/start", token, ("fingerprint", Fingerprint(html)));
         Assert.Equal(HttpStatusCode.Redirect, start.StatusCode);
         var authorize = start.Headers.Location!;
         Assert.StartsWith($"https://login.microsoftonline.com/{HostFactory.Tenant}/oauth2/v2.0/authorize?", authorize.ToString());
@@ -244,6 +248,64 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
         Assert.All(apiWrites, w => Assert.Equal($"Bearer {AdminToken}", w.Authorization));
         var (_, again, _) = await Page(Browser(), RolePath);
         Assert.Contains("up to date", again);
+    }
+
+    // Final review I1: the page applies only the administrator's steps; changes Generate as the host would make come first.
+    [Fact]
+    public async Task Role_HostChangesLeft_PageRefusesAndNamesThem()
+    {
+        var id = Row();
+        await Generated(id);
+        _dv.Fake.SetAttributeType("ext_item", "ext_onhand", "String");
+        var (page, html, _) = await Page(Browser(), RolePath);
+        Assert.Equal(HttpStatusCode.Conflict, page.StatusCode);
+        Assert.Contains("On hand", html);
+        Assert.Contains("Generate", html);
+        Assert.DoesNotContain("Do it as me", html);
+    }
+
+    // Final review I2: the list confirmed is the one the page showed, not the one when the button is pressed.
+    [Fact]
+    public async Task Role_StartWithAnotherList_Refused()
+    {
+        var id = Row();
+        await Generated(id);
+        var browser = Browser();
+        var (_, _, token) = await Page(browser, RolePath);
+        var start = await Post(browser, RolePath + "/start", token, ("fingerprint", "0123456789abcdef"));
+        Assert.Equal(HttpStatusCode.Conflict, start.StatusCode);
+        Assert.Contains("changed", await start.Content.ReadAsStringAsync());
+    }
+
+    // Final review I3: the administrator's run takes the same lease as Generate, so the two never run at once.
+    [Fact]
+    public async Task Role_CallbackWhileGenerateRuns_RefusedNothingWritten()
+    {
+        var id = Row();
+        await Generated(id);
+        var browser = Browser();
+        var callback = await StartRole(browser);
+        var lease = Host.Services.GetRequiredService<BrokerForge.Host.Generation.IGenerationLease>();
+        Assert.NotNull(await lease.TryAcquireAsync(Env, "InventoryAPI", TimeSpan.FromMinutes(5), CancellationToken.None));
+        var response = await browser.GetAsync(callback);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("running", await response.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(_dv.Fake.Writes, w => w.Path.StartsWith("customapis", StringComparison.Ordinal));
+    }
+
+    // Final review I4: once done, the row no longer says an administrator step is left.
+    [Fact]
+    public async Task Role_CallbackDone_RowHasNothingPending()
+    {
+        var id = Row();
+        await Generated(id);
+        Assert.Contains("create role", (string)_dv.Rows[id]["bf_generationresult"]!);
+        var browser = Browser();
+        var response = await browser.GetAsync(await StartRole(browser));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = System.Text.Json.Nodes.JsonNode.Parse((string)_dv.Rows[id]["bf_generationresult"]!)!;
+        Assert.Empty(result["pending"]!.AsArray());
+        Assert.Equal("Succeeded", (string)_dv.Rows[id]["bf_generationstate"]!);
     }
 
     [Fact]

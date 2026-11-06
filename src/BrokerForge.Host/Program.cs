@@ -212,10 +212,12 @@ builder.Services.AddSingleton<IGenerationClientFactory>(sp => new HostDataverseC
 builder.Services.AddSingleton<LoggingGenerationProgress>();
 builder.Services.AddSingleton<IGenerationProgress>(sp => new ConnectionRowProgress(sp.GetRequiredService<LoggingGenerationProgress>(), sp.GetRequiredService<IOptions<TrustOptions>>(),
     sp.GetRequiredService<IGenerationClientFactory>(), sp.GetRequiredService<ILogger<ConnectionRowProgress>>()));
+// One lease for Generate and the administrator's step, so the two never run at once for a source.
+builder.Services.AddSingleton<IGenerationLease>(sp => GenerationLeases.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TokenCredential>(),
+    TimeProvider.System, sp.GetService<IDesignSource>() != null));
 builder.Services.AddSingleton(sp => new GenerationJobs(sp.GetRequiredService<IOptions<TrustOptions>>(), sp.GetRequiredService<IGenerationClientFactory>(),
     sp.GetRequiredService<IHostConfigProvider>(), sp.GetRequiredService<IGenerationProgress>(), sp.GetRequiredService<ILogger<GenerationJobs>>(), null,
-    GenerationLeases.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TokenCredential>(), TimeProvider.System,
-        sp.GetService<IDesignSource>() != null)));
+    sp.GetRequiredService<IGenerationLease>()));
 builder.Services.AddSingleton(sp => new AdminApi(sp.GetRequiredService<IGenerationClientFactory>(),
     sp.GetRequiredService<GenerationJobs>(), sp.GetRequiredService<IInstanceSecretStore>(), sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHostConfigProvider>()));
 // The role page (HLD D-36): the administrator's own Dataverse token, from the connect app, for that request only.

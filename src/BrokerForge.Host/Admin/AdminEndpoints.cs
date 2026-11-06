@@ -183,6 +183,11 @@ public static class AdminEndpoints
         {
             return (null, ConnectPages.Message(409, $"Administrator step for {row.Name}", $"What is left to do could not be worked out: {ex.Message}"));
         }
+        // Changes Generate as the host applies come first: this page applies only what the host may not (final review I1).
+        var hostChanges = GenerationJobs.AdministratorsOnly(preview.Changes);
+        if (hostChanges.Count > 0)
+            return (null, ConnectPages.Message(409, $"Administrator step for {row.Name}",
+                $"Generate the connection first: these changes are Generate's to apply, not the administrator's: {string.Join("; ", hostChanges)}."));
         return (new AdminPlan(row.Name, request, preview.Pending, preview.Changes.Fingerprint), null);
     }
 
@@ -199,7 +204,8 @@ public static class AdminEndpoints
             return ConnectPages.Message(200, title, $"Role {RoleGenerator.RoleName(plan.Instance)} and the actions are up to date.");
         var token = antiforgery.GetAndStoreTokens(http).RequestToken!;
         return ConnectPages.Page(200, title, ConnectPages.Paragraph($"To do: {string.Join("; ", plan.Pending)}. You sign in for Dataverse, and this is done as you.")
-            + ConnectPages.Form($"/admin/{environmentId:D}/{Uri.EscapeDataString(plan.Instance)}/role/start", token, "", "Do it as me"));
+            + ConnectPages.Form($"/admin/{environmentId:D}/{Uri.EscapeDataString(plan.Instance)}/role/start", token,
+                $"""<input type="hidden" name="fingerprint" value="{System.Net.WebUtility.HtmlEncode(plan.Fingerprint)}">""", "Do it as me"));
     }
 
     private static async Task<IResult> StartRole(Guid environmentId, string instance, HttpContext http, IAntiforgery antiforgery, IDataProtectionProvider protection,
@@ -213,6 +219,9 @@ public static class AdminEndpoints
         var (plan, planFailure) = await PlanRole(http, host!, environmentId, instance, ct);
         if (planFailure != null)
             return planFailure;
+        // The list the page showed (final review I2): a different list now means something changed since it was shown.
+        if ((string?)http.Request.Form["fingerprint"] != plan!.Fingerprint)
+            return ConnectPages.Message(409, "Not done", "What is left to do changed after the page was shown; nothing was done. Open the administrator's page again.");
         if (configuration["Connect:ClientId"] is not { Length: > 0 } clientId)
             return ConnectPages.Message(500, "Role not set", "Connect:ClientId is not set, so an administrator cannot sign in for the role step.");
         // The change list's fingerprint travels in the state, so the callback applies only the list shown here.
@@ -295,7 +304,12 @@ public static class AdminEndpoints
         {
             return ConnectPages.Message(409, "Not done", "What is left to do changed after the page was shown; nothing was done. Open the administrator's page again.");
         }
-        catch (Exception ex) when (ex is GenerationRefusedException or GenerationFailedException or DataverseException)
+        catch (GenerationBusyException ex)
+        {
+            return ConnectPages.Message(409, "Not done", $"{ex.Message} Nothing was done.");
+        }
+        catch (Exception ex) when (ex is GenerationRefusedException or GenerationFailedException or DataverseException or SchemaException or ConfigurationException
+                                       or DescriptorException)
         {
             log.LogWarning("Administrator step for {Instance} in environment {EnvironmentId} not done: {Reason}", plan.Instance, env, ex.Message);
             return ConnectPages.Message(502, "Not done", $"Dataverse refused it: {ex.Message}");
