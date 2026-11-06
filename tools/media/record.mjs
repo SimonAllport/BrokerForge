@@ -229,14 +229,15 @@ async function part1() {
   s.chapter('Set the key');
   await s.tap(page.getByRole('tab', { name: 'Review and generate' }));
   await s.tap(review.locator('#read'));
-  const setKey = review.getByRole('link', { name: 'Set key' });
+  // An earlier take may have stored the key already: then the page offers Replace key, which shows the same page.
+  const setKey = review.getByRole('link', { name: /^(Set|Replace) key$/ });
   await setKey.waitFor({ timeout: 120_000 });
   await s.say('The connection shows "needs key". Set key opens the host\'s page, where the key is stored encrypted. It never enters Dataverse.', 6000);
   const [keyPage] = await Promise.all([context.waitForEvent('page'), s.tap(setKey)]);
   await throughSignIn(keyPage, new URL(hostUrl).host);
   const keyStage = stage(keyPage, { mode: shots ? 'shots' : 'video', prefix: 'p1' });
   await keyStage.type(keyPage.locator('input[name=value]').first(), vaultSecret('inventory-api-key'), { secret: true });
-  await keyStage.tap(keyPage.getByRole('button', { name: 'Set key' }));
+  await keyStage.tap(keyPage.getByRole('button', { name: /^(Set|Replace) key$/ }));
   await keyPage.getByRole('button', { name: 'Replace key' }).waitFor({ timeout: 60_000 });
   await keyPage.waitForTimeout(1500);
   await keyPage.close();
