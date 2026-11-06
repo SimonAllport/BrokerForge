@@ -99,3 +99,13 @@ test("status line names what an administrator still has to do", () => {
   const row = { bf_generationstate: "Succeeded", bf_generationresult: JSON.stringify({ designVersion: 1, pending: ["add action Adjust stock (ext_AdjustStock)", "create role X user"] }) };
   assert.equal(model.statusLine(row, new Date()), "Generated (design v1). Left for an administrator: add action Adjust stock (ext_AdjustStock); create role X user.");
 });
+
+// Found while recording plan 5: right after bf_Generate the row may not show the new job yet, and the page stopped polling.
+test("a job just started counts as running until the row shows it", () => {
+  const job = "11111111-1111-1111-1111-111111111111";
+  assert.equal(model.isRunning({ bf_generationstate: null }, job), true);
+  assert.equal(model.isRunning({ bf_generationstate: "Succeeded", bf_generationjobid: "22222222-2222-2222-2222-222222222222" }, job), true);
+  assert.equal(model.isRunning({ bf_generationstate: "Succeeded", bf_generationjobid: job }, job), false);
+  assert.equal(model.isRunning({ bf_generationstate: "Running", bf_generationjobid: job }, job), true);
+  assert.equal(model.isRunning({ bf_generationstate: "Succeeded" }), false);
+});

@@ -5,7 +5,7 @@
 (function () {
   "use strict";
   var model = window.BrokerForgeReview;
-  var form, xrm, read, edits = {}, poll;
+  var form, xrm, read, edits = {}, poll, startedJob;
 
   function $(id) { return document.getElementById(id); }
 
@@ -192,10 +192,11 @@
   }
 
   function refreshRow() {
-    return xrm.WebApi.retrieveRecord("bf_connection", rowId(), "?$select=bf_generationstate,bf_generationstarted,bf_generationresult").then(function (row) {
+    return xrm.WebApi.retrieveRecord("bf_connection", rowId(), "?$select=bf_generationstate,bf_generationstarted,bf_generationresult,bf_generationjobid").then(function (row) {
       var status = $("status");
       status.textContent = "";
-      status.appendChild(el("p", model.statusLine(row, new Date())));
+      var waiting = model.isRunning(row, startedJob) && !model.isRunning(row);
+      status.appendChild(el("p", waiting ? "Generate is starting…" : model.statusLine(row, new Date())));
       if (model.needsRole(row) && read && read.roleUrl) {
         var a = el("a", "Finish as administrator");
         a.href = read.roleUrl;
@@ -217,12 +218,14 @@
         });
       }
       clearTimeout(poll);
-      if (model.isRunning(row) && model.statusLine(row, new Date()).indexOf("stopped") < 0)
+      if (model.isRunning(row, startedJob) && (waiting || model.statusLine(row, new Date()).indexOf("stopped") < 0))
         poll = setTimeout(refreshRow, 5000);
       else if (row.bf_generationstate === "Succeeded" && poll !== undefined) {
         poll = undefined;
+        startedJob = undefined;
         readDefinition();
       }
+      else startedJob = undefined;
     }, failed);
   }
 
@@ -242,8 +245,9 @@
   function generate() {
     $("generate").disabled = true;
     message("Starting Generate…");
-    return call("bf_Generate", { ConnectionId: rowId(), Fingerprint: read.preview.fingerprint }).then(function () {
+    return call("bf_Generate", { ConnectionId: rowId(), Fingerprint: read.preview.fingerprint }).then(function (r) {
       message("Generate started. This page follows it.");
+      startedJob = r.JobId;
       poll = 0;
       return refreshRow();
     }, failed);

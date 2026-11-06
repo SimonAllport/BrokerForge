@@ -44,7 +44,10 @@
     return sorted;
   }
 
-  function isRunning(row) {
+  // A job this page just started is running until the row shows that job: bf_Generate returns before the job's first
+  // report, so the row can still show the previous job, or none.
+  function isRunning(row, startedJob) {
+    if (startedJob && (!row || String(row.bf_generationjobid || "").toLowerCase() !== String(startedJob).toLowerCase())) return true;
     return !!row && (row.bf_generationstate === "Queued" || row.bf_generationstate === "Running");
   }
 
