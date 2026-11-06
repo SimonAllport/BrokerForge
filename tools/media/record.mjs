@@ -248,7 +248,11 @@ async function part1() {
   await s.shot('06-ready-list');
 
   s.chapter('Use the table');
-  await openList(page, 'ext_item', 'Item 003');
+  // A table made minutes ago can show a permission error until the browser's metadata catches up: reload, off camera.
+  for (let attempt = 1; ; attempt++) {
+    try { await openList(page, 'ext_item', 'Item 003'); break; }
+    catch (e) { if (attempt === 4) throw e; await page.waitForTimeout(30_000); }
+  }
   await s.say('The table lists rows straight from the API, with every column on the view. Nothing is copied into Dataverse.', 5600);
   await s.shot('07-list');
 
