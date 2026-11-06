@@ -44,8 +44,9 @@
     message((e && e.message) || String(e), "bad");
   }
 
-  function savedAnswers() {
-    try { return JSON.parse(form.getAttribute("bf_answers").getValue() || "{}"); } catch (e) { return {}; }
+  // bf_answers is not on the form: it is read and written on the row through Xrm.WebApi.
+  function parseAnswers(text) {
+    try { return JSON.parse(text || "{}"); } catch (e) { return {}; }
   }
 
   function readDefinition() {
@@ -230,8 +231,12 @@
   }
 
   function saveAnswers() {
-    form.getAttribute("bf_answers").setValue(JSON.stringify(model.answersFrom(savedAnswers(), edits)));
-    return saveThenRead();
+    message("Saving answers…");
+    return form.data.save().then(function () {
+      return xrm.WebApi.retrieveRecord("bf_connection", rowId(), "?$select=bf_answers");
+    }).then(function (row) {
+      return xrm.WebApi.updateRecord("bf_connection", rowId(), { bf_answers: JSON.stringify(model.answersFrom(parseAnswers(row.bf_answers), edits)) });
+    }).then(readDefinition, failed);
   }
 
   function generate() {
