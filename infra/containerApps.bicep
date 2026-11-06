@@ -181,6 +181,8 @@ resource host 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'Config__Designs__Enabled', value: 'true' }
             // The Orders and Inventory designs target the internal mock, which resolves to a private address.
             { name: 'Config__Designs__AllowedPrivateHosts__0', value: mock.properties.configuration.ingress.fqdn }
+            // The Tickets mock is public, but from inside this Container Apps environment its name resolves to a private address.
+            { name: 'Config__Designs__AllowedPrivateHosts__1', value: '${prefix}-tickets-mock.${environment.properties.defaultDomain}' }
             { name: 'Credentials__TableEndpoint', value: credentialTableEndpoint }
             { name: 'DataProtection__BlobUri', value: keyRingBlobUri }
             { name: 'DataProtection__KeyId', value: dataProtectionKeyUri }

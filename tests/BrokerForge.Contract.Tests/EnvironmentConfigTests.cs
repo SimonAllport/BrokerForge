@@ -305,8 +305,7 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
         var (status, body) = await ConnectCallback(Host());
         Assert.Equal(HttpStatusCode.InternalServerError, status);
         Assert.Contains("TicketsAPI", body);
-        Assert.Contains("clientSecret", body);
-        Assert.Contains("not set", body);
+        Assert.Contains("needs its key `clientSecret`", body);
         Assert.Equal(0, _tokenCalls.Value);
         Assert.DoesNotContain(Tickets.ClientSecret, body);
     }

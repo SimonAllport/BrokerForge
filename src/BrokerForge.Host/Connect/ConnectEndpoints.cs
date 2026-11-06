@@ -210,10 +210,12 @@ public static partial class ConnectEndpoints
         }
         catch (Exception ex) when (ex is ConfigurationException or CredentialUnreadableException)
         {
-            // The instance's stored client secret is not set or cannot be read: an administrator's job, and the message names no value.
+            // A configuration problem (the client secret not set, a token URL the egress rule refuses) or an unreadable secret:
+            // an administrator's job. Configuration messages name what is wrong and never a value (principle 4), so show it.
             log.LogWarning("Connect for {Instance} in environment {EnvironmentId} user {UserObjectId} failed: {Reason}", si.Name, si.EnvironmentId, state.UserObjectId, ex.Message);
-            return ConnectPages.Message(ex is ConfigurationException ? 500 : 503, "Connection not saved",
-                $"{si.Name} cannot be connected yet: its stored key `clientSecret` is {(ex is ConfigurationException ? "not set" : "unreadable")}. Ask an administrator to set it on the BrokerForge secret page.");
+            return ConnectPages.Message(ex is ConfigurationException ? 500 : 503, "Connection not saved", ex is ConfigurationException
+                ? $"{si.Name} cannot be connected yet. {ex.Message} Ask an administrator."
+                : $"{si.Name} cannot be connected yet: its stored key `clientSecret` is unreadable. Ask an administrator to set it on the BrokerForge secret page.");
         }
         catch (CredentialUnavailableException ex)
         {
