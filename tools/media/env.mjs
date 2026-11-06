@@ -20,10 +20,13 @@ function ids(file) {
 const dev = { ...ids('spike-ids.env'), ...ids('dev-ids.env') };
 export const org = process.env.DV_ORG || dev.DV_ORG;
 export const hostUrl = process.env.DEV_HOST_URL || dev.DEV_HOST_URL;
+/** The dev environment's ID: connect pages of connection designs are at {host}/connect/<environment>/<instance>. */
+export const envId = process.env.ENVID || dev.ENVID;
 
 /** Real names and URLs, and what pictures show instead. Longest first, so a host is replaced before its domain. */
 export const placeholders = [
   [hostUrl, 'https://brokerforge.contoso.example'],
+  [envId, '00000000-0000-0000-0000-000000000000'],
   [new URL(org).host, 'contoso.crm.dynamics.com'],
   [new URL(org).host.split('.')[0], 'contoso'],
 ].filter(([real]) => real);
