@@ -177,6 +177,7 @@
 
   function render() {
     $("page").hidden = false;
+    $("saveAnswers").disabled = false;
     message(read.status === "Ready" ? "Ready to generate." : read.status === "Invalid" ? "The definition has problems." : "Some questions need answers.",
       read.status === "Ready" ? "good" : "bad");
     var problems = $("problems");
@@ -250,7 +251,7 @@
       $("read").onclick = saveThenRead;
       $("saveAnswers").onclick = saveAnswers;
       $("generate").onclick = generate;
-      if (!rowId()) { message("Fill in the connection and save it, then read the definition."); return; }
+      if (!rowId()) { message("Fill in the connection, then save it and read the definition."); return; }
       readDefinition();
     },
   };
