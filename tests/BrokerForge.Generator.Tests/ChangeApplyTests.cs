@@ -49,6 +49,28 @@ public class ChangeApplyTests
         Assert.Contains("{C3EFE0C3-0EC6-42be-8349-CBD9079DFD8E}", (string)fake.MainForm("ext_item")["formxml"]!);
     }
 
+    // Found while recording plan 5: a view sorted on a column the list declares no sort for fails loudly in the app
+    // (UnsupportedQueryException), so the generated view never sorts. Rows come in the source's order.
+    [Fact]
+    public async Task Run_NewSource_ViewDoesNotSort()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        Assert.DoesNotContain("<order", (string)fake.DefaultView("ext_item")["fetchxml"]!);
+    }
+
+    [Fact]
+    public async Task Run_GeneratedViewThatSorts_Rewritten()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        var view = fake.DefaultView("ext_item");
+        view["fetchxml"] = ((string)view["fetchxml"]!).Replace("</entity>", "<order attribute=\"ext_name\" descending=\"false\" /></entity>");
+        Assert.Contains((await Preview(fake, Schema())).Parts, p => p.StartsWith("show every column", StringComparison.Ordinal));
+        await Run(fake, Schema());
+        Assert.DoesNotContain("<order", (string)fake.DefaultView("ext_item")["fetchxml"]!);
+    }
+
     [Theory]
     [InlineData("RetrieveMultiple,Retrieve,Create,Update,Delete", "Create,Delete,Read,Write")]
     [InlineData("RetrieveMultiple", "Read")]
