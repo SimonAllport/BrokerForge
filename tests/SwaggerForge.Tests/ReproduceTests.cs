@@ -69,6 +69,42 @@ public class ReproduceTests
             Canonical(r.SchemaYaml));
     }
 
+    /// <summary>
+    /// <see cref="Canonical"/>, with error entries that say Fail dropped: Fail is the default, so `401: Fail` behaves as no entry.
+    /// </summary>
+    private static string WithoutFailEntries(string yaml)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(Canonical(yaml))!;
+        if (node["errors"] is System.Text.Json.Nodes.JsonObject errors)
+            foreach (var key in errors.Where(e => e.Key != "default" && e.Value?.GetValueKind() == JsonValueKind.String && (string?)e.Value == "Fail").Select(e => e.Key).ToList())
+                errors.Remove(key);
+        return node.ToJsonString();
+    }
+
+    [Fact]
+    public void Reproduce_Tickets_MatchesCommittedDescriptors()
+    {
+        var r = Draft(Path.Combine(Repo, "tools", "mock-api", "tickets-openapi.yaml"), "tickets-answers.json");
+        var committed = Directory.GetFiles(Path.Combine(Repo, "descriptors", "TicketsAPI"), "*.yaml").ToDictionary(f => Path.GetFileNameWithoutExtension(f), File.ReadAllText);
+        Assert.Equal(committed.Keys.Order(), r.Descriptors.Keys.Order());
+        foreach (var (name, yaml) in committed)
+            Assert.Equal(WithoutFailEntries(yaml), WithoutFailEntries(r.Descriptors[name]));
+        Assert.Equal(Canonical(File.ReadAllText(Path.Combine(Repo, "schemas", "TicketsAPI.yaml"))), Canonical(r.SchemaYaml));
+    }
+
+    [Fact]
+    public void Reproduce_TicketsEntra_MatchesCommittedDescriptorsApartFromOperationNames()
+    {
+        var r = Draft(Path.Combine(Repo, "tools", "mock-api", "tickets-openapi.yaml"), "tickets-entra-answers.json");
+        // The committed files are named listEntraTickets and so on; the design takes the definition's operationIds.
+        var committed = Directory.GetFiles(Path.Combine(Repo, "descriptors", "TicketsEntraAPI"), "*.yaml")
+            .ToDictionary(f => Path.GetFileNameWithoutExtension(f).Replace("EntraTicket", "Ticket"), f => File.ReadAllText(f).Replace("EntraTicket", "Ticket"));
+        Assert.Equal(committed.Keys.Order(), r.Descriptors.Keys.Order());
+        foreach (var (name, yaml) in committed)
+            Assert.Equal(WithoutFailEntries(yaml), WithoutFailEntries(r.Descriptors[name]));
+        Assert.Equal(Canonical(File.ReadAllText(Path.Combine(Repo, "schemas", "TicketsEntraAPI.yaml"))), Canonical(r.SchemaYaml));
+    }
+
     [Fact]
     public void Review_SameInput_SameOutputAndQuestionOrder()
     {

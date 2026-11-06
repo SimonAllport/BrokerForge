@@ -38,6 +38,7 @@ public static class Drafter
         private string _table = "";
         private string _tableDisplay = "";
         private string _tableCollection = "";
+        private string _externalName = "";
         private string? _keyProp;
 
         private sealed record Drafted(string Operation, string Method, string Path, string Becomes, bool TableBound, List<Question> Questions, string Yaml, (string Name, YamlMap Map)? Api);
@@ -59,6 +60,8 @@ public static class Drafter
                 _table = Table("table.name", "Table logical name", Heuristics.Column(o.Prefix, singular), NameCheck);
                 _tableDisplay = Table("table.displayName", "Table display name", Heuristics.Humanise(singular), DisplayCheck);
                 _tableCollection = Table("table.collectionName", "Table plural display name", Heuristics.Humanise(singular) + "s", DisplayCheck);
+                _externalName = Table("table.externalName", "Table external name, which an existing table keeps",
+                    _table.Length > o.Prefix.Length + 1 ? _table[(o.Prefix.Length + 1)..] : singular.ToLowerInvariant(), ExternalNameCheck);
                 try
                 {
                     Fields(ItemSchema(resource));
@@ -245,6 +248,10 @@ public static class Drafter
             && char.IsAsciiLetterLower(name[o.Prefix.Length + 1])
             && name[(o.Prefix.Length + 1)..].All(c => char.IsAsciiDigit(c) || char.IsAsciiLetterLower(c) || c == '_')
                 ? null : $"must be {o.Prefix}_ followed by a lower-case letter, then lower-case letters, digits and underscores, at most 50 characters";
+
+        private static string? ExternalNameCheck(string name) =>
+            name.Length is >= 1 and <= 50 && char.IsAsciiLetterLower(name[0]) && name.All(c => char.IsAsciiDigit(c) || char.IsAsciiLetterLower(c) || c == '_')
+                ? null : "must be a lower-case letter, then lower-case letters, digits and underscores, at most 50 characters";
 
         private static string? DisplayCheck(string name) =>
             name.Trim().Length > 0 && name.Length <= 100 && name == name.Trim() ? null : "must be 1 to 100 characters, with no leading or trailing spaces";
@@ -1109,9 +1116,8 @@ public static class Drafter
             var root = new YamlMap();
             if (table && _fields != null)
             {
-                var bare = _table[(o.Prefix.Length + 1)..];
                 root.Add("table", _table).Add("displayName", _tableDisplay).Add("displayCollectionName", _tableCollection)
-                    .Add("externalName", bare).Add("primaryName", _primaryName ?? "");
+                    .Add("externalName", _externalName).Add("primaryName", _primaryName ?? "");
                 var columns = root.Map("columns");
                 foreach (var f in _fields)
                 {

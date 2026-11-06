@@ -144,6 +144,18 @@ public class PerUserProviderTests
         Assert.Empty(_tokens.Forms);
     }
 
+    [Fact]
+    public async Task OAuth_TokenStoredBeforeDesigns_ConnectionRequiredForTheDesignInstance()
+    {
+        // A token saved while the instance came from host settings (bare name) is not the design instance's: after the move
+        // to a connection design the user connects again, and is never served with the old row or another identity.
+        await _store.SaveAsync("Tickets", Alice, Tokens(Now.AddMinutes(30)), default);
+        var design = OAuthInstance with { EnvironmentId = "00000000-0000-0000-0000-0000000000e1" };
+        var ex = await Assert.ThrowsAsync<ConnectionRequiredException>(() => Delegated().AuthenticateAsync(design, Caller(), "corr-1", default));
+        Assert.Equal(ConnectUrl, ex.ConnectUrl);
+        Assert.Empty(_tokens.Forms);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

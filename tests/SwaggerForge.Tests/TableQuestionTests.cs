@@ -38,6 +38,20 @@ public class TableQuestionTests
         return answers;
     }
 
+    [Fact]
+    public void Review_TableExternalName_ProposedFromTheTableNameAndAnswerable()
+    {
+        var proposed = DraftServiceTests.Review("orders-openapi.yaml", With("orders-openapi.yaml", ("table.name", "ext_purchase")));
+        Assert.Equal("purchase", proposed.Table!.Questions.Single(q => q.Key == "table.externalName").Value);
+        Assert.Contains("externalName: purchase", DrafterTests.Ready(proposed).SchemaYaml);
+
+        var answered = DraftServiceTests.Review("orders-openapi.yaml", With("orders-openapi.yaml", ("table.name", "ext_purchase"), ("table.externalName", "order")));
+        Assert.Contains("externalName: order", DrafterTests.Ready(answered).SchemaYaml);
+
+        var refused = DraftServiceTests.Review("orders-openapi.yaml", With("orders-openapi.yaml", ("table.externalName", "Order Lines")));
+        Assert.NotNull(refused.Table!.Questions.Single(q => q.Key == "table.externalName").Error);
+    }
+
     private static Question Table(DraftReview r, string key) => Assert.Single(r.Table!.Questions, q => q.Key == key);
 
     [Fact]

@@ -84,6 +84,7 @@ Root:
 | `table.collection` | a collection path | more than one collection has an item path |
 | `table.name` | logical name, `<prefix>_` then a lower-case letter, then letters, digits or `_`; at most 50 characters | optional; proposed from the collection |
 | `table.displayName`, `table.collectionName` | 1–100 characters | optional; proposed |
+| `table.externalName` | a lower-case letter, then lower-case letters, digits or `_`; at most 50 characters | optional; proposed from the table name without its prefix. An existing table keeps the external name it was created with, so give that one |
 | `table.key` | a top-level scalar path | the item has no scalar `id` |
 | `table.list`, `table.open`, `table.new`, `table.save`, `table.delete` | the operation name to use | more than one endpoint could be that message (PUT and PATCH both Save); the others are left out |
 | `table.primaryName` | a string column's path | no string property is called `name` |
