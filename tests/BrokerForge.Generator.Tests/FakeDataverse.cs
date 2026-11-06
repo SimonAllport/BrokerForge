@@ -36,6 +36,11 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
     private readonly Dictionary<string, string> _privileges = new();
     private readonly Dictionary<string, Dictionary<string, int>> _rolePrivileges = new();
     private readonly List<(string Solution, int Type, string Id)> _components = new();
+
+    /// <summary>The components of a solution, by type: what an export of it would carry.</summary>
+    public IEnumerable<string> Components(string solution, int type) => _components.Where(c => c.Solution == solution && c.Type == type).Select(c => c.Id);
+
+    public IReadOnlyList<JsonObject> DataSources => _dataSources;
     private readonly List<JsonObject> _webResources = new();
     private readonly List<JsonObject> _variables = new();
     private readonly List<JsonObject> _values = new();
@@ -276,6 +281,9 @@ internal sealed partial class FakeDataverse : HttpMessageHandler
             case ("POST", "solutions"):
                 var solution = _solutions[(string)body!["uniquename"]!] = NewId();
                 return Json(new JsonObject { ["solutionid"] = solution }, HttpStatusCode.Created);
+            case ("POST", "AddSolutionComponent"):
+                _components.Add(((string)body!["SolutionUniqueName"]!, (int)body["ComponentType"]!, (string)body["ComponentId"]!));
+                return Json(new JsonObject { ["id"] = NewId() });
             case ("GET", _) when path.StartsWith("bf_brokerdatasources?"):
                 return Value(_dataSources.Where(d => (string)d["bf_serviceinstance"]! == name));
             case ("POST", "bf_brokerdatasources"):

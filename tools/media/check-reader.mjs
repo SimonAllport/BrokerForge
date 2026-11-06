@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
-import { org, profiles, sanitise } from './env.mjs';
+import { here, org, profiles, sanitise } from './env.mjs';
 
 const [entitySet = 'ext_items', connection = 'InventoryAPI'] = process.argv.slice(2);
 const ids = Object.fromEntries(readFileSync(join(homedir(), '.brokerforge', 'dev-ids.env'), 'utf8').split('\n')
@@ -21,11 +21,15 @@ await page.goto(org);
 const orgHost = new URL(org).host;
 const until = Date.now() + 180_000;
 while (new URL(page.url()).host !== orgHost) {
-  if (Date.now() > until) throw new Error(`sign-in did not reach Dataverse; stuck at ${new URL(page.url()).host}${new URL(page.url()).pathname}`);
+  if (Date.now() > until) {
+    await page.screenshot({ path: join(here, 'out', 'reader-signin.png') });
+    throw new Error(`sign-in did not reach Dataverse; the page says: ${(await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 300)}`);
+  }
   const email = page.locator('input[type=email]');
   const pwd = page.locator('input[type=password]');
   if (await email.isVisible().catch(() => false)) { await email.fill(ids.TEST_READER_UPN); await page.locator('#idSIButton9').click(); }
   else if (await pwd.isVisible().catch(() => false)) { await pwd.fill(password()); await page.locator('#idSIButton9').click(); }
+  else if (await page.getByText(ids.TEST_READER_UPN).first().isVisible().catch(() => false)) await page.getByText(ids.TEST_READER_UPN).first().click();
   else for (const name of [/Skip for now/i, /^No$/, /^Yes$/, /Ask later/i])
     if (await page.getByRole('button', { name }).or(page.getByRole('link', { name })).first().isVisible().catch(() => false)) {
       await page.getByRole('button', { name }).or(page.getByRole('link', { name })).first().click();

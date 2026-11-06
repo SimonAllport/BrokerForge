@@ -71,6 +71,20 @@ public class ChangeApplyTests
         Assert.DoesNotContain("<order", (string)fake.DefaultView("ext_item")["fetchxml"]!);
     }
 
+    // Found importing into a second environment (plan 5): without its data source record the source's solution is
+    // refused there as a missing dependency (component type 183).
+    [Fact]
+    public async Task Run_NewSource_DataSourceRecordInTheSolution()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        var id = (string)fake.DataSources.Single()["bf_brokerdatasourceid"]!;
+        Assert.Equal(new[] { id }, fake.Components("BrokerForgeInventory", 183));
+        var before = fake.Writes.Count();
+        await Run(fake, Schema());
+        Assert.DoesNotContain(fake.Writes.Skip(before), w => w.Path == "AddSolutionComponent");
+    }
+
     [Theory]
     [InlineData("RetrieveMultiple,Retrieve,Create,Update,Delete", "Create,Delete,Read,Write")]
     [InlineData("RetrieveMultiple", "Read")]

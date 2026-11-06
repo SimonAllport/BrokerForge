@@ -173,6 +173,8 @@ public static class Generator
             var entity = $"EntityDefinitions(LogicalName='{table}')";
             at("data source record");
             var dataSourceId = await EnsureDataSource(client, s.DataSource, o, ct);
+            at("data source record in the solution");
+            await DataSourceInSolution(client, s.Solution, o.Solution, dataSourceId, ct);
             var created = changes.Any(c => c.Kind == ChangeKind.AddTable);
             if (created)
             {
@@ -292,6 +294,30 @@ public static class Generator
         values["bf_serviceinstance"] = o.Instance;
         var created = await client.WriteAsync(HttpMethod.Post, "bf_brokerdatasources", values, null, ct);
         return (string?)created?["bf_brokerdatasourceid"] ?? "(new bf_brokerdatasource)";
+    }
+
+    /// <summary>A data source record's solution component type: what an import names when the record is missing (plan 5).</summary>
+    public const int DataSourceComponent = 183;
+
+    /// <summary>
+    /// The data source record goes in the source's solution, or another environment refuses the solution as a missing
+    /// dependency. Its host URL and scope come with it; the host is the same for every environment it serves.
+    /// </summary>
+    private static async Task DataSourceInSolution(DataverseClient client, JsonObject? existingSolution, string solution, string dataSourceId, CancellationToken ct)
+    {
+        var solutionId = (string?)existingSolution?["solutionid"]
+            ?? (string?)(await ListAfterWrite(client, $"solutions?$select=solutionid&$filter=uniquename eq {DataverseClient.Literal(solution)}", ct))?["solutionid"];
+        if (solutionId != null)
+        {
+            var present = await client.ListAsync($"solutioncomponents?$select=objectid&$filter=_solutionid_value eq {solutionId} and componenttype eq {DataSourceComponent}", ct);
+            if (present.Any(c => GenerationPlan.SameId((string?)c["objectid"], dataSourceId)))
+                return;
+        }
+        await client.WriteAsync(HttpMethod.Post, "AddSolutionComponent", new JsonObject
+        {
+            ["ComponentId"] = dataSourceId, ["ComponentType"] = DataSourceComponent, ["SolutionUniqueName"] = solution,
+            ["AddRequiredComponents"] = false, ["DoNotIncludeSubcomponents"] = false,
+        }, null, ct);
     }
 
     /// <summary>The platform drops DataProviderId on a create it does not accept as a virtual table (HLD 15), so read it back.</summary>
