@@ -22,8 +22,9 @@ def gone(what, status, body, ok=(204,)):
 
 
 def main():
-    if not DEV_ORG or ORG.rstrip("/") != DEV_ORG.rstrip("/"):
-        sys.exit("remove_old_inventory.py runs only against the dev org (DV_ORG in ~/.brokerforge/spike-ids.env)")
+    # --any-org: the same clean-up in another test environment (DV_ORG set to it), named on purpose.
+    if "--any-org" not in sys.argv and (not DEV_ORG or ORG.rstrip("/") != DEV_ORG.rstrip("/")):
+        sys.exit("remove_old_inventory.py runs only against the dev org (DV_ORG in ~/.brokerforge/spike-ids.env); pass --any-org for another test environment")
     print(f"Dataverse: {API}", flush=True)
     _, body, _ = call("GET", "customapis?$select=customapiid&$filter=uniquename eq 'ext_AdjustStock'")
     for api in body.get("value", []):
