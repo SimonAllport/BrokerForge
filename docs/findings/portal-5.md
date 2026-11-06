@@ -46,8 +46,8 @@ Plan 4's pages had never been used in a real browser. Recording Inventory throug
 | The table in the app | Lists the items. **The record form fails in dev** (see below) |
 | `acceptance_inventory.sh` | All 17 assertions passed, including the undeclared filter (criterion 2) |
 | Read again: `sku` removed and `price` an integer, with a hand-made view using SKU | Changes listed: remove SKU, change Price from decimal 2 to int; SKU blocked, naming the view; Generate refused, nothing written |
-| The same with the view deleted | Generate as the host failed at `delete column ext_price`: it needs `prvReadAttributeMap`. The grant was stopped for Simon's approval |
-| Original definition restored | Generated; columns as before |
+| The same with the view deleted | First run: Generate as the host failed at `delete column ext_price`, needing `prvReadAttributeMap`, which Simon then approved. After the grant: Succeeded, 12 writes; SKU gone, Price a whole number, the default view without SKU (criterion 5) |
+| Original definition restored | Listed add SKU and change Price back; Succeeded, 12 writes; columns as before; `acceptance_inventory.sh` passes again |
 
 **Platform constraint, dev only.** `ext_item` was deleted and remade about ten times today. Since then Dataverse answers 502 to `GetClientMetadata` for its record form, while the identical form of a new table (`ext_invitem`) opens, and the same solution's `ext_item` form opens in the second environment. Removing the action and the role made no difference. Not caused by anything BrokerForge writes; the video's form scenes wait on it.
 
