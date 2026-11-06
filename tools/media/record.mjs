@@ -262,12 +262,21 @@ async function part1() {
   await s.say('Back on the connections page, InventoryAPI is ready.');
   await s.shot('06-ready-list');
 
-  s.chapter('Use the table');
-  // A table made minutes ago can show a permission error until the browser's metadata catches up: reload, off camera.
+  // A table made minutes ago can show an error at first. Wait for it in a second tab, which isn't recorded, so the
+  // video only opens the list and the form once they work.
+  const warm = await context.newPage();
   for (let attempt = 1; ; attempt++) {
-    try { await openList(page, 'ext_item', 'Item 003'); break; }
-    catch (e) { if (attempt === 4) throw e; await page.waitForTimeout(30_000); }
+    try {
+      await openList(warm, 'ext_item', 'Item 003');
+      await warm.goto(`${org}/main.aspx?pagetype=entityrecord&etn=ext_item&id=00000301-0000-0000-0000-000000000000`);
+      await warm.locator('input[aria-label="On hand"]').waitFor({ timeout: 45_000 });
+      break;
+    } catch (e) { if (attempt === 8) throw e; await warm.waitForTimeout(30_000); }
   }
+  await warm.close();
+
+  s.chapter('Use the table');
+  await openList(page, 'ext_item', 'Item 003');
   await s.say('The table lists rows straight from the API, with every column on the view. Nothing is copied into Dataverse.', 5600);
   await s.shot('07-list');
 
