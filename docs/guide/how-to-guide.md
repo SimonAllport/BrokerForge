@@ -1,124 +1,107 @@
 # BrokerForge how-to guide
 
-Use a REST API from Dataverse the way K2 uses a service through SmartObjects: describe the service, register an instance of it, then generate a table and use it in lists and forms.
+Use a REST API from Dataverse the way K2 uses a service through SmartObjects: add a connection, answer BrokerForge's questions about the API, generate a table, and use it in lists and forms. All of it happens in the BrokerForge app in Dataverse.
 
-*Screenshots come from the BrokerForge dev environment and its mock APIs. Host and environment names are replaced with contoso placeholders. Command output is from real runs. The video `tools/media/out/brokerforge-how-to.mp4` walks through the same steps, with subtitles.*
+*Screenshots come from the BrokerForge dev environment and its mock APIs. Host and environment names are replaced with contoso placeholders. The video `tools/media/out/brokerforge-how-to.mp4` walks through the same steps, with subtitles.*
 
 ## Contents
 
 - [If you know K2](#if-you-know-k2)
-- [Part 1: add a REST service (administrators)](#part-1-add-a-rest-service-administrators)
+- [Part 1: add a REST connection (administrators)](#part-1-add-a-rest-connection-administrators)
 - [Part 2: connect your account (everyone)](#part-2-connect-your-account-everyone)
-- [Where files live](#where-files-live)
+- [Where things live](#where-things-live)
 - [When something goes wrong](#when-something-goes-wrong)
 
 ## If you know K2
 
 | In K2 you… | In BrokerForge you… | Step |
 | --- | --- | --- |
-| Register a service type and point it at the service's description | Draft descriptors from the service's Swagger (OpenAPI) file | 1 |
-| Create a service instance: URL and authentication | Add the instance to the host settings: base URL and authentication | 2 |
-| Generate SmartObjects from the service objects | Generate the virtual table (and Custom APIs) | 3 |
-| Use the SmartObject in views and forms | Use the table in Dataverse lists and forms | 3 |
+| Create a service instance: URL and authentication | Add a connection: base URL and authentication | 1 |
+| Point it at the service's description | Paste the service's Swagger (OpenAPI) definition into the connection | 1 |
+| Check the service objects K2 found | Review the endpoints and answer BrokerForge's questions | 2 |
+| Generate SmartObjects | Click Generate: table, columns, view, form, actions and a security role | 3 |
+| Enter the service account's password | Set the key on the host's page | 4 |
+| Use the SmartObject in views and forms | Use the table in Dataverse lists and forms | 5 |
 | Users enter their own credentials (OAuth, SSO) | Users connect their account on the connect page | Part 2 |
 
-Two differences. A descriptor is a small YAML file you can read and change, where K2 keeps the service object inside the broker. And the instance settings are host settings, deployed with the host; they move into Dataverse later (phase 2b), when they become editable without a deploy.
+One difference: where a definition leaves a gap, such as how results are paged or which filters really work, BrokerForge asks rather than guessing. An endpoint isn't used until its questions are answered.
 
-## Part 1: add a REST service (administrators)
+## Part 1: add a REST connection (administrators)
 
-You need the repository, the .NET 10 SDK, the az CLI signed in to the tenant, and BrokerForge already deployed (`tools/dev/deploy.sh`, then `tools/dev/setup-dataverse.sh`). `bf` below is the BrokerForge CLI: `dotnet run --project tools/BrokerForge.Cli --`.
+You need the `BrokerForge administrator` role in the environment, and BrokerForge installed there (a one-off step, like installing a K2 server). Open the **BrokerForge** app and go to **Connections**.
 
-The example adds an inventory API as a new service called WarehouseAPI. The dev environment already has the same API added as InventoryAPI, so the Dataverse screens show that one.
+![The connections page](images/p1-01-connections.png)
 
-### Step 1: describe the service
+The example connects an inventory API.
 
-1. Save the service's Swagger (OpenAPI) file in the repository as `openapi/WarehouseAPI.yaml`. It is read once, here; it is never deployed.
-2. From the repository root, run:
+### Step 1: add the connection
 
-   ```
-   bf draft openapi/WarehouseAPI.yaml --instance WarehouseAPI --prefix ext --table ext_stockitem --out drafts
-   ```
+Select **New connection** and fill in:
 
-   This writes one descriptor per operation in `descriptors/WarehouseAPI/`, the table's columns in `schemas/WarehouseAPI.yaml`, and a short report.
+- **Name**, the name of the source, for example `InventoryAPI`;
+- **Base URL**, where the API is;
+- **Authentication** and the settings that mode needs. This API takes a key in its query string: Static, kind `apiKeyQuery`, query parameter `api_key`;
+- **Table prefix**, your publisher's prefix, for example `ext`;
+- **Swagger / OpenAPI**: paste the API's definition, YAML or JSON.
 
-![bf draft: six descriptors, a table schema and a report](images/p1-01-draft.png)
+A key or password is never typed into this form. You set it on the host's page in step 4. Save the connection.
 
-3. Read the report's "To review" notes and answer them. Here there are four; the one that needed a change is `sortStable`, set to `true` because this API always returns items in the same order.
+![A new connection](images/p1-02-new-connection.png)
 
-![The report's notes](images/p1-02-report.png)
+### Step 2: review and answer
 
-![The list descriptor: declared filters, paging and the column map](images/p1-03-descriptor.png)
+Open the **Review and generate** tab and select **Save and read the definition**. BrokerForge lists the table it proposes, with every column, and every endpoint with what it becomes: list, open, new, save, delete or an action. You can untick an endpoint, and rename columns.
 
-4. Tidy the display names in the schema ("Stock item", "SKU"): they are what people see in Dataverse.
+Where the definition leaves a gap, a question appears under its endpoint: how results are paged, which filters the API really supports, whether its order is stable, how many decimal places a price has, where an error's message is. **Generate** stays disabled until every ticked endpoint is ready.
 
-![The table schema](images/p1-04-schema.png)
+![Questions BrokerForge can't answer from the definition](images/p1-03-questions.png)
 
-5. Check everything:
+Answer them and select **Save answers and check**. When everything is ready, the page shows exactly what Generate will create or change.
 
-   ```
-   bf validate descriptors --schemas schemas
-   ```
+![Ready to generate](images/p1-04-ready.png)
 
-   A mistake names the file and the field. Fix it and run again until all are valid.
+### Step 3: generate
 
-![A mistake caught: a filter on a column that doesn't exist](images/p1-05-validate-fail.png)
+Select **Generate**. It runs in the background and the page follows it. It creates, in a solution named for the source:
 
-![All six valid](images/p1-06-validate-ok.png)
+- the virtual table and every column;
+- a view and a main form that show every column;
+- a Custom API for each action;
+- a security role, `<Name> user`, with the privileges the endpoints allow.
 
-### Step 2: register the service instance
+![Generated](images/p1-05-generated.png)
 
-1. Add the instance to the host settings (`infra/containerApps.bicep` in dev): the base URL and how to sign in. WarehouseAPI uses an API key; the setting holds a Key Vault reference, never the key.
-2. Add the object map, which ties the table to the instance and names the descriptor for each action.
-3. Put the API key in Key Vault and deploy: `tools/dev/deploy.sh`.
+Two steps need an administrator's own rights: giving the role its privileges, and creating actions. The page lists them and offers **Finish as administrator**. It opens the host's page; select **Do it as me**, sign in for Dataverse (the first time, you're asked to allow BrokerForge Connect to access Dataverse as you), and both are done as you.
 
-![The instance and its object map](images/p1-07-instance.png)
+If you change the definition later, **Save and read the definition** again: the page lists what would change (a column added, removed or changed) before anything is applied. A column that something outside BrokerForge still uses, such as a hand-made view, is blocked and named, and nothing is applied until it's free.
 
-> To use the same API on another server (test, production), change only `BaseUrl` and the Key Vault reference in that environment's settings. Descriptors, schema and tables stay as they are. A different API is a new instance with its own name, descriptors and table: repeat steps 1 to 3.
+### Step 4: set the key
 
-### Step 3: generate the table and use it
+The connection shows **needs key**. Select **Set key**: the host's page opens, you sign in, and you enter the key there. It's stored encrypted by the host and never enters Dataverse. Back on the connections page the connection is **ready**.
 
-1. Check, then generate:
+![Ready](images/p1-06-ready-list.png)
 
-   ```
-   tools/dev/generate.sh WarehouseAPI BrokerForgeWarehouse --dry-run
-   tools/dev/generate.sh WarehouseAPI BrokerForgeWarehouse
-   ```
+### Step 5: use the table
 
-   This creates the solution, the table, its columns and any Custom APIs. Running it again only changes what differs.
+The table lists rows straight from the API, and opening a record reads it. Save, New and Delete go to the API too. Nothing is copied into Dataverse.
 
-![The dry run: nine writes planned](images/p1-08-generate.png)
+![The table](images/p1-07-list.png)
 
-2. Open the table in Dataverse. Rows come straight from the API every time; nothing is copied.
+![A record](images/p1-08-form.png)
 
-![The Items list](images/p1-09-list.png)
+![A new record created in the API](images/p1-09-form-new.png)
 
-3. The generated view and form show only the name. Add the other columns: in the list use **Edit columns**; for everyone, add them to the view and the main form in the Power Apps maker portal.
+### Test and production
 
-![Adding columns](images/p1-10-add-columns.png)
-
-![The list with every column](images/p1-11-columns.png)
-
-4. Forms work as you'd expect, each action calling the API:
-   - opening a record reads it (`getItem`);
-   - **Save** sends the change (`updateItem`);
-   - **New** then **Save** creates it, and the API's new ID becomes the record's key (`createItem`);
-   - **Delete** removes it (`deleteItem`).
-
-![A record read from the API](images/p1-12-form.png)
-
-![On hand changed and saved to the API](images/p1-13-form-saved.png)
-
-![A new record created in the API](images/p1-14-form-new.png)
+The connection travels in its solution. Export it from dev and import it into test. There, set the environment variable `bf_<Name>_BaseUrl` if the API's address differs, then set the key on the connections page. Until then the connection says **needs URL** or **needs key**, and its tables fail with a configuration error naming what is missing. They never call the dev API.
 
 ### What fails, and why
 
-BrokerForge never returns partial or guessed results. A filter the descriptor doesn't declare is refused with a named error and a correlation ID for the host logs. To allow it, declare it in the descriptor, validate and deploy.
-
-![A filter on On hand refused: only state and name are declared](images/p1-15-undeclared.png)
+BrokerForge never returns partial or guessed results. A filter, sort or operator that wasn't declared in the answers is refused with a named error and a correlation ID for the host logs.
 
 ### Per-user services
 
-When each person must see only their own data, use a per-user mode instead of an API key:
+When each person must see only their own data, choose a per-user mode:
 
 | Mode | The user | The host sends |
 | --- | --- | --- |
@@ -126,11 +109,7 @@ When each person must see only their own data, use a per-user mode instead of an
 | Impersonate | signs in with their work account | a Microsoft Entra token for the service, as that user |
 | SSO | enters their username and password for the service | those |
 
-Set `Auth__Mode` (and `Auth__OAuthResource` for OAuth and Impersonate), generate as above, and give users a security role with Read (and Create) on the table: `bf generate` doesn't create the role. Then send them the connect page: `https://<host>/connect/<instance>`.
-
-![A per-user instance](images/p1-16-peruser.png)
-
-There is no fallback: a user who hasn't connected gets a message asking them to, never someone else's data.
+Give users the generated role, and send them the connect page: `https://<host>/connect/<Name>`. There is no fallback: a user who hasn't connected gets a message asking them to, never someone else's data.
 
 ## Part 2: connect your account (everyone)
 
@@ -170,27 +149,26 @@ The example is the Tickets table: each person sees the tickets their own Tickets
 
 > Sign in to the connect page with the same work account you use in Dataverse. If someone else is signed in to Microsoft in your browser, use a private window.
 
-## Where files live
+## Where things live
 
-| What | Where | Used by |
-| --- | --- | --- |
-| Swagger (OpenAPI) file | `openapi/<Instance>.yaml` | `bf draft`, once |
-| Descriptors, one per operation | `descriptors/<Instance>/` | The host, every call |
-| Table schema | `schemas/<Instance>.yaml` | `bf generate` |
-| Draft report | the `--out` folder (not kept) | You, while reviewing |
-| Base URL, authentication, object map | Host settings (`infra/containerApps.bicep` in dev) | The host |
-| API keys and secrets | Key Vault | The host, through `kv:` references |
-| Users' connections | The host's encrypted store | The host |
+| What | Where |
+| --- | --- |
+| What you typed: name, URL, authentication, definition, answers | The connection row, in the environment you set it up in |
+| What runs: the descriptors and table schema BrokerForge made | The connection's design, in the source's solution |
+| Base URL in each environment | Environment variable `bf_<Name>_BaseUrl` |
+| API keys and secrets | The host's encrypted store (set on the host's page) |
+| Users' connections | The host's encrypted store |
 
 ## When something goes wrong
 
 | Message | Meaning | What to do |
 | --- | --- | --- |
 | `ConnectionRequiredException` | You haven't connected to this per-user service, or the connection expired | Open the connect page in the message |
-| `UnsupportedQueryException` | That filter, sort or operator isn't declared | Use a declared one, or ask an administrator to add it |
+| `UnsupportedQueryException` | That filter, sort or operator isn't declared | Use a declared one, or ask an administrator to allow it in the connection's answers |
 | `SourceException` | The service answered with an error | Give the correlation ID to an administrator |
 | `SourceTimeoutException` | The service didn't answer in time | Try again |
 | `BrokerUnavailableException` | Dataverse couldn't reach BrokerForge | Try again; in dev the first call after a pause takes about 25 seconds |
-| `MappingException` | The service's answer didn't match the descriptor | An administrator fixes the descriptor |
+| `ConfigurationError`: the source "needs its base URL" or "needs its key" | The connection arrived in this environment without its URL or key | An administrator sets the variable, or the key on the connections page |
+| `MappingException` | The service's answer didn't match its definition | An administrator checks the definition and reads it again |
 
 Every message ends with a correlation ID, which finds the request in the host logs.
