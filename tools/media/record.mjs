@@ -41,10 +41,14 @@ async function open(user, segment, prefix) {
   s.title = async (text, ms) => { const from = Date.now() - started; await title(text, ms); cues.push({ from, to: Date.now() - started, text }); };
   const chapters = [];
   s.chapter = name => chapters.push({ title: name, at: (Date.now() - started) / 1000 });
+  // Waiting worth nobody's time (a new table settling) is marked and cut when the part is assembled.
+  const skips = [];
+  s.skipFrom = () => skips.push({ from: (Date.now() - started) / 1000, to: null });
+  s.skipTo = () => { skips[skips.length - 1].to = (Date.now() - started) / 1000; };
   async function stop() {
     const video = page.video();
     await context.close();
-    return shots ? undefined : { file: await video.path(), cues, chapters };
+    return shots ? undefined : { file: await video.path(), cues, chapters, skips: skips.filter(k => k.to != null) };
   }
   return { page, s, stop, context };
 }
@@ -264,6 +268,7 @@ async function part1() {
 
   // A table made minutes ago can show an error at first. Wait for it in a second tab, which isn't recorded, so the
   // video only opens the list and the form once they work.
+  s.skipFrom();
   const warm = await context.newPage();
   for (let attempt = 1; ; attempt++) {
     try {
@@ -274,6 +279,7 @@ async function part1() {
     } catch (e) { if (attempt === 8) throw e; await warm.waitForTimeout(30_000); }
   }
   await warm.close();
+  s.skipTo();
 
   s.chapter('Use the table');
   await openList(page, 'ext_item', 'Item 003');
@@ -434,12 +440,34 @@ async function assemble(segments, name) {
   for (const [i, seg] of segments.entries()) {
     // Starts at the first chapter: the page loading before it is not worth watching.
     const from = Math.max(0, (seg.chapters[0]?.at ?? 0) - 0.3);
-    const mp4 = join(raw, `${name}-${i}.mp4`);
-    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(from), '-i', seg.file, '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', '25', mp4]);
-    files.push(mp4);
-    for (const c of seg.cues) cues.push({ ...c, from: c.from + (offset - from) * 1000, to: c.to + (offset - from) * 1000 });
-    for (const c of seg.chapters) chapters.push({ title: c.title, at: Math.round((c.at - from + offset) * 10) / 10 });
-    offset += duration(mp4);
+    // The kept stretches: from the first chapter to the end, less the marked waits.
+    const skips = (seg.skips ?? []).filter(k => k.to > from).sort((a, b) => a.from - b.from);
+    const keep = [];
+    let at = from;
+    for (const k of skips) { if (k.from > at) keep.push([at, k.from]); at = Math.max(at, k.to); }
+    keep.push([at, null]);
+    // A time in the recording, as a time in the kept video (null when it falls in a cut).
+    const shift = t => {
+      let out = 0;
+      for (const [a, b] of keep) {
+        if (t < a) return null;
+        if (b == null || t <= b) return out + (t - a);
+        out += b - a;
+      }
+      return null;
+    };
+    for (const [j, [a, b]] of keep.entries()) {
+      const mp4 = join(raw, `${name}-${i}-${j}.mp4`);
+      execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(a), ...(b == null ? [] : ['-to', String(b)]), '-i', seg.file,
+        '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', '25', mp4]);
+      files.push(mp4);
+    }
+    for (const c of seg.cues) {
+      const f = shift(c.from / 1000), t = shift(c.to / 1000);
+      if (f != null && t != null) cues.push({ ...c, from: (f + offset) * 1000, to: (t + offset) * 1000 });
+    }
+    for (const c of seg.chapters) { const t = shift(c.at); if (t != null) chapters.push({ title: c.title, at: Math.round((t + offset) * 10) / 10 }); }
+    offset += keep.reduce((sum, [a, b]) => sum + ((b ?? (a + duration(files[files.length - 1]))) - a), 0);
   }
   writeFileSync(list, files.map(f => `file '${f}'`).join('\n'));
   const mp4 = join(out, `${name}.mp4`);
