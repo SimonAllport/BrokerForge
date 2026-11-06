@@ -15,7 +15,8 @@ const ids = Object.fromEntries(readFileSync(join(homedir(), '.brokerforge', 'dev
   .map(l => /^([A-Z_]+)=["']?([^"'\n]*)/.exec(l)).filter(Boolean).map(m => [m[1], m[2]]));
 const password = () => execFileSync('az', ['keyvault', 'secret', 'show', '--vault-name', ids.VAULT, '--name', 'test-reader-password', '--query', 'value', '-o', 'tsv'], { encoding: 'utf8' }).trim();
 
-const context = await chromium.launchPersistentContext(join(profiles, 'reader'), { headless: true });
+// PROFILE=b uses the second user's profile from `node signin.mjs b` instead of signing in the test reader.
+const context = await chromium.launchPersistentContext(join(profiles, process.env.PROFILE || 'reader'), { headless: true });
 const page = context.pages()[0] ?? await context.newPage();
 await page.goto(org);
 const orgHost = new URL(org).host;

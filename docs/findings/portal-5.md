@@ -51,7 +51,18 @@ Plan 4's pages had never been used in a real browser. Recording Inventory throug
 
 **Platform constraint, dev only.** `ext_item` was deleted and remade about ten times today. Since then Dataverse answers 502 to `GetClientMetadata` for its record form, while the identical form of a new table (`ext_invitem`) opens, and the same solution's `ext_item` form opens in the second environment. Removing the action and the role made no difference. Not caused by anything BrokerForge writes; the video's form scenes wait on it.
 
-## 5. Second environment (done criterion 4)
+## 5. A non-administrator (done criterion 6)
+
+The second test user (signed in by Simon in media profile `b`) has Basic User and the hand-made Tickets role from phase 3, nothing for Inventory. Calls from that user's own browser session (`PROFILE=b node tools/media/check-reader.mjs`):
+
+| Roles | List `ext_items` | `bf_ListConnections` |
+| --- | --- | --- |
+| Basic User, BrokerForge Tickets user | 403, missing `prvReadext_item` | 403, missing `prvWritebf_connection` |
+| plus the generated `InventoryAPI user`, nothing else | 200, 3 rows | 403, missing `prvWritebf_connection` |
+
+So the generated role alone gives Read, and the admin messages refuse a non-administrator (plan 4 left that unverified live). A user created for this, `bf-reader`, was stopped by the tenant's MFA registration and deleted.
+
+## 6. Second environment (done criterion 4)
 
 **BrokerForge test**, a Developer environment created through the Power Platform admin API (a Sandbox needs paid capacity), with its own plug-in app (`setup-plugin-app.sh`), the managed core (`install-core.sh`) and the host's `Trust:AllowedCallers:1`.
 
@@ -64,6 +75,6 @@ Plan 4's pages had never been used in a real browser. Recording Inventory throug
 | Set the key for that environment | ready; list, create, open, update and delete all work |
 | The `ext_item` form there | Opens with all six fields |
 
-## 6. No secret anywhere (done criterion 7)
+## 7. No secret anywhere (done criterion 7)
 
 The values of `orders-api-key`, `inventory-api-key` and `tickets-client-secret` were compared, printing counts only, against the managed and unmanaged exports of BrokerForgeOrders, BrokerForgeTickets, BrokerForgeTicketsEntra, BrokerForgeInventoryAPI and BrokerForgeCore, every `bf_connection` row, every environment variable definition and value, and the host's log stream (the current revision's 96 lines). 0 matches. Older logs in Application Insights were not searched, because that would mean sending the key in a query.
