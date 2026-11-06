@@ -265,7 +265,7 @@ async function part1() {
       if (attempt === 4) throw e;
       await page.getByRole('button', { name: 'OK' }).click().catch(() => undefined);
       await page.waitForTimeout(20_000);
-      await page.reload();
+      await page.goto(`${org}/main.aspx?pagetype=entityrecord&etn=ext_item&id=00000301-0000-0000-0000-000000000000`);
     }
   }
   await page.waitForTimeout(2500);
