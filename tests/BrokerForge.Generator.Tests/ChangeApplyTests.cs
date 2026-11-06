@@ -281,7 +281,7 @@ public class ChangeApplyTests
         var fake = new FakeDataverse();
         var asHost = Options with { ApplyRole = false };
         var preview = await Preview(fake, Schema(), asHost);
-        Assert.Equal(new[] { "create role InventoryAPI user with Read, Create, Write, Delete on ext_item" }, preview.Pending);
+        Assert.Equal(new[] { "add action Adjust stock (ext_AdjustStock)", "create role InventoryAPI user with Read, Create, Write, Delete on ext_item" }, preview.Pending);
         Assert.DoesNotContain(preview.Parts, p => p.Contains("role"));
         var result = await Run(fake, Schema(), asHost);
         Assert.Equal(preview.Pending, result.Pending);
@@ -290,6 +290,34 @@ public class ChangeApplyTests
         await Run(fake, Schema());
         Assert.Empty((await Preview(fake, Schema(), asHost)).Pending);
         Assert.Empty((await Run(fake, Schema(), asHost)).Pending);
+    }
+
+    // Live in plan 5: Dataverse leaves prvCreateSdkMessageProcessingStep out of the host's effective privileges, so the
+    // host cannot create a Custom API; actions are an administrator's step like the role (Simon, 6 November 2026).
+    [Fact]
+    public async Task Run_ActionsLeftToAdmin_PendingNamedNoActionWrites()
+    {
+        var fake = new FakeDataverse();
+        var asHost = Options with { ApplyRole = false };
+        var result = await Run(fake, Schema(), asHost);
+        Assert.Contains("add action Adjust stock (ext_AdjustStock)", result.Pending);
+        Assert.DoesNotContain(fake.Writes, w => w.Path.StartsWith("customapis", StringComparison.Ordinal));
+
+        var admin = await Run(fake, Schema());
+        Assert.Contains(fake.Writes, w => w.Path.StartsWith("customapis", StringComparison.Ordinal));
+        Assert.Empty((await Preview(fake, Schema(), asHost)).Pending);
+    }
+
+    [Fact]
+    public async Task Run_ActionRemovalLeftToAdmin_NoDelete()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        var without = Schema(GeneratorTests.InventorySchema[..GeneratorTests.InventorySchema.IndexOf("customApis:", StringComparison.Ordinal)]);
+        var asHost = Options with { ApplyRole = false, ConfirmedFingerprint = (await Preview(fake, without, Options with { ApplyRole = false })).Changes.Fingerprint };
+        var result = await Run(fake, without, asHost);
+        Assert.Contains("remove action Adjust stock (ext_AdjustStock)", result.Pending);
+        Assert.DoesNotContain(fake.Writes, w => w.Method == "DELETE" && w.Path.StartsWith("customapis", StringComparison.Ordinal));
     }
 
     [Fact]

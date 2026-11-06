@@ -225,6 +225,27 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
         Assert.Contains("prvReadext_item", _dv.Fake.RolePrivileges("InventoryAPI user").Keys);
     }
 
+    // Plan 5: the host can't create a Custom API, so Generate leaves the design's actions to this page, with the role.
+    [Fact]
+    public async Task Role_Callback_CreatesPendingActionsWithAdminToken()
+    {
+        var id = Row();
+        await Generated(id);
+        Assert.DoesNotContain(_dv.Fake.Writes, w => w.Path.StartsWith("customapis", StringComparison.Ordinal));
+        var browser = Browser();
+        var (_, page, _) = await Page(browser, RolePath);
+        Assert.Contains("add action", page);
+        Assert.Contains("ext_AdjustStock", page);
+        var callback = await browser.GetAsync(await StartRole(browser));
+        var html = await callback.Content.ReadAsStringAsync();
+        Assert.True(callback.StatusCode == HttpStatusCode.OK, html);
+        var apiWrites = _dv.Fake.Writes.Where(w => w.Path.StartsWith("customapis", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(apiWrites);
+        Assert.All(apiWrites, w => Assert.Equal($"Bearer {AdminToken}", w.Authorization));
+        var (_, again, _) = await Page(Browser(), RolePath);
+        Assert.Contains("up to date", again);
+    }
+
     [Fact]
     public async Task Role_CallbackOtherUser_Refused()
     {
@@ -311,7 +332,7 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
         await Generated(id);
         var browser = Browser();
         await browser.GetAsync(await StartRole(browser));
-        Assert.Contains(Host.Logs, l => l.Contains("Role InventoryAPI user"));
+        Assert.Contains(Host.Logs, l => l.Contains("Administrator step for InventoryAPI") && l.Contains("create role InventoryAPI user"));
         Assert.DoesNotContain(Host.Logs, l => l.Contains(AdminToken));
     }
 

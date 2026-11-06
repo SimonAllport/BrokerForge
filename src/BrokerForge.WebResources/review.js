@@ -197,7 +197,7 @@
       status.textContent = "";
       status.appendChild(el("p", model.statusLine(row, new Date())));
       if (model.needsRole(row) && read && read.roleUrl) {
-        var a = el("a", "Apply the role");
+        var a = el("a", "Finish as administrator");
         a.href = read.roleUrl;
         a.target = "_blank";
         a.rel = "noopener";

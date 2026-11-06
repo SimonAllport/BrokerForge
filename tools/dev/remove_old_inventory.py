@@ -1,7 +1,9 @@
-"""Remove the InventoryAPI made by `bf generate` from dev (plan 5 task 6), so done criterion 1 starts with no source.
+"""Remove InventoryAPI from dev (plan 5 task 6), so done criterion 1 starts with no source: what `bf generate` made
+(solution BrokerForgeInventory) and what an earlier take through the screens made (solution BrokerForgeInventoryAPI).
 
-Deletes the Custom API ext_AdjustStock (its parameters go with it), the virtual table ext_item and the
-BrokerForgeInventory solution. Virtual tables hold no data: the items stay in the mock. Runs only against the dev
+Deletes the connection row, the Custom API ext_AdjustStock (its parameters go with it), the role InventoryAPI user,
+the virtual table ext_item, its data source record, the design web resource and its two environment variables, and
+both solutions. Virtual tables hold no data: the items stay in the mock. Runs only against the dev
 org in ~/.brokerforge/spike-ids.env (DV_ORG), as the az CLI user, and stops at the first refusal, printing what
 Dataverse said (a dependency such as an app that still shows the table, which is then removed by hand).
 """
@@ -29,9 +31,20 @@ def main():
     status, body, _ = call("GET", "EntityDefinitions(LogicalName='ext_item')?$select=MetadataId")
     if status == 200:
         gone("table ext_item", *call("DELETE", "EntityDefinitions(LogicalName='ext_item')")[:2])
-    _, body, _ = call("GET", "solutions?$select=solutionid&$filter=uniquename eq 'BrokerForgeInventory'")
-    for s in body.get("value", []):
-        gone("solution BrokerForgeInventory", *call("DELETE", f"solutions({s['solutionid']})")[:2])
+    for row in call("GET", "bf_connections?$select=bf_connectionid&$filter=bf_name eq 'InventoryAPI'")[1].get("value", []):
+        gone("connection row InventoryAPI", *call("DELETE", f"bf_connections({row['bf_connectionid']})")[:2])
+    for role in call("GET", "roles?$select=roleid&$filter=name eq 'InventoryAPI user' and _parentroleid_value eq null")[1].get("value", []):
+        gone("role InventoryAPI user", *call("DELETE", f"roles({role['roleid']})")[:2])
+    for ds in call("GET", "bf_brokerdatasources?$select=bf_brokerdatasourceid&$filter=bf_serviceinstance eq 'InventoryAPI'")[1].get("value", []):
+        gone("data source record of InventoryAPI", *call("DELETE", f"bf_brokerdatasources({ds['bf_brokerdatasourceid']})")[:2])
+    for wr in call("GET", "webresourceset?$select=webresourceid&$filter=name eq 'ext_/brokerforge/InventoryAPI/design.xml'")[1].get("value", []):
+        gone("design web resource of InventoryAPI", *call("DELETE", f"webresourceset({wr['webresourceid']})")[:2])
+    for var in call("GET", "environmentvariabledefinitions?$select=environmentvariabledefinitionid,schemaname&$filter=startswith(schemaname,'bf_InventoryAPI_')")[1].get("value", []):
+        gone(f"environment variable {var['schemaname']}", *call("DELETE", f"environmentvariabledefinitions({var['environmentvariabledefinitionid']})")[:2])
+    for unique in ("BrokerForgeInventory", "BrokerForgeInventoryAPI"):
+        _, body, _ = call("GET", f"solutions?$select=solutionid&$filter=uniquename eq '{unique}'")
+        for s in body.get("value", []):
+            gone(f"solution {unique}", *call("DELETE", f"solutions({s['solutionid']})")[:2])
     status, _, _ = call("GET", "ext_items?$top=1")
     print(f"GET ext_items: HTTP {status}", flush=True)
 

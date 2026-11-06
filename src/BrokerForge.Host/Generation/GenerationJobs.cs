@@ -103,6 +103,17 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
         return await Generator.Generator.PreviewAsync(client, schema, options, ct);
     }
 
+    /// <summary>
+    /// The administrator's step (D-36, plan 5): runs, as <paramref name="administrator"/>, what Generate as the host left
+    /// pending (the role and the actions), leaving the design's publication alone. <paramref name="r"/>'s
+    /// <see cref="GenerationRequest.ConfirmedFingerprint"/> is the change list the administrator saw; a different list is refused.
+    /// </summary>
+    public async Task<GenerationResult> RunAsAdministratorAsync(DataverseClient administrator, GenerationRequest r, CancellationToken ct)
+    {
+        var (schema, options) = await OptionsAsync(administrator, r with { ApplyRole = true }, ct);
+        return await Generator.Generator.RunAsync(administrator, schema, options with { Design = null }, ct);
+    }
+
     private async Task RunAsync(GenerationJob job, GenerationRequest r, string org, (string, string) key, string leaseToken)
     {
         DataverseClient? client = null;

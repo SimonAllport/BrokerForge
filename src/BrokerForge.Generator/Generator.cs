@@ -122,6 +122,10 @@ public static class Generator
 
         var described = new List<string>();
         var pending = new List<string>();
+        // Actions are an administrator's too: creating a Custom API needs prvCreateSdkMessageProcessingStep, which Dataverse
+        // leaves out of the host's effective privileges whatever its role holds (portal-5 findings).
+        if (!o.ApplyRole)
+            pending.AddRange(plan.Changes.Where(c => c.Kind is ChangeKind.AddApi or ChangeKind.RecreateApi or ChangeKind.RemoveApi).Select(c => c.Text));
         if (schema.Table != null)
         {
             var all = FormsAndViews.Order(schema, schema.Columns.Keys);
@@ -232,12 +236,12 @@ public static class Generator
             }
         }
 
-        foreach (var change in changes.Where(c => c.Kind is ChangeKind.RemoveApi or ChangeKind.RecreateApi))
+        foreach (var change in changes.Where(c => o.ApplyRole && c.Kind is ChangeKind.RemoveApi or ChangeKind.RecreateApi))
         {
             at($"delete action {change.Target}");
             await client.DeleteAsync($"customapis({s.Apis[change.Target]!.Id})", ct);
         }
-        foreach (var change in changes.Where(c => c.Kind is ChangeKind.AddApi or ChangeKind.RecreateApi))
+        foreach (var change in changes.Where(c => o.ApplyRole && c.Kind is ChangeKind.AddApi or ChangeKind.RecreateApi))
         {
             at($"create action {change.Target}");
             await client.WriteAsync(HttpMethod.Post, "customapis", CustomApiGenerator.Payload(change.Target, schema.CustomApis[change.Target], s.PluginTypeId!), o.Solution, ct);

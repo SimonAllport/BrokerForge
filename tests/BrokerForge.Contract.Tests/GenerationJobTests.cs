@@ -280,8 +280,11 @@ public class GenerationJobTests
         var jobs = Jobs();
         var done = await jobs.WaitAsync((await jobs.StartAsync(Request())).Id);
         Assert.True(done.State == JobState.Succeeded, done.Failure);
-        Assert.StartsWith("create role WarehouseAPI user with ", done.Pending.Single());
-        Assert.DoesNotContain(_fakes[OrgA].Writes, w => w.Path.StartsWith("roles", StringComparison.Ordinal));
+        // The action and the role are both the administrator's (plan 5): the host can't create a Custom API either.
+        Assert.Equal(2, done.Pending.Count);
+        Assert.Contains(done.Pending, p => p.StartsWith("add action ", StringComparison.Ordinal));
+        Assert.Contains(done.Pending, p => p.StartsWith("create role WarehouseAPI user with ", StringComparison.Ordinal));
+        Assert.DoesNotContain(_fakes[OrgA].Writes, w => w.Path.StartsWith("roles", StringComparison.Ordinal) || w.Path.StartsWith("customapis", StringComparison.Ordinal));
         var admin = await jobs.WaitAsync((await jobs.StartAsync(Request() with { ApplyRole = true })).Id);
         Assert.Empty(admin.Pending);
         Assert.Contains(_fakes[OrgA].Writes, w => w.Path == "roles");
@@ -301,7 +304,9 @@ public class GenerationJobTests
     public async Task Command_StaleConfirm_Exit4NothingWritten()
     {
         var design = EnvironmentConfigTests.Warehouse();
-        await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext", "--design-file", DesignFile(design));
+        // As an administrator, so the role and the action are done too and the published design has nothing left to apply.
+        await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext", "--design-file", DesignFile(design),
+            "--with-role");
         var before = _fakes[OrgA].Writes.Count();
         var changed = DesignFile(design with { Schema = design.Schema.Replace("displayName: SKU", "displayName: Stock code") });
         var (code, output) = await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext",
@@ -314,7 +319,9 @@ public class GenerationJobTests
     public async Task Command_FromEnvironment_PreviewThenConfirm()
     {
         var design = EnvironmentConfigTests.Warehouse();
-        await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext", "--design-file", DesignFile(design));
+        // As an administrator, so the role and the action are done too and the published design has nothing left to apply.
+        await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext", "--design-file", DesignFile(design),
+            "--with-role");
         var before = _fakes[OrgA].Writes.Count();
         var (code, output) = await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext",
             "--from-environment", "--preview");
@@ -329,7 +336,7 @@ public class GenerationJobTests
         Assert.Equal(before, _fakes[OrgA].Writes.Count());
         (code, output) = await Command("--environment", EnvA, "--instance", "WarehouseAPI", "--solution", "BrokerForgeWarehouse", "--publisher", "brokerforgeext",
             "--design-file", changed, "--confirm", fingerprint);
-        Assert.True(code == 3, output); // done; the role is still the administrator's
+        Assert.True(code == 0, output); // done; the role and the action were already set
         Assert.Contains("design v2", output);
     }
 

@@ -20,9 +20,9 @@ namespace BrokerForge.Host.Admin;
 /// <item><c>/admin/{environmentId}/{instance}/secret</c> (spec 8): set the connection's keys. The host checks, as its own
 /// application user in that environment, that the signed-in user is a BrokerForge administrator there. A value is stored
 /// in the instance secret store and never written back to a page or a log.</item>
-/// <item><c>/admin/{environmentId}/{instance}/role</c> (HLD D-36): the role step the host may not take. The administrator
-/// signs in for Dataverse with the connect app, and <see cref="RoleGenerator"/> sets <c>&lt;Instance&gt; user</c> with their
-/// own token, used for that request only.</item>
+/// <item><c>/admin/{environmentId}/{instance}/role</c> (HLD D-36, D-38): the steps the host may not take, the role
+/// <c>&lt;Instance&gt; user</c> and creating, recreating or removing actions. The administrator signs in for Dataverse with
+/// the connect app, and Generate runs those steps with their own token, used for that request only.</item>
 /// </list>
 /// </summary>
 public static class AdminEndpoints
@@ -152,31 +152,38 @@ public static class AdminEndpoints
         return new SeeOther($"/admin/{environmentId:D}/{Uri.EscapeDataString(found.Name)}/secret");
     }
 
-    /// <summary>The role step for a connection generated here: what it would change, from the published design, read as the host.</summary>
-    private sealed record RolePlan(string Instance, string Table, IReadOnlySet<string> Messages, string Solution, string? Change);
+    /// <summary>
+    /// The administrator's step for a connection generated here: what Generate as the host left pending (the role and the
+    /// actions), from the published design, read as the host, with the fingerprint of the change list it belongs to.
+    /// </summary>
+    private sealed record AdminPlan(string Instance, GenerationRequest Request, IReadOnlyList<string> Pending, string Fingerprint);
 
-    private static async Task<(RolePlan? Plan, IResult? Failure)> PlanRole(HttpContext http, DataverseClient host, Guid environmentId, string instance, CancellationToken ct)
+    private static async Task<(AdminPlan? Plan, IResult? Failure)> PlanRole(HttpContext http, DataverseClient host, Guid environmentId, string instance, CancellationToken ct)
     {
         if (await ConnectionList.RowAsync(host, instance, ct) is not { } row)
-            return (null, NotFound($"There is no connection called {instance} in this environment. The role step is taken where the connection is edited."));
+            return (null, NotFound($"There is no connection called {instance} in this environment. The administrator's step is taken where the connection is edited."));
+        var jobs = http.RequestServices.GetRequiredService<GenerationJobs>();
         ConnectionDesign design;
         try
         {
-            design = await http.RequestServices.GetRequiredService<GenerationJobs>().ReadPublishedAsync(environmentId.ToString("D"), row.Name, ct);
+            design = await jobs.ReadPublishedAsync(environmentId.ToString("D"), row.Name, ct);
         }
         catch (ConfigurationException ex)
         {
             return (null, NotFound($"{ex.Message} Generate it first."));
         }
-        var table = SchemaParser.Parse(design.Schema, $"{row.Name} design schema").Table;
-        var messages = design.Descriptors.Select(d => DescriptorParser.Parse(d.Value, d.Key)).Where(d => d.CustomApi == null).Select(d => d.Binds)
-            .ToHashSet(StringComparer.Ordinal);
-        if (table == null || messages.Count == 0)
-            return (null, ConnectPages.Message(200, $"Role for {row.Name}", $"{row.Name} has no table, so it has no role."));
-        var solution = DesignBuilder.SolutionOf(row);
-        var solutionId = (string?)(await host.ListAsync($"solutions?$select=solutionid&$filter=uniquename eq {DataverseClient.Literal(solution)}", ct)).FirstOrDefault()?["solutionid"];
-        var change = await RoleGenerator.DescribeAsync(host, table, row.Name, messages, solutionId, ct);
-        return (new RolePlan(row.Name, table, messages, solution, change), null);
+        var request = new GenerationRequest(environmentId.ToString("D"), design, DesignBuilder.SolutionOf(row), DesignBuilder.PublisherOf(row), null, null, null,
+            http.TraceIdentifier, ApplyRole: false, ConnectionId: row.Id);
+        GenerationPreview preview;
+        try
+        {
+            preview = await jobs.PreviewAsync(request, ct);
+        }
+        catch (Exception ex) when (ex is GenerationRefusedException or DataverseException or SchemaException or ConfigurationException)
+        {
+            return (null, ConnectPages.Message(409, $"Administrator step for {row.Name}", $"What is left to do could not be worked out: {ex.Message}"));
+        }
+        return (new AdminPlan(row.Name, request, preview.Pending, preview.Changes.Fingerprint), null);
     }
 
     private static async Task<IResult> Role(Guid environmentId, string instance, HttpContext http, IAntiforgery antiforgery, CancellationToken ct)
@@ -187,12 +194,12 @@ public static class AdminEndpoints
         var (plan, planFailure) = await PlanRole(http, host!, environmentId, instance, ct);
         if (planFailure != null)
             return planFailure;
-        var title = $"Role for {plan!.Instance}";
-        if (plan.Change == null)
-            return ConnectPages.Message(200, title, $"Role {RoleGenerator.RoleName(plan.Instance)} is up to date.");
+        var title = $"Administrator step for {plan!.Instance}";
+        if (plan.Pending.Count == 0)
+            return ConnectPages.Message(200, title, $"Role {RoleGenerator.RoleName(plan.Instance)} and the actions are up to date.");
         var token = antiforgery.GetAndStoreTokens(http).RequestToken!;
-        return ConnectPages.Page(200, title, ConnectPages.Paragraph($"To do: {plan.Change}. You sign in for Dataverse, and the role is set as you.")
-            + ConnectPages.Form($"/admin/{environmentId:D}/{Uri.EscapeDataString(plan.Instance)}/role/start", token, "", "Set the role"));
+        return ConnectPages.Page(200, title, ConnectPages.Paragraph($"To do: {string.Join("; ", plan.Pending)}. You sign in for Dataverse, and this is done as you.")
+            + ConnectPages.Form($"/admin/{environmentId:D}/{Uri.EscapeDataString(plan.Instance)}/role/start", token, "", "Do it as me"));
     }
 
     private static async Task<IResult> StartRole(Guid environmentId, string instance, HttpContext http, IAntiforgery antiforgery, IDataProtectionProvider protection,
@@ -208,7 +215,8 @@ public static class AdminEndpoints
             return planFailure;
         if (configuration["Connect:ClientId"] is not { Length: > 0 } clientId)
             return ConnectPages.Message(500, "Role not set", "Connect:ClientId is not set, so an administrator cannot sign in for the role step.");
-        var state = new ConnectState(RolePrefix + plan!.Instance, UserObjectId(http)!, ConnectState.Random(32), ConnectState.Random(16), time.GetUtcNow(), environmentId.ToString("D"));
+        // The change list's fingerprint travels in the state, so the callback applies only the list shown here.
+        var state = new ConnectState(RolePrefix + plan!.Instance + "|" + plan.Fingerprint, UserObjectId(http)!, ConnectState.Random(32), ConnectState.Random(16), time.GetUtcNow(), environmentId.ToString("D"));
         http.Response.Cookies.Append(state.NonceCookieName, state.Nonce, new CookieOptions
         {
             HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Lax, Path = "/admin/callback", MaxAge = ConnectState.Lifetime,
@@ -259,7 +267,11 @@ public static class AdminEndpoints
         var (host, failure) = await Admit(http, environmentId, ct);
         if (failure != null)
             return failure;
-        var (plan, planFailure) = await PlanRole(http, host!, environmentId, state.Instance[RolePrefix.Length..], ct);
+        var started = state.Instance[RolePrefix.Length..];
+        var bar = started.LastIndexOf('|');
+        if (bar < 0)
+            return Refused("Not done", "This sign-in link is not valid. Start again from the administrator's page.");
+        var (plan, planFailure) = await PlanRole(http, host!, environmentId, started[..bar], ct);
         if (planFailure != null)
             return planFailure;
         var org = OrgOf(http, environmentId)!;
@@ -270,20 +282,26 @@ public static class AdminEndpoints
         }
         catch (Exception ex) when (ex is ConfigurationException or HttpRequestException or System.Text.Json.JsonException)
         {
-            log.LogWarning("Role sign-in for {Instance} in environment {EnvironmentId} failed: {Reason}", plan!.Instance, env, ex is ConfigurationException ? ex.Message : ex.GetType().Name);
-            return ConnectPages.Message(502, "Role not set", "Entra did not issue a Dataverse token. Start again from the role page.");
+            log.LogWarning("Administrator sign-in for {Instance} in environment {EnvironmentId} failed: {Reason}", plan!.Instance, env, ex is ConfigurationException ? ex.Message : ex.GetType().Name);
+            return ConnectPages.Message(502, "Not done", "Entra did not issue a Dataverse token. Start again from the administrator's page.");
         }
+        var title = $"Administrator step for {plan!.Instance}";
         try
         {
-            await RoleGenerator.ApplyAsync(delegated.Create(org, token), plan!.Table, plan.Instance, plan.Messages, plan.Solution, ct);
+            await http.RequestServices.GetRequiredService<GenerationJobs>().RunAsAdministratorAsync(delegated.Create(org, token),
+                plan.Request with { ConfirmedFingerprint = started[(bar + 1)..] }, ct);
         }
-        catch (DataverseException ex)
+        catch (GenerationConfirmationException)
         {
-            log.LogWarning("Role {Role} for {Instance} in environment {EnvironmentId} not set: {Reason}", RoleGenerator.RoleName(plan!.Instance), plan.Instance, env, ex.Message);
-            return ConnectPages.Message(502, "Role not set", $"Dataverse refused the role change: {ex.Message}");
+            return ConnectPages.Message(409, "Not done", "What is left to do changed after the page was shown; nothing was done. Open the administrator's page again.");
         }
-        log.LogInformation("Role {Role} set for {Instance} in environment {EnvironmentId} by {UserObjectId}", RoleGenerator.RoleName(plan.Instance), plan.Instance, env, state.UserObjectId);
-        return ConnectPages.Message(200, $"Role for {plan.Instance}", $"Role {RoleGenerator.RoleName(plan.Instance)} set: {plan.Change ?? "it was already up to date"}.");
+        catch (Exception ex) when (ex is GenerationRefusedException or GenerationFailedException or DataverseException)
+        {
+            log.LogWarning("Administrator step for {Instance} in environment {EnvironmentId} not done: {Reason}", plan.Instance, env, ex.Message);
+            return ConnectPages.Message(502, "Not done", $"Dataverse refused it: {ex.Message}");
+        }
+        log.LogInformation("Administrator step for {Instance} in environment {EnvironmentId} done by {UserObjectId}: {Done}", plan.Instance, env, state.UserObjectId, string.Join("; ", plan.Pending));
+        return ConnectPages.Message(200, title, plan.Pending.Count == 0 ? "Nothing was left to do." : $"Done as you: {string.Join("; ", plan.Pending)}.");
     }
 
     private sealed class SeeOther(string location) : IResult

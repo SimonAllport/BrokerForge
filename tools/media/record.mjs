@@ -201,17 +201,17 @@ async function part1() {
   await review.getByText(/Succeeded|failed/i).first().waitFor({ timeout: 900_000 });
   await page.waitForTimeout(1500);
   await s.shot('05-generated');
-  const roleLink = review.getByRole('link', { name: 'Apply the role' });
+  const roleLink = review.getByRole('link', { name: 'Finish as administrator' });
   if (await roleLink.count()) {
-    await s.say('The role\'s privileges can only be given by an administrator, so that step is a click on your own behalf.', 5200);
+    await s.say('The role\'s privileges and the action can only be set by an administrator, so that step is a click, done as you.', 5200);
     const [rolePage] = await Promise.all([context.waitForEvent('page'), s.tap(roleLink)]);
     await throughSignIn(rolePage, new URL(hostUrl).host);
-    const apply = rolePage.getByRole('button', { name: 'Set the role' });
+    const apply = rolePage.getByRole('button', { name: 'Do it as me' });
     if (await apply.count()) {
       await apply.click();
       await throughSignIn(rolePage, new URL(hostUrl).host);
     }
-    await rolePage.getByText(/ set: | is up to date/).first().waitFor({ timeout: 300_000 });
+    await rolePage.getByText(/Done as you|up to date/).first().waitFor({ timeout: 300_000 });
     await rolePage.waitForTimeout(1500);
     await rolePage.close();
   }
