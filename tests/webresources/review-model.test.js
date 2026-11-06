@@ -93,3 +93,9 @@ test("action parameters: the connection ID goes as Xrm's Guid shape, text as tex
   assert.deepEqual(model.actionParameter("ConnectionId", id), { typeName: "Edm.Guid", value: { guid: id } });
   assert.deepEqual(model.actionParameter("Fingerprint", "ab-cd"), { typeName: "Edm.String", value: "ab-cd" });
 });
+
+// Plan 5: actions are left to the administrator's step with the role, so the line says what is left.
+test("status line names what an administrator still has to do", () => {
+  const row = { bf_generationstate: "Succeeded", bf_generationresult: JSON.stringify({ designVersion: 1, pending: ["add action Adjust stock (ext_AdjustStock)", "create role X user"] }) };
+  assert.equal(model.statusLine(row, new Date()), "Generated (design v1). Left for an administrator: add action Adjust stock (ext_AdjustStock); create role X user.");
+});

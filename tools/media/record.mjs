@@ -198,7 +198,8 @@ async function part1() {
   s.chapter('Generate');
   await s.tap(review.locator('#generate'));
   await s.say('Generate creates the virtual table, every column, a view and a form that show them, the actions, and a security role, all in a solution for this source.', 6800);
-  await review.getByText(/Succeeded|failed/i).first().waitFor({ timeout: 900_000 });
+  await review.getByText(/^Generated|^Generate failed/).first().waitFor({ timeout: 900_000 });
+  if (await review.getByText(/^Generate failed/).count()) throw new Error('Generate failed: ' + await review.getByText(/^Generate failed/).first().innerText());
   await page.waitForTimeout(1500);
   await s.shot('05-generated');
   const roleLink = review.getByRole('link', { name: 'Finish as administrator' });

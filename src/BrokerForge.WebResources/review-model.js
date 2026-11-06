@@ -59,7 +59,7 @@
       return "Generating" + (started ? " (started " + started.toISOString().slice(11, 16) + " UTC)" : "") + "…";
     }
     if (state === "Succeeded")
-      return "Generated" + (r && r.designVersion ? " (design v" + r.designVersion + ")" : "") + (needsRole(row) ? ". The role still needs an administrator." : ".");
+      return "Generated" + (r && r.designVersion ? " (design v" + r.designVersion + ")" : "") + (needsRole(row) ? ". Left for an administrator: " + r.pending.join("; ") + "." : ".");
     if (r && r.needsConfirmation)
       return "Nothing was changed: the changes changed since you reviewed them. Read again and confirm the new list.";
     return "Generate failed: " + ((r && r.failure) || "no reason was reported");
