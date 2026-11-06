@@ -258,7 +258,16 @@ async function part1() {
 
   s.chapter('Use it on a form');
   await s.tap(page.getByText('Item 003', { exact: true }).first());
-  await field('On hand').waitFor({ timeout: 90_000 });
+  // A form made minutes ago can answer 502 at first: close the error and load it again, up to four times.
+  for (let attempt = 1; ; attempt++) {
+    try { await field('On hand').waitFor({ timeout: 45_000 }); break; }
+    catch (e) {
+      if (attempt === 4) throw e;
+      await page.getByRole('button', { name: 'OK' }).click().catch(() => undefined);
+      await page.waitForTimeout(20_000);
+      await page.reload();
+    }
+  }
   await page.waitForTimeout(2500);
   await s.say('Opening a record reads it from the API. The form shows every column.', 4600);
   await s.shot('08-form');
