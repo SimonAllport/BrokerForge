@@ -33,10 +33,10 @@
   function call(name, inputs) {
     var request = { getMetadata: function () {
       var types = {};
-      Object.keys(inputs).forEach(function (k) { types[k] = { typeName: k === "ConnectionId" ? "Edm.Guid" : "Edm.String", structuralProperty: 1 }; });
+      Object.keys(inputs).forEach(function (k) { types[k] = { typeName: model.actionParameter(k, inputs[k]).typeName, structuralProperty: 1 }; });
       return { boundParameter: null, parameterTypes: types, operationType: 0, operationName: name };
     } };
-    Object.keys(inputs).forEach(function (k) { request[k] = inputs[k]; });
+    Object.keys(inputs).forEach(function (k) { request[k] = model.actionParameter(k, inputs[k]).value; });
     return xrm.WebApi.online.execute(request).then(function (r) { return r.json(); });
   }
 

@@ -71,6 +71,12 @@
     return !!row && row.bf_generationstate === "Succeeded" && !!r && (r.pending || []).length > 0;
   }
 
+  // An admin Custom API's input as Xrm.WebApi wants it: Xrm sends an Edm.Guid only when given as { guid: id }
+  // (a bare string arrives as `undefined`); every other input here is text.
+  function actionParameter(name, value) {
+    return name === "ConnectionId" ? { typeName: "Edm.Guid", value: { guid: value } } : { typeName: "Edm.String", value: value };
+  }
+
   // Screen 3's links.
   function doneLinks(orgUrl, table) {
     var org = String(orgUrl).replace(/\/+$/, "");
@@ -81,5 +87,5 @@
   }
 
   return { canGenerate: canGenerate, missingKeys: missingKeys, answersFrom: answersFrom, isRunning: isRunning, statusLine: statusLine,
-    needsRole: needsRole, doneLinks: doneLinks, STALE_MINUTES: STALE_MINUTES };
+    needsRole: needsRole, doneLinks: doneLinks, actionParameter: actionParameter, STALE_MINUTES: STALE_MINUTES };
 });

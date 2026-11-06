@@ -86,3 +86,10 @@ test("doneLinks encodes the table name", () => {
 test("canGenerate false when the change list could not be worked out", () => {
   assert.equal(model.canGenerate({ ...ready(), preview: { error: "SecLib::CheckPrivilege failed" } }), false);
 });
+
+// Found while recording plan 5: Xrm.WebApi sends a bare string for an Edm.Guid parameter as `undefined`.
+test("action parameters: the connection ID goes as Xrm's Guid shape, text as text", () => {
+  const id = "00000000-0000-0000-0000-00000000c001";
+  assert.deepEqual(model.actionParameter("ConnectionId", id), { typeName: "Edm.Guid", value: { guid: id } });
+  assert.deepEqual(model.actionParameter("Fingerprint", "ab-cd"), { typeName: "Edm.String", value: "ab-cd" });
+});
