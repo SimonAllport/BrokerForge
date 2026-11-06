@@ -2,6 +2,20 @@
 
 Results of 6 November 2026 against the dev environment and a second environment, **BrokerForge test** (a Developer environment created for this). Plan: `docs/superpowers/plans/2026-11-06-portal-connections-5-migration.md`. Decision: HLD D-38.
 
+## Done criteria (spec 12)
+
+| # | Result |
+| --- | --- |
+| 1 | Inventory set up through the screens: New connection, questions, answers, Generate, the administrator's step, the key, then list, open, New and Save, Delete. The full run, with the form, was recorded in the second environment (video part 1). In dev everything worked except the record form (section 4). |
+| 2 | Pass: the undeclared filter and the unmapped 500 (`acceptance.sh`), the undeclared filter (`acceptance_inventory.sh`) |
+| 3 | Pass: questions shown, Generate disabled until answered |
+| 4 | Pass: imported into BrokerForge test; needs URL, then needs key, both typed and before any request; then everything works (section 6) |
+| 5 | Pass: removal and type change listed, a hand-made view blocks and is named, then applied as the host and restored (section 4) |
+| 6 | Pass: a second user reads through the generated role alone; admin messages refuse them (section 5) |
+| 7 | Pass: 0 matches (section 7) |
+| 8 | Pass: Orders, Inventory and both Tickets sources run from designs; no source settings or descriptor files in Bicep or the image |
+| 9 | HLD D-05, D-10, D-16, D-30, sections 6, 14 and 15 and D-38 updated; the guide and the video are redone for the screens |
+
 ## 1. What changed
 
 - **SwaggerForge asks four more questions.** Where a header's value comes from (`op.<op>.header.<name>`), where a body property with no column comes from (`op.<op>.body.<path>`), whether to retry (`op.<op>.retry`; a create only with an `Idempotency-Key` header answered `uuid`, as the validator requires), and the table's external name (`table.externalName`), so an existing table keeps the name it was made with. `docs/connection-design-format.md` lists them.
@@ -78,3 +92,14 @@ So the generated role alone gives Read, and the admin messages refuse a non-admi
 ## 7. No secret anywhere (done criterion 7)
 
 The values of `orders-api-key`, `inventory-api-key` and `tickets-client-secret` were compared, printing counts only, against the managed and unmanaged exports of BrokerForgeOrders, BrokerForgeTickets, BrokerForgeTicketsEntra, BrokerForgeInventoryAPI and BrokerForgeCore, every `bf_connection` row, every environment variable definition and value, and the host's log stream (the current revision's 96 lines). 0 matches. Older logs in Application Insights were not searched, because that would mean sending the key in a query.
+
+## 8. Final review
+
+A fresh review of the branch found no Critical problems and five Important ones. Four are fixed, each with a test that failed first:
+
+- the administrator's page could apply changes it never showed: it now refuses while Generate itself has changes left, and the administrator's run refuses anything but actions and the role;
+- the confirmed list was taken when the button was pressed: the page now carries the fingerprint it showed;
+- the administrator's run took no lease: it now takes Generate's;
+- the row went on saying a step was left: the administrator's run now reports on the row.
+
+The fifth, a publish that fails at 429 and is never retried, is recorded in HLD 15 for a live check first. The host role's two SDK privileges, no longer needed, were taken off. Deferred minors: the review page can poll forever if the row never shows the job it started; no test for the callback's confirmation refusal; the connect page shows configuration messages, which name hosts, to end users; retry is accepted on a POST action without an idempotency check.
