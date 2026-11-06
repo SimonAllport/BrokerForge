@@ -26,8 +26,6 @@
     <RolePrivilege name="prvCreateQuery" level="Global" />
     <RolePrivilege name="prvCreateRelationship" level="Global" />
     <RolePrivilege name="prvCreateRole" level="Global" />
-    <RolePrivilege name="prvCreateSdkMessage" level="Global" />
-    <RolePrivilege name="prvCreateSdkMessageProcessingStep" level="Global" />
     <RolePrivilege name="prvCreateSharePointData" level="Global" />
     <RolePrivilege name="prvCreateSolution" level="Global" />
     <RolePrivilege name="prvCreateSystemForm" level="Global" />
