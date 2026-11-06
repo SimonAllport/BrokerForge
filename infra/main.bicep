@@ -25,6 +25,10 @@ param ticketsApiAppId string = ''
 @description('Entra object IDs the Tickets mock maps to its users alice and bob for Impersonate.')
 param ticketsAliceOid string = ''
 param ticketsBobOid string = ''
+@description('A second Dataverse environment the host serves: its ID, org URL and its own plug-in app (one azp per environment, D-09). Empty: none.')
+param secondEnvironmentId string = ''
+param secondOrgUrl string = ''
+param secondPluginClientId string = ''
 
 var suffix = uniqueString(resourceGroup().id)
 
@@ -99,6 +103,9 @@ module apps 'containerApps.bicep' = if (deployApps) {
     ticketsApiAppId: ticketsApiAppId
     ticketsAliceOid: ticketsAliceOid
     ticketsBobOid: ticketsBobOid
+    secondEnvironmentId: secondEnvironmentId
+    secondOrgUrl: secondOrgUrl
+    secondPluginClientId: secondPluginClientId
   }
 }
 
@@ -106,3 +113,5 @@ output registryName string = registry.name
 output vaultName string = vault.outputs.name
 output vaultUri string = vault.outputs.vaultUri
 output hostUrl string = apps.?outputs.hostUrl ?? ''
+output mockUrl string = apps.?outputs.mockUrl ?? ''
+output ticketsUrl string = apps.?outputs.ticketsUrl ?? ''

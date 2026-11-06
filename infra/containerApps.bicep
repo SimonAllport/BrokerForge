@@ -23,6 +23,10 @@ param connectClientId string
 param ticketsApiAppId string
 param ticketsAliceOid string
 param ticketsBobOid string
+@description('A second Dataverse environment this host serves (plan 5): its ID, org URL and plug-in app. Empty: one environment.')
+param secondEnvironmentId string = ''
+param secondOrgUrl string = ''
+param secondPluginClientId string = ''
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: workspaceName
@@ -132,49 +136,19 @@ resource ticketsMock 'Microsoft.App/containerApps@2024-03-01' = if (perUser) {
   }
 }
 
-var orders = 'Instances__OrdersAPI__'
-var map = 'ObjectMaps__ext_order__'
-var inventory = 'Instances__InventoryAPI__'
-var itemMap = 'ObjectMaps__ext_item__'
-var tickets = 'Instances__TicketsAPI__'
-var ticketMap = 'ObjectMaps__ext_ticket__'
-var entraTickets = 'Instances__TicketsEntraAPI__'
-var entraTicketMap = 'ObjectMaps__ext_entraticket__'
 
 // Per-user sources (phase 3) need the connect app, so they are added only once it exists.
 var perUserEnv = [
   { name: 'Connect__PublicBaseUrl', value: hostUrl }
   { name: 'Connect__ClientId', value: connectClientId }
-  { name: 'OAuthResources__Tickets__AuthorizeUrl', value: '${ticketsUrl}/tk/oauth/authorize' }
-  { name: 'OAuthResources__Tickets__TokenUrl', value: '${ticketsUrl}/tk/oauth/token' }
-  { name: 'OAuthResources__Tickets__Scopes__0', value: 'tickets.read' }
-  { name: 'OAuthResources__Tickets__ClientId', value: 'bf-tickets' }
-  { name: 'OAuthResources__Tickets__ClientSecretRef', value: 'kv:${secretUri}/tickets-client-secret' }
-  { name: 'OAuthResources__Entra__AuthorizeUrl', value: '${login}${tenantId}/oauth2/v2.0/authorize' }
-  { name: 'OAuthResources__Entra__TokenUrl', value: '${login}${tenantId}/oauth2/v2.0/token' }
-  { name: 'OAuthResources__Entra__Scopes__0', value: 'api://${ticketsApiAppId}/user_impersonation' }
-  { name: 'OAuthResources__Entra__Scopes__1', value: 'offline_access' }
-  { name: 'OAuthResources__Entra__UsesConnectApp', value: 'true' }
-  { name: '${tickets}BrokerType', value: 'rest' }
-  { name: '${tickets}BaseUrl', value: ticketsUrl }
-  { name: '${tickets}Auth__Mode', value: 'OAuth' }
-  { name: '${tickets}Auth__OAuthResource', value: 'Tickets' }
-  { name: '${ticketMap}ServiceInstance', value: 'TicketsAPI' }
-  { name: '${ticketMap}KeyStrategy', value: 'reversible' }
-  { name: '${ticketMap}KeyKind', value: 'String' }
-  { name: '${ticketMap}Operations__RetrieveMultiple', value: 'listTickets' }
-  { name: '${ticketMap}Operations__Retrieve', value: 'getTicket' }
-  { name: '${ticketMap}Operations__Create', value: 'createTicket' }
-  { name: '${entraTickets}BrokerType', value: 'rest' }
-  { name: '${entraTickets}BaseUrl', value: ticketsUrl }
-  { name: '${entraTickets}Auth__Mode', value: 'Impersonate' }
-  { name: '${entraTickets}Auth__OAuthResource', value: 'Entra' }
-  { name: '${entraTicketMap}ServiceInstance', value: 'TicketsEntraAPI' }
-  { name: '${entraTicketMap}KeyStrategy', value: 'reversible' }
-  { name: '${entraTicketMap}KeyKind', value: 'String' }
-  { name: '${entraTicketMap}Operations__RetrieveMultiple', value: 'listEntraTickets' }
-  { name: '${entraTicketMap}Operations__Retrieve', value: 'getEntraTicket' }
-  { name: '${entraTicketMap}Operations__Create', value: 'createEntraTicket' }
+  // TicketsEntraAPI's design (Impersonate) may ask for the Tickets API's scope in this environment only.
+  { name: 'Trust__AllowedCallers__0__DesignScopes__0', value: 'api://${ticketsApiAppId}/user_impersonation' }
+]
+
+var secondCallerEnv = [
+  { name: 'Trust__AllowedCallers__1__ClientId', value: secondPluginClientId }
+  { name: 'Trust__AllowedCallers__1__EnvironmentId', value: secondEnvironmentId }
+  { name: 'Trust__AllowedCallers__1__OrgUrl', value: secondOrgUrl }
 ]
 
 // minReplicas 1: phase 0 measured a 23.5 s cold start (HLD 15).
@@ -205,45 +179,14 @@ resource host 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'Trust__AllowedCallers__0__OrgUrl', value: orgUrl }
             // Connection designs (HLD D-34) are read from that environment; their keys live in the credential table.
             { name: 'Config__Designs__Enabled', value: 'true' }
-            // WarehouseAPI's design targets the internal Orders/Inventory mock, which resolves to a private address.
+            // The Orders and Inventory designs target the internal mock, which resolves to a private address.
             { name: 'Config__Designs__AllowedPrivateHosts__0', value: mock.properties.configuration.ingress.fqdn }
             { name: 'Credentials__TableEndpoint', value: credentialTableEndpoint }
             { name: 'DataProtection__BlobUri', value: keyRingBlobUri }
             { name: 'DataProtection__KeyId', value: dataProtectionKeyUri }
             { name: 'Host__TimeoutSeconds', value: '90' }
             { name: 'Host__PageTokenKeyRef', value: 'kv:${secretUri}/page-token-key' }
-            { name: 'Config__DescriptorsPath', value: '/app/descriptors' }
-            { name: 'Config__SchemasPath', value: '/app/schemas' }
-            { name: '${orders}BrokerType', value: 'rest' }
-            { name: '${orders}BaseUrl', value: 'https://${mock.properties.configuration.ingress.fqdn}' }
-            { name: '${orders}Auth__Mode', value: 'Static' }
-            { name: '${orders}Auth__StaticKind', value: 'apiKeyHeader' }
-            { name: '${orders}Auth__HeaderName', value: 'X-Api-Key' }
-            { name: '${orders}Auth__SecretRef', value: 'kv:${secretUri}/orders-api-key' }
-            { name: '${orders}Config__accountId', value: 'acc-1' }
-            { name: '${map}ServiceInstance', value: 'OrdersAPI' }
-            { name: '${map}KeyStrategy', value: 'reversible' }
-            { name: '${map}KeyKind', value: 'String' }
-            { name: '${map}Operations__RetrieveMultiple', value: 'listOrders' }
-            { name: '${map}Operations__Retrieve', value: 'getOrder' }
-            { name: '${map}Operations__Create', value: 'createOrder' }
-            { name: '${map}Operations__Update', value: 'updateOrder' }
-            { name: '${map}Operations__Delete', value: 'deleteOrder' }
-            { name: '${inventory}BrokerType', value: 'rest' }
-            { name: '${inventory}BaseUrl', value: 'https://${mock.properties.configuration.ingress.fqdn}' }
-            { name: '${inventory}Auth__Mode', value: 'Static' }
-            { name: '${inventory}Auth__StaticKind', value: 'apiKeyQuery' }
-            { name: '${inventory}Auth__QueryParam', value: 'api_key' }
-            { name: '${inventory}Auth__SecretRef', value: 'kv:${secretUri}/inventory-api-key' }
-            { name: '${itemMap}ServiceInstance', value: 'InventoryAPI' }
-            { name: '${itemMap}KeyStrategy', value: 'reversible' }
-            { name: '${itemMap}KeyKind', value: 'Int32' }
-            { name: '${itemMap}Operations__RetrieveMultiple', value: 'listItems' }
-            { name: '${itemMap}Operations__Retrieve', value: 'getItem' }
-            { name: '${itemMap}Operations__Create', value: 'createItem' }
-            { name: '${itemMap}Operations__Update', value: 'updateItem' }
-            { name: '${itemMap}Operations__Delete', value: 'deleteItem' }
-          ], perUser ? perUserEnv : [])
+          ], perUser ? perUserEnv : [], empty(secondEnvironmentId) ? [] : secondCallerEnv)
           probes: [
             { type: 'Readiness', httpGet: { path: '/healthz', port: 8080 }, periodSeconds: 10 }
           ]
@@ -255,3 +198,6 @@ resource host 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output hostUrl string = 'https://${host.properties.configuration.ingress.fqdn}'
+// The connection rows of the sources (tools/dev/migrate-sources.sh) take their base URLs from these.
+output mockUrl string = 'https://${mock.properties.configuration.ingress.fqdn}'
+output ticketsUrl string = ticketsUrl
