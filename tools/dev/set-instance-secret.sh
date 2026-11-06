@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Set one instance secret of a connection design (HLD D-34) in the dev host's store. Stopgap until plan 4's page.
-# Usage: tools/dev/set-instance-secret.sh <Instance> <name> [<Key Vault secret name>]
+# Usage: [BF_ENVIRONMENT=<environment id>] tools/dev/set-instance-secret.sh <Instance> <name> [<Key Vault secret name>]
 #   e.g. tools/dev/set-instance-secret.sh WarehouseAPI apiKey inventory-api-key
 # The value never leaves Azure and is never printed: the host's admin command runs inside the running host container
 # (az containerapp exec), so it uses the host's own identity, table and Data Protection key ring, and it reads the
@@ -17,6 +17,8 @@ KV_SECRET="${3:-$(printf '%s' "$INSTANCE" | tr '[:upper:]' '[:lower:]')-$(printf
 source "$HOME/.brokerforge/spike-ids.env"
 # shellcheck disable=SC1090
 source "$HOME/.brokerforge/dev-ids.env"
+# BF_ENVIRONMENT sets the key for another environment the host serves (plan 5: the second environment).
+ENVID="${BF_ENVIRONMENT:-$ENVID}"
 : "${ENVID:?} ${RG:?} ${VAULT:?}"
 VAULT_URI="$(az keyvault show -n "$VAULT" --query properties.vaultUri -o tsv)"
 # Fail here, by name, rather than in the container: the secret must exist (its value is not fetched).
