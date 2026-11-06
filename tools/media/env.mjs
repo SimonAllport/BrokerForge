@@ -27,6 +27,8 @@ export const envId = process.env.ENVID || dev.ENVID;
 export const placeholders = [
   [hostUrl, 'https://brokerforge.contoso.example'],
   [envId, '00000000-0000-0000-0000-000000000000'],
+  // The Container Apps environment's domain, in the mocks' addresses (bf-dev-orders-mock.internal.<domain>).
+  [hostUrl && new URL(hostUrl).host.split('.').slice(1).join('.'), 'contoso.example'],
   [new URL(org).host, 'contoso.crm.dynamics.com'],
   [new URL(org).host.split('.')[0], 'contoso'],
 ].filter(([real]) => real);

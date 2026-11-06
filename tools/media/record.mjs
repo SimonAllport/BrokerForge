@@ -159,7 +159,18 @@ async function part1() {
   await page.waitForTimeout(1500);
   await s.say('A connection needs a name, the base URL of the API and how BrokerForge signs in to it.');
   await s.type(field('Name'), 'InventoryAPI');
-  await s.type(field('Base URL'), execFileSync('bash', ['-c', `source ~/.brokerforge/dev-ids.env; az containerapp show -g "$RG" -n bf-dev-orders-mock --query properties.configuration.ingress.fqdn -o tsv`], { encoding: 'utf8' }).trim().replace(/^/, 'https://'));
+  const baseUrl = field('Base URL');
+  // A typed value can't be masked like page text, so the field is covered with the placeholder address while it shows.
+  const box = await baseUrl.boundingBox();
+  await page.evaluate(({ x, y, width, height }) => {
+    const c = document.createElement('div');
+    c.id = 'bf-cover-baseurl';
+    c.textContent = 'https://inventory.contoso.example';
+    Object.assign(c.style, { position: 'fixed', left: x + 'px', top: y + 'px', width: width + 'px', height: height + 'px', background: '#f5f5f5',
+      display: 'flex', alignItems: 'center', padding: '0 8px', boxSizing: 'border-box', font: '14px "Segoe UI", sans-serif', color: '#242424', zIndex: 2147483640, pointerEvents: 'none' });
+    document.body.appendChild(c);
+  }, box);
+  await s.type(baseUrl, execFileSync('bash', ['-c', `source ~/.brokerforge/dev-ids.env; az containerapp show -g "$RG" -n bf-dev-orders-mock --query properties.configuration.ingress.fqdn -o tsv`], { encoding: 'utf8' }).trim().replace(/^/, 'https://'));
   await choose(page, s, 'Authentication', 'Static');
   await s.type(field('Static kind'), 'apiKeyQuery');
   await s.type(field('Query parameter'), 'api_key');
@@ -173,6 +184,7 @@ async function part1() {
   await s.tap(page.getByRole('menuitem', { name: /^Save \(/ }));
   await page.waitForURL(/[?&]id=/, { timeout: 60_000 });
   await page.waitForTimeout(2500);
+  await page.evaluate(() => document.getElementById('bf-cover-baseurl')?.remove());
 
   s.chapter('Review and answer');
   await s.tap(page.getByRole('tab', { name: 'Review and generate' }));
@@ -423,6 +435,26 @@ async function assemble(segments, name) {
   writeFileSync(join(out, `${name}.srt`), cues.filter(c => c.to > 0).map((c, i) => `${i + 1}\n${srtTime(Math.max(0, c.from))} --> ${srtTime(c.to)}\n${c.text}\n`).join('\n'));
   writeFileSync(join(out, `${name}.json`), JSON.stringify(chapters, null, 2));
   console.log(`${mp4} (${Math.round(offset)} s)`, chapters);
+}
+
+// node record.mjs --join: the full video from parts recorded on their own (part 1 in one environment, part 2 in another).
+if (process.argv.includes('--join')) {
+  const parts = ['part1', 'part2'].map(p => join(out, `brokerforge-how-to-${p}`));
+  const list = join(raw, 'join.txt');
+  writeFileSync(list, parts.map(p => `file '${p}.mp4'`).join('\n'));
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', join(out, 'brokerforge-how-to.mp4')]);
+  const offset = duration(`${parts[0]}.mp4`);
+  const toMs = t => { const [h, m, rest] = t.split(':'); const [sec, ms] = rest.split(','); return ((+h * 60 + +m) * 60 + +sec) * 1000 + +ms; };
+  const cues = parts.flatMap((p, i) => readFileSync(`${p}.srt`, 'utf8').trim().split(/\n\n+/).map(block => {
+    const [, time, ...text] = block.split('\n');
+    const [from, to] = time.split(' --> ').map(toMs);
+    return { from: from + i * offset * 1000, to: to + i * offset * 1000, text: text.join('\n') };
+  }));
+  writeFileSync(join(out, 'brokerforge-how-to.srt'), cues.map((c, i) => `${i + 1}\n${srtTime(c.from)} --> ${srtTime(c.to)}\n${c.text}\n`).join('\n'));
+  const chapters = parts.flatMap((p, i) => JSON.parse(readFileSync(`${p}.json`, 'utf8')).map(c => ({ title: c.title, at: Math.round((c.at + i * offset) * 10) / 10 })));
+  writeFileSync(join(out, 'brokerforge-how-to.json'), JSON.stringify(chapters, null, 2));
+  console.log(`joined (${Math.round(duration(join(out, 'brokerforge-how-to.mp4')))} s)`, chapters);
+  process.exit(0);
 }
 
 // node record.mjs --connect <instance> <alice|bob|entra|none>: set the profile's connection off camera, record nothing.
