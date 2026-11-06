@@ -2,6 +2,9 @@
 openapi: 3.0.3
 info: { title: Orders mock API, version: "2" }
 components:
+  parameters:
+    Correlation: { name: X-Correlation, in: header, description: Echoed in the mock's log, schema: { type: string } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, description: A repeat with the same key returns the first order, schema: { type: string } }
   securitySchemes:
     apiKey: { type: apiKey, in: header, name: X-Api-Key }
   schemas:
@@ -10,7 +13,7 @@ components:
       required: [id, reference, state, customer, placedAt, lines, totals]
       properties:
         id: { type: string }
-        reference: { type: string, maxLength: 20 }
+        reference: { type: string, maxLength: 100 }
         state:
           type: object
           required: [code]
@@ -51,6 +54,7 @@ components:
           type: object
           properties:
             gross: { type: number }
+        placedBy: { type: string, description: Who placed the order }
     Error:
       type: object
       properties:
@@ -97,13 +101,20 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     patch:
       operationId: updateOrder
+      parameters:
+        - $ref: "#/components/parameters/Correlation"
       requestBody:
         content: { application/json: { schema: { $ref: "#/components/schemas/OrderInput" } } }
       responses:
         "204": { description: Updated }
         "404": { description: No such order }
+        "422":
+          description: Invalid change
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     delete:
       operationId: deleteOrder
+      parameters:
+        - $ref: "#/components/parameters/Correlation"
       responses:
         "204": { description: Deleted }
         "404": { description: No such order }
@@ -112,6 +123,8 @@ paths:
       operationId: createOrder
       parameters:
         - { name: accountId, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/Correlation"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/OrderInput" } } }

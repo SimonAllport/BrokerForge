@@ -554,6 +554,7 @@ public static class Drafter
             if (queryMap.Count > 0)
                 request.Add("query", queryMap);
             CheckPathParams(path, parameters, request, idParam: null, name);
+            Headers(parameters, request, name);
 
             root.Add("paging", paging);
             var response = root.Map("response").Add("rows", rowsPath).Add("key", _keyPath ?? "$");
@@ -565,6 +566,7 @@ public static class Drafter
             var stable = Ask(answers.Choice($"op.{name}.sortStable",
                 "With no sort, does the source return rows in the same order on every call? Paging relies on it.", YesNo));
             root.Add("sortStable", stable.Answer == "yes");
+            Retry(root, name, "RetrieveMultiple", null);
             return root.ToString();
         }
 
@@ -707,10 +709,12 @@ public static class Drafter
             var request = root.Map("request").Add("method", "GET").Add("path", path);
             CheckPathParams(path, parameters, request, r.IdParam, name);
             FixedQuery(parameters, request, name);
+            Headers(parameters, request, name);
             var response = root.Map("response").Add("rows", "$").Add("key", _keyPath ?? "$");
             AddMap(response, fields);
             AddOptionSets(root, fields);
             Errors(root, op, name);
+            Retry(root, name, "Retrieve", null);
             return root.ToString();
         }
 
@@ -725,6 +729,7 @@ public static class Drafter
             var request = root.Map("request").Add("method", MethodOf(path, op)).Add("path", path);
             CheckPathParams(path, parameters, request, binds == "Update" ? r.IdParam : null, name);
             FixedQuery(parameters, request, name);
+            var headers = Headers(parameters, request, name);
 
             var bound = new List<Field>();
             var template = new YamlMap();
@@ -742,7 +747,7 @@ public static class Drafter
                 if (nested.Count > 0)
                     template.Add(prop, nested);
             }
-            if (template.Count == 0)
+            if (bound.Count == 0)
                 throw new UnsupportedShapeException("no request body property matches a column");
             request.Map("body").Add("template", template);
 
@@ -750,9 +755,7 @@ public static class Drafter
             {
                 if (field == null)
                 {
-                    if (required)
-                        throw new UnsupportedShapeException($"required body property {where} matches no column");
-                    _notes.Add($"{name}: body property {where} matches no column; it is not sent.");
+                    BodyContext(name, into, prop, required, where);
                     return;
                 }
                 var leaf = into.Map(prop).Add("col", field.Column);
@@ -780,7 +783,27 @@ public static class Drafter
             }
             AddOptionSets(root, bound);
             Errors(root, op, name);
+            Retry(root, name, binds, headers);
             return root.ToString();
+        }
+
+        private static readonly Choice[] BodyChoices =
+        {
+            new("userObjectId", "The calling user's Entra object ID"),
+            new("correlationId", "The call's BrokerForge correlation ID"),
+        };
+
+        /// <summary>A body property no column fills: the admin says what BrokerForge sends in it, or, when it is optional, nothing.</summary>
+        private void BodyContext(string name, YamlMap into, string prop, bool required, string where)
+        {
+            var path = where[2..];
+            var q = Ask(answers.Choice($"op.{name}.body.{path}",
+                $"Body property `{path}` is not a column. What should BrokerForge send in it?",
+                required ? BodyChoices : BodyChoices.Append(new Choice("none", "Nothing: leave it out")).ToList(), required));
+            if (q.Answer is null or "none")
+                _notes.Add($"{name}: body property {where} matches no column; it is not sent.");
+            else
+                into.Map(prop).Add("context", q.Answer);
         }
 
         private string MethodOf(string path, OpenApiOperation op) =>
@@ -792,7 +815,9 @@ public static class Drafter
             var request = root.Map("request").Add("method", "DELETE").Add("path", path);
             CheckPathParams(path, parameters, request, r.IdParam, name);
             FixedQuery(parameters, request, name);
+            Headers(parameters, request, name);
             Errors(root, op, name);
+            Retry(root, name, "Delete", null);
             return root.ToString();
         }
 
@@ -830,6 +855,8 @@ public static class Drafter
                         Input(p.Name, p.Schema, p.Required, $"query parameter {p.Name}");
                         query.Map(p.Name).Add("param", Heuristics.ParamName(p.Name, "query parameter"));
                         break;
+                    case ParameterLocation.Header:
+                        break;
                     default:
                         throw new UnsupportedShapeException($"{p.In} parameter {p.Name} has no binding in a Custom API draft");
                 }
@@ -838,6 +865,7 @@ public static class Drafter
                 request.Add("pathParams", pathParams);
             if (query.Count > 0)
                 request.Add("query", query);
+            Headers(parameters, request, name);
             if (RequestSchema(op) is { } body)
             {
                 if (body.Type != "object")
@@ -879,6 +907,7 @@ public static class Drafter
                 throw new UnsupportedShapeException("the response has no flat properties to return as outputs");
             root.Map("response").Add("outputs", outputs);
             Errors(root, op, name);
+            Retry(root, name, "CustomApi", null);
 
             var declaredApi = new YamlMap().Add("displayName", Heuristics.Humanise(name));
             _lastApi = (api, declaredApi);
@@ -897,6 +926,75 @@ public static class Drafter
             var q = Ask(answers.Text($"op.{name}.value.{param}", $"{where} `{param}` is not a column or the record's key. What value should BrokerForge send? It is the same in every environment.",
                 true, null, v => v.Length <= 200 ? null : "must be at most 200 characters"));
             return new YamlMap().Add("static", q.Answer ?? "");
+        }
+
+        private static readonly Choice[] HeaderChoices =
+        {
+            new("correlationId", "The call's BrokerForge correlation ID"),
+            new("uuid", "A new random ID on every call, such as an idempotency key"),
+            new("userObjectId", "The calling user's Entra object ID"),
+            new("value", "A fixed value you give"),
+        };
+
+        /// <summary>
+        /// Header parameters: the admin says where each value comes from. An optional header with no answer is not sent.
+        /// The authentication's own header and Authorization are left to the authentication. Returns the answer per header.
+        /// </summary>
+        private Dictionary<string, string> Headers(List<OpenApiParameter> parameters, YamlMap request, string name)
+        {
+            var map = new YamlMap();
+            var given = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in parameters.Where(p => p.In == ParameterLocation.Header))
+            {
+                if (Reserved(p.Name) || p.Name.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+                {
+                    _notes.Add($"{name}: header {p.Name} is sent by the authentication; it is not declared.");
+                    continue;
+                }
+                var q = Ask(answers.Choice($"op.{name}.header.{p.Name}", $"Header `{p.Name}`: what should BrokerForge send in it?",
+                    p.Required ? HeaderChoices : HeaderChoices.Append(new Choice("none", "Nothing: leave it out")).ToList(), p.Required));
+                switch (q.Answer)
+                {
+                    case null or "none":
+                        if (!p.Required)
+                            _notes.Add($"{name}: optional header {p.Name} is not sent.");
+                        continue;
+                    case "uuid":
+                        map.Map(p.Name).Add("computed", "uuid");
+                        break;
+                    case "value":
+                        map.Add(p.Name, FixedValue(name, p.Name, "Header"));
+                        break;
+                    default:
+                        map.Map(p.Name).Add("context", q.Answer);
+                        break;
+                }
+                given[p.Name] = q.Answer;
+            }
+            if (map.Count > 0)
+                request.Add("headers", map);
+            return given;
+        }
+
+        private static readonly Choice[] RetryChoices =
+        {
+            new("no", "No: a failure is reported straight away"),
+            new("yes", "Yes: retry up to 3 times on 429, 503 or a network failure (only if repeating the call is safe)"),
+        };
+
+        /// <summary>
+        /// Whether a failed call is retried: optional, no when unanswered. A create can only retry with an
+        /// Idempotency-Key header answered `uuid`, as the descriptor validator requires.
+        /// </summary>
+        private void Retry(YamlMap root, string name, string binds, IReadOnlyDictionary<string, string>? headers)
+        {
+            var q = Ask(answers.Choice($"op.{name}.retry", "Should BrokerForge retry this call when the source is busy or unreachable?", RetryChoices,
+                required: false, proposed: "no",
+                check: a => a == "yes" && binds == "Create" && !(headers?.TryGetValue("Idempotency-Key", out var h) == true && h == "uuid")
+                    ? "a create can only be retried with an Idempotency-Key header answered `uuid`, so the source can tell a repeat from a new record"
+                    : null));
+            if (q.Answer == "yes")
+                root.Map("retry").Add("idempotent", true).Add("attempts", 3).Add("on", new[] { "429", "503", "network" });
         }
 
         /// <summary>Path parameters: the record id where there is one, otherwise a fixed value the admin gives.</summary>

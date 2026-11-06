@@ -54,27 +54,19 @@ public class ReproduceTests
     }
 
     [Fact]
-    public void Reproduce_Orders_ListAndGetExactly_RestApartFromWhatTheDefinitionOmits()
+    public void Reproduce_Orders_AllFiveMatchTheCommittedDescriptors()
     {
         var r = Draft(DrafterTests.Fixture("orders-openapi.yaml"), "orders-answers.json");
-        string Committed(string op) => File.ReadAllText(Path.Combine(Repo, "descriptors", "OrdersAPI", op + ".yaml"));
-        foreach (var op in new[] { "listOrders", "getOrder" })
-            Assert.Equal(Canonical(Committed(op)), Canonical(r.Descriptors[op]));
-        // deleteOrder differs only by its X-Correlation header, which the definition does not mention.
-        Assert.Equal(Canonical(Committed("deleteOrder").Replace("  headers:\n    X-Correlation: { context: correlationId }\n", "")), Canonical(r.Descriptors["deleteOrder"]));
-
-        // The fixture has no headers, placedBy or retry, and createOrder's account is a fixed value, not instance config.
-        foreach (var op in new[] { "createOrder", "updateOrder" })
-        {
-            var mine = JsonDocument.Parse(Canonical(r.Descriptors[op])).RootElement;
-            var theirs = JsonDocument.Parse(Canonical(Committed(op))).RootElement;
-            Assert.Equal(theirs.GetProperty("optionsets").GetRawText(), mine.GetProperty("optionsets").GetRawText());
-            var template = theirs.GetProperty("request").GetProperty("body").GetProperty("template");
-            foreach (var p in template.EnumerateObject().Where(p => p.Name != "placedBy"))
-                Assert.Equal(p.Value.GetRawText(), mine.GetProperty("request").GetProperty("body").GetProperty("template").GetProperty(p.Name).GetRawText());
-            foreach (var e in mine.GetProperty("errors").EnumerateObject())
-                Assert.Equal(theirs.GetProperty("errors").GetProperty(e.Name).GetRawText(), e.Value.GetRawText());
-        }
+        var committed = Directory.GetFiles(Path.Combine(Repo, "descriptors", "OrdersAPI"), "*.yaml").ToDictionary(f => Path.GetFileNameWithoutExtension(f), File.ReadAllText);
+        Assert.Equal(committed.Keys.Order(), r.Descriptors.Keys.Order());
+        // Two differences. createOrder's account is a fixed value the admin gives (D-35), not instance config. And its
+        // `409: Conflict` isn't drafted: the definition documents no 409 and the mock never answers one, so a 409 would be Fail.
+        foreach (var (name, yaml) in committed)
+            Assert.Equal(Canonical(yaml.Replace("{ accountId: { instance: accountId } }", "{ accountId: { static: acc-1 } }").Replace("  409: Conflict\n", "")),
+                Canonical(r.Descriptors[name]));
+        // A memo with no length is created at 100000, the length the committed schema states.
+        Assert.Equal(Canonical(File.ReadAllText(Path.Combine(Repo, "schemas", "OrdersAPI.yaml")).Replace("type: memo, maxLength: 100000,", "type: memo,")),
+            Canonical(r.SchemaYaml));
     }
 
     [Fact]
