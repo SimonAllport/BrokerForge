@@ -374,6 +374,10 @@ A source is set up in the BrokerForge app in one environment, and moves to test 
 | Descriptor language grows into a programming language | Medium | Medium | Fixed binding set; code hooks for the rest |
 | Provider errors reach Web API callers as HTTP 400 / `0x80040265` whatever code the plug-in raises (phase 1 findings); callers cannot branch on not-found or conflict by status code | High | Low | The BrokerForge kind and correlation ID lead every message; verify `FaultException<OrganizationServiceFault>` in phase 2 |
 
+| A Generate that fails at publishing (Dataverse answers 429 while another customisation runs) leaves the form and view written but unpublished, and the next run sees them as done and skips the publish (portal-5 final review I5) | Low | Medium: the table shows the old form or view | Publish the table by hand (`PublishXml`) and run Generate again. Not yet fixed: which layer the Web API returns for an unpublished form or view needs a live check first |
+| Dataverse leaves `prvCreateSdkMessageProcessingStep` out of the host application user's effective privileges even when its role holds it (portal-5) | Certain | Generate as the host can't create actions | Actions are the administrator's step (D-38) |
+| A table deleted and remade under the same name many times in one environment can leave its record form failing (502 on `GetClientMetadata`) while the identical form works elsewhere (portal-5, dev) | Low | Dev only: the form can't open | Use a new table name, or another environment |
+
 ## 16. Decisions and open questions
 
 ### Decisions taken
