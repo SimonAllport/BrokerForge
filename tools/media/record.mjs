@@ -54,6 +54,15 @@ async function throughSignIn(page, host) {
   const until = Date.now() + 90_000;
   while (new URL(page.url()).host !== host) {
     if (Date.now() > until) throw new Error(`Sign-in did not return to ${host}; run node signin.mjs again for this profile.`);
+    // The connect app's delegated Dataverse permission (plan 4, approved by Simon) is consented once, for this user only:
+    // "Consent on behalf of your organization" is left unticked.
+    if (await page.getByText('Permissions requested').isVisible().catch(() => false)) {
+      const org = page.getByRole('checkbox');
+      if (await org.isChecked().catch(() => false)) await org.uncheck();
+      await page.getByRole('button', { name: 'Accept' }).click();
+      await page.waitForTimeout(2000);
+      continue;
+    }
     for (const sel of ['#tilesHolder [role=listitem]', 'div[data-test-id] >> nth=0', '#idSIButton9']) {
       const el = page.locator(sel).first();
       if (await el.isVisible().catch(() => false)) { await el.click().catch(() => undefined); break; }
