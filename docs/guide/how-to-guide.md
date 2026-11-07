@@ -170,5 +170,6 @@ The example is the Tickets table: each person sees the tickets their own Tickets
 | `BrokerUnavailableException` | Dataverse couldn't reach BrokerForge | Try again; in dev the first call after a pause takes about 25 seconds |
 | `ConfigurationError`: the source "needs its base URL" or "needs its key" | The connection arrived in this environment without its URL or key | An administrator sets the variable, or the key on the connections page |
 | `MappingException` | The service's answer didn't match its definition | An administrator checks the definition and reads it again |
+| The connect page says "a configuration problem" and gives a reference | The connection's sign-in settings are incomplete, for example its `clientSecret` key isn't set | Give the reference to an administrator; the host's log line with that reference names the problem |
 
 Every message ends with a correlation ID, which finds the request in the host logs.
