@@ -263,7 +263,7 @@ cache:
   ttl: 60s                 # off when absent
   perUser: true            # forced true when the service instance uses a per-user mode
 retry:
-  idempotent: true         # required true for automatic retry; Create needs an Idempotency-Key binding
+  idempotent: true         # required true for automatic retry; Create and any POST need an Idempotency-Key binding
   attempts: 3
   on: [429, 503, network]
 ```
@@ -280,7 +280,7 @@ The validator rejects a descriptor when any of these hold:
 6. RetrieveMultiple without `paging`, Retrieve/RetrieveMultiple without `response.rows`, or Retrieve/RetrieveMultiple/Create without `response.key`.
 7. With the table schema (section 14): a table column neither mapped nor listed in `response.unmapped` on Retrieve and RetrieveMultiple; a mapped, bound, filtered or sorted column that is not in the schema; an option set map that does not cover exactly the schema column's options; a Custom API `param` or output not declared in the schema.
 8. `errors.default` other than `Fail`.
-9. `retry` without `idempotent: true`, or Create retry without an idempotency key binding.
+9. `retry` without `idempotent: true`, or retry on Create or any POST without an `Idempotency-Key: { computed: uuid }` header.
 10. A `hook` without `reason`.
 11. `steps` over 3, or a poll timeout leaving under 20 seconds of the 90-second host limit.
 12. `secret` used in path or body.

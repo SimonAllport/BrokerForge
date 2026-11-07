@@ -105,7 +105,7 @@ Root:
 | `op.<op>.error.<status>.message` | a string path of the error body, or `none`; with no documented body, an optional JSONPath such as `$.error.detail` | a status that maps to `Validation` |
 | `op.<op>.header.<name>` | `correlationId`, `uuid` (a new ID on every call), `userObjectId`, `value` (then `op.<op>.value.<name>` is asked), or `none` when the header isn't required | a header parameter, except the authentication's own header and `Authorization`; optional when the header is, and an unanswered optional header is not sent |
 | `op.<op>.body.<path>` | `userObjectId`, `correlationId`, or `none` when the property isn't required (`<path>` without `$.`, such as `placedBy`) | a create or update body property that matches no column; optional when the property is |
-| `op.<op>.retry` | `no` or `yes` (3 attempts on 429, 503 or a network failure) | optional, `no` when absent; on a create, `yes` needs an `Idempotency-Key` header answered `uuid` |
+| `op.<op>.retry` | `no` or `yes` (3 attempts on 429, 503 or a network failure) | optional, `no` when absent; on a create or an action, `yes` needs an `Idempotency-Key` header answered `uuid` |
 
 ## Per-environment values
 

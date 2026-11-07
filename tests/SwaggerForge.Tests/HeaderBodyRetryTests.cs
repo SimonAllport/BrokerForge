@@ -160,6 +160,32 @@ public class HeaderBodyRetryTests
         Assert.Equal("""{"attempts":"3","idempotent":"true","on":["429","503","network"]}""", At(yaml, "retry"));
     }
 
+    // Plan 5 deferred minor: a drafted action is a POST, so retry needs the same key as a create.
+    [Fact]
+    public void Review_RetryYesOnActionWithoutIdempotencyKey_InvalidAnswerNamingKey()
+    {
+        var action = Definition().Replace("\ncomponents:", """
+
+              /widgets/{id}/rename:
+                post:
+                  operationId: renameWidget
+                  parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+                  responses:
+                    "200":
+                      description: ok
+                      content:
+                        application/json:
+                          schema: { $ref: "#/components/schemas/Widget" }
+            components:
+            """.TrimEnd('\n'));
+        var r = Review(action, ("op.renameWidget.retry", "yes"));
+        var endpoint = r.Endpoints.Single(e => e.Operation == "renameWidget");
+        Assert.StartsWith("Action", endpoint.Becomes);
+        var q = endpoint.Questions.Single(q => q.Key == "op.renameWidget.retry");
+        Assert.NotNull(q.Error);
+        Assert.Contains("Idempotency-Key", q.Error);
+    }
+
     [Fact]
     public void Review_RetryOnRetrieve_NeedsNoHeader() =>
         Assert.Contains("retry:", DrafterTests.Ready(Review(Definition(), ("op.getWidget.retry", "yes"))).Descriptors["getWidget"]);

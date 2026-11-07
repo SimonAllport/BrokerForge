@@ -872,7 +872,7 @@ public static class Drafter
                 request.Add("pathParams", pathParams);
             if (query.Count > 0)
                 request.Add("query", query);
-            Headers(parameters, request, name);
+            var headers = Headers(parameters, request, name);
             if (RequestSchema(op) is { } body)
             {
                 if (body.Type != "object")
@@ -914,7 +914,7 @@ public static class Drafter
                 throw new UnsupportedShapeException("the response has no flat properties to return as outputs");
             root.Map("response").Add("outputs", outputs);
             Errors(root, op, name);
-            Retry(root, name, "CustomApi", null);
+            Retry(root, name, "CustomApi", headers);
 
             var declaredApi = new YamlMap().Add("displayName", Heuristics.Humanise(name));
             _lastApi = (api, declaredApi);
@@ -990,15 +990,15 @@ public static class Drafter
         };
 
         /// <summary>
-        /// Whether a failed call is retried: optional, no when unanswered. A create can only retry with an
-        /// Idempotency-Key header answered `uuid`, as the descriptor validator requires.
+        /// Whether a failed call is retried: optional, no when unanswered. A create or an action (always a POST) can only
+        /// retry with an Idempotency-Key header answered `uuid`, as the descriptor validator requires.
         /// </summary>
         private void Retry(YamlMap root, string name, string binds, IReadOnlyDictionary<string, string>? headers)
         {
             var q = Ask(answers.Choice($"op.{name}.retry", "Should BrokerForge retry this call when the source is busy or unreachable?", RetryChoices,
                 required: false, proposed: "no",
-                check: a => a == "yes" && binds == "Create" && !(headers?.TryGetValue("Idempotency-Key", out var h) == true && h == "uuid")
-                    ? "a create can only be retried with an Idempotency-Key header answered `uuid`, so the source can tell a repeat from a new record"
+                check: a => a == "yes" && binds is "Create" or "CustomApi" && !(headers?.TryGetValue("Idempotency-Key", out var h) == true && h == "uuid")
+                    ? $"{(binds == "Create" ? "a create" : "an action")} can only be retried with an Idempotency-Key header answered `uuid`, so the source can tell a repeat from a new call"
                     : null));
             if (q.Answer == "yes")
                 root.Map("retry").Add("idempotent", true).Add("attempts", 3).Add("on", new[] { "429", "503", "network" });
