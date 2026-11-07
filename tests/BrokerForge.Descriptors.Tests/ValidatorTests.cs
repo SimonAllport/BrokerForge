@@ -179,6 +179,24 @@ public class ValidatorTests
         AssertRule(9, Validate(yaml), "retry");
     }
 
+    private static string AdjustStockYaml() => File.ReadAllText(Path.Combine(RepoRoot, "descriptors", "InventoryAPI", "adjustStock.yaml"));
+
+    private const string Retry = "retry:\n  idempotent: true\n  attempts: 3\n  on: [503]\n";
+
+    // Plan 5 deferred minor: a POST action is no safer to repeat than a create.
+    [Fact]
+    public void Rule9_PostActionRetryWithoutIdempotencyKey_Rejected()
+    {
+        AssertRule(9, Validate(AdjustStockYaml() + Retry), "retry");
+    }
+
+    [Fact]
+    public void Rule9_PostActionRetryWithIdempotencyKey_Accepted()
+    {
+        var yaml = Mutate(AdjustStockYaml(), "  pathParams:\n", "  headers:\n    Idempotency-Key: { computed: uuid }\n  pathParams:\n") + Retry;
+        Assert.DoesNotContain(Validate(yaml), e => e.Rule == 9);
+    }
+
     [Fact]
     public void Rule12_SecretInPath_Rejected()
     {

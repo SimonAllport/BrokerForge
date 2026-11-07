@@ -40,6 +40,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
     private readonly Action<IServiceCollection>? _services;
     private readonly string _descriptors;
     private readonly string _schemas;
+    private readonly bool _files;
 
     public ConcurrentQueue<string> Logs { get; } = new();
 
@@ -47,8 +48,11 @@ public sealed class HostFactory : WebApplicationFactory<Program>
     /// the timeout test passes a short one under <see cref="MockApiFixture.SlowMs"/>.</param>
     /// <param name="extra">Settings added after the defaults; a null value removes a default.</param>
     /// <param name="services">Service replacements applied after the host's own registrations.</param>
-    public HostFactory(string mockBaseUrl, int timeoutSeconds = 30, IReadOnlyDictionary<string, string?>? extra = null, Action<IServiceCollection>? services = null)
+    /// <param name="files">False for a host as deployed since plan 5: no file instances, object maps or descriptor and schema paths.</param>
+    public HostFactory(string mockBaseUrl, int timeoutSeconds = 30, IReadOnlyDictionary<string, string?>? extra = null, Action<IServiceCollection>? services = null,
+        bool files = true)
     {
+        _files = files;
         _services = services;
         _mockBaseUrl = mockBaseUrl;
         _timeoutSeconds = timeoutSeconds;
@@ -87,9 +91,12 @@ public sealed class HostFactory : WebApplicationFactory<Program>
             ["Host:TimeoutSeconds"] = _timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Secrets:AllowEnvironment"] = "true",
             ["Host:PageTokenKeyRef"] = "env:BF_TEST_PAGE_TOKEN_KEY",
-            ["Config:DescriptorsPath"] = _descriptors,
-            ["Config:SchemasPath"] = _schemas,
         };
+        if (_files)
+        {
+            settings["Config:DescriptorsPath"] = _descriptors;
+            settings["Config:SchemasPath"] = _schemas;
+        }
         void Instance(string name, params (string Key, string Value)[] extra)
         {
             settings[$"Instances:{name}:BrokerType"] = "rest";
@@ -109,6 +116,8 @@ public sealed class HostFactory : WebApplicationFactory<Program>
             foreach (var (m, o) in ops)
                 settings[$"ObjectMaps:{table}:Operations:{m}"] = o;
         }
+        if (!_files)
+            goto Edits;
         Instance("OrdersAPI", ("Config:accountId", "acc-1"));
         Instance("EchoAPI", ("Config:accountId", "acc-9"), ("Config:region", "eu"), ("Secrets:partnerKey", "env:BF_TEST_PARTNER_KEY"));
         Map("ext_order", "OrdersAPI", ("RetrieveMultiple", "listOrders"), ("Retrieve", "getOrder"), ("Create", "createOrder"), ("Update", "updateOrder"), ("Delete", "deleteOrder"));
@@ -119,6 +128,7 @@ public sealed class HostFactory : WebApplicationFactory<Program>
         Map("ext_echoq", "EchoAPI", ("Retrieve", "echoQuerySecret"));
         Map("ext_echofail", "EchoAPI", ("Retrieve", "echoFail"));
 
+    Edits:
         foreach (var (k, v) in _extra)
             if (v == null) settings.Remove(k); else settings[k] = v;
         builder.ConfigureAppConfiguration(c => c.AddInMemoryCollection(settings));

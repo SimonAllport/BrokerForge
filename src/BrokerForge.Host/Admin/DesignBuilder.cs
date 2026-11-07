@@ -64,12 +64,15 @@ public static class DesignBuilder
     /// <summary>
     /// Static mode uses one instance secret, <c>key</c> (API key or basic password); OAuth with the source's own client
     /// uses <c>clientSecret</c>; the other modes use none. Names only: the values are set on the host's secret page.
+    /// Impersonate is the Entra flow through the connect app, so it always has <c>auth.oauth</c> with the connect app and
+    /// the scopes in <c>bf_oauthscopes</c>, whatever the row's own URLs, client ID or connect-app flag say.
     /// </summary>
     public static DesignAuth Auth(ConnectionRow row)
     {
-        var oauth = row.AuthMode == "OAuth"
-            ? new DesignOAuth(row.UsesConnectApp ? null : row.AuthorizeUrl, row.UsesConnectApp ? null : row.TokenUrl,
-                (row.OAuthScopes ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries), row.UsesConnectApp ? null : row.ClientId, row.UsesConnectApp)
+        var connectApp = row.AuthMode == "Impersonate" || row.UsesConnectApp;
+        var oauth = row.AuthMode is "OAuth" or "Impersonate"
+            ? new DesignOAuth(connectApp ? null : row.AuthorizeUrl, connectApp ? null : row.TokenUrl,
+                (row.OAuthScopes ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries), connectApp ? null : row.ClientId, connectApp)
             : null;
         IReadOnlyList<string> secrets = row.AuthMode switch
         {

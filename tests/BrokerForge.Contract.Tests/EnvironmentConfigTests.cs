@@ -299,14 +299,16 @@ public partial class EnvironmentConfigTests(MockApiFixture mock) : IAsyncLifetim
     }
 
     [Fact]
-    public async Task ConnectCallbackWithMissingClientSecretShowsMessage()
+    public async Task ConnectCallbackWithMissingClientSecretLogsTheKeyUnderTheReferenceShown()
     {
         _designs.Add(EnvA, OAuthStoreDesign(), At(mock.BaseUrl));
-        var (status, body) = await ConnectCallback(Host());
+        var host = Host();
+        var (status, body) = await ConnectCallback(host);
         Assert.Equal(HttpStatusCode.InternalServerError, status);
         Assert.Contains("TicketsAPI", body);
-        Assert.Contains("clientSecret", body);
-        Assert.Contains("not set", body);
+        var reference = System.Text.RegularExpressions.Regex.Match(body, "reference ([0-9A-Za-z:]+)").Groups[1].Value;
+        Assert.NotEmpty(reference);
+        Assert.Contains(host.Logs, l => l.Contains(reference) && l.Contains("needs its key `clientSecret`"));
         Assert.Equal(0, _tokenCalls.Value);
         Assert.DoesNotContain(Tickets.ClientSecret, body);
     }

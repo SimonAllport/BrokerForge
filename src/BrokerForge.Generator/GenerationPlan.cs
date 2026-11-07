@@ -9,9 +9,10 @@ namespace BrokerForge.Generator;
 /// <param name="ConfirmedFingerprint">The fingerprint of the change list the admin confirmed. Needed for any change other than an add.</param>
 /// <param name="Design">The connection design to publish with its parts, last (DesignPublisher); null to leave the design alone.</param>
 /// <summary>
-/// <see cref="ApplyRole"/> false leaves the role to an administrator: Dataverse lets a caller add a privilege to a role
-/// only when it holds that privilege itself, and the host doesn't hold a generated table's (portal-3 findings section 3).
-/// The role change is then reported as pending, never skipped silently.
+/// <see cref="ApplyRole"/> false leaves the role, and creating, recreating or removing actions, to an administrator. Dataverse
+/// lets a caller add a privilege to a role only when it holds that privilege itself, and the host doesn't hold a generated
+/// table's (portal-3 findings section 3); and it leaves prvCreateSdkMessageProcessingStep, which a Custom API needs, out of
+/// the host's effective privileges whatever its role holds (portal-5 findings). Both are reported as pending, never skipped silently.
 /// </summary>
 public sealed record GenerateOptions(string Instance, string Solution, string Publisher, string HostUrl, string Scope, bool DryRun,
     IReadOnlySet<string>? Messages = null, string? ConfirmedFingerprint = null, DesignPublish? Design = null, bool ApplyRole = true);

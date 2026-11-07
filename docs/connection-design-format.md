@@ -84,6 +84,7 @@ Root:
 | `table.collection` | a collection path | more than one collection has an item path |
 | `table.name` | logical name, `<prefix>_` then a lower-case letter, then letters, digits or `_`; at most 50 characters | optional; proposed from the collection |
 | `table.displayName`, `table.collectionName` | 1–100 characters | optional; proposed |
+| `table.externalName` | a lower-case letter, then lower-case letters, digits or `_`; at most 50 characters | optional; proposed from the table name without its prefix. An existing table keeps the external name it was created with, so give that one |
 | `table.key` | a top-level scalar path | the item has no scalar `id` |
 | `table.list`, `table.open`, `table.new`, `table.save`, `table.delete` | the operation name to use | more than one endpoint could be that message (PUT and PATCH both Save); the others are left out |
 | `table.primaryName` | a string column's path | no string property is called `name` |
@@ -102,6 +103,9 @@ Root:
 | `op.<op>.value.<param>` | 1–200 characters, sent as a static value | a path parameter that isn't the record key; on a list, a required query parameter that matches no column; on a retrieve, write or delete, every required query parameter |
 | `op.<op>.error.<status>` | `NotFound`, `Conflict`, `Forbidden`, `Validation` or `Fail` | a documented status other than 2xx, 403, 404, 409 and 422 |
 | `op.<op>.error.<status>.message` | a string path of the error body, or `none`; with no documented body, an optional JSONPath such as `$.error.detail` | a status that maps to `Validation` |
+| `op.<op>.header.<name>` | `correlationId`, `uuid` (a new ID on every call), `userObjectId`, `value` (then `op.<op>.value.<name>` is asked), or `none` when the header isn't required | a header parameter, except the authentication's own header and `Authorization`; optional when the header is, and an unanswered optional header is not sent |
+| `op.<op>.body.<path>` | `userObjectId`, `correlationId`, or `none` when the property isn't required (`<path>` without `$.`, such as `placedBy`) | a create or update body property that matches no column; optional when the property is |
+| `op.<op>.retry` | `no` or `yes` (3 attempts on 429, 503 or a network failure) | optional, `no` when absent; on a create or an action, `yes` needs an `Idempotency-Key` header answered `uuid` |
 
 ## Per-environment values
 

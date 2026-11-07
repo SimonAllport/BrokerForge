@@ -93,6 +93,24 @@ public partial class EnvironmentConfigTests
     }
 
     [Fact]
+    public async Task ConnectCallbackWithTokenUrlRefusedGivesAReferenceNotTheKey()
+    {
+        // Found live in plan 5: the token URL's host resolved to a private address, and the page said the key was not set.
+        // The page is for end users, so it names no host (deferred minor): it gives a reference the log line carries.
+        var design = OAuthStoreDesign();
+        var oauth = design.Auth.OAuth! with { TokenUrl = $"https://localhost:{MockPort}/tk/oauth/token" };
+        _designs.Add(EnvA, design with { Auth = design.Auth with { OAuth = oauth } }, At(mock.BaseUrl));
+        await _secrets.SetAsync(EnvA, "TicketsAPI", "clientSecret", Tickets.ClientSecret, default);
+        var (status, body) = await ConnectCallback(Host());
+        Assert.Equal(System.Net.HttpStatusCode.InternalServerError, status);
+        Assert.Contains("configuration problem", body);
+        Assert.Matches("reference [0-9A-Za-z:]+", body);
+        Assert.DoesNotContain("localhost", body);
+        Assert.DoesNotContain("is not set", body);
+        Assert.DoesNotContain(Tickets.ClientSecret, body);
+    }
+
+    [Fact]
     public async Task OAuthDesignLoopbackRefusedWithoutTestFlag()
     {
         _designs.Add(EnvA, TicketsDesign(), At(mock.BaseUrl));

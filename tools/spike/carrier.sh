@@ -79,7 +79,7 @@ descriptors = {os.path.basename(p): read(os.path.relpath(p, REPO))
 design = {
     "formatVersion": 1,
     "instance": "OrdersAPI",
-    "openapi": read("tests/SwaggerForge.Tests/fixtures/orders-openapi.yaml"),
+    "openapi": read("tools/mock-api/orders-openapi.yaml"),
     "answers": {"prefix": "ext", "table": "ext_order", "auth": {"mode": "Static", "header": "x-api-key"},
                 "operations": {k[:-5]: {"include": True} for k in descriptors}},
     "descriptors": descriptors,

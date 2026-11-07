@@ -42,9 +42,12 @@ public static class FileConfigInput
         }
     }
 
+    /// <summary>No path means no file descriptors, as deployed since every source is a connection design (plan 5).</summary>
     private static void ReadDescriptors(string? root, ConfigInput input)
     {
-        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+        if (string.IsNullOrWhiteSpace(root))
+            return;
+        if (!Directory.Exists(root))
         {
             input.DescriptorProblems.Add($"Config:DescriptorsPath `{root}` is not a directory");
             return;

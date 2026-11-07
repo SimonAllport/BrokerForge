@@ -6,5 +6,6 @@
   <ItemGroup>
     <None Include="fixtures\*.yaml;fixtures\*.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\tools\mock-api\inventory-openapi.yaml" Link="fixtures\inventory-openapi.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\tools\mock-api\orders-openapi.yaml" Link="fixtures\orders-openapi.yaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

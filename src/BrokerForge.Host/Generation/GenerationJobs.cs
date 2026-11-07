@@ -103,6 +103,52 @@ public sealed class GenerationJobs(IOptions<TrustOptions> trust, IGenerationClie
         return await Generator.Generator.PreviewAsync(client, schema, options, ct);
     }
 
+    /// <summary>
+    /// The administrator's step (D-36, D-38): runs, as <paramref name="administrator"/>, what Generate as the host left
+    /// pending (the role and the actions), leaving the design's publication alone. It takes the same lease as Generate, so
+    /// the two never run at once; refuses when the change list holds anything Generate itself applies (that is Generate's
+    /// to do first); and reports its result on the connection row like a job. <paramref name="r"/>'s
+    /// <see cref="GenerationRequest.ConfirmedFingerprint"/> is the change list the administrator saw; a different list is refused.
+    /// </summary>
+    /// <exception cref="GenerationBusyException">A Generate for the same source is running.</exception>
+    public async Task<GenerationResult> RunAsAdministratorAsync(DataverseClient administrator, GenerationRequest r, CancellationToken ct)
+    {
+        var key = (r.EnvironmentId.ToLowerInvariant(), r.Design.Instance.ToLowerInvariant());
+        lock (_active)
+            if (_active.ContainsKey(key))
+                throw new GenerationBusyException($"A Generate of {r.Design.Instance} is running; try again when it finishes.");
+        var token = await _lease.TryAcquireAsync(r.EnvironmentId, r.Design.Instance, _limit + LeaseMargin, CancellationToken.None)
+            ?? throw new GenerationBusyException($"A Generate of {r.Design.Instance} is running; try again when it finishes.");
+        var job = new GenerationJob(Guid.NewGuid(), r.EnvironmentId, r.Design.Instance, JobState.Running, Array.Empty<string>(), null, null, DateTimeOffset.UtcNow, null,
+            r.CorrelationId, ConnectionId: r.ConnectionId);
+        try
+        {
+            var (schema, options) = await OptionsAsync(administrator, r with { ApplyRole = true }, ct);
+            options = options with { Design = null };
+            var hostChanges = AdministratorsOnly((await Generator.Generator.PreviewAsync(administrator, schema, options, ct)).Changes);
+            if (hostChanges.Count > 0)
+                throw new GenerationRefusedException(hostChanges.Select(c => $"{c} is Generate's to apply; generate the connection first").ToList());
+            var result = await Generator.Generator.RunAsync(administrator, schema, options, ct);
+            job = job with { State = JobState.Succeeded, Writes = result.Writes, Pending = result.Pending, DesignVersion = r.Design.Version, Finished = DateTimeOffset.UtcNow };
+            return result;
+        }
+        catch (Exception ex) when (ex is GenerationFailedException)
+        {
+            job = Failed(job, ((GenerationFailedException)ex).WritesDone, ex.Message);
+            throw;
+        }
+        finally
+        {
+            if (job.State != JobState.Running)
+                await Report(job);
+            await _lease.ReleaseAsync(r.EnvironmentId, r.Design.Instance, token, CancellationToken.None);
+        }
+    }
+
+    /// <summary>The changes in <paramref name="changes"/> that are not the administrator's (actions): what Generate as the host applies.</summary>
+    public static IReadOnlyList<string> AdministratorsOnly(ChangeList changes) =>
+        changes.Changes.Where(c => c.Kind is not (ChangeKind.AddApi or ChangeKind.RecreateApi or ChangeKind.RemoveApi)).Select(c => c.Text).ToList();
+
     private async Task RunAsync(GenerationJob job, GenerationRequest r, string org, (string, string) key, string leaseToken)
     {
         DataverseClient? client = null;

@@ -4,15 +4,16 @@ Makes `docs/guide/BrokerForge How-to Guide.docx` (from `docs/guide/how-to-guide.
 the DataverseToCode videos are made: Playwright drives real pages, captions and a pointer are drawn into the page, and
 ffmpeg joins the recordings.
 
-Part 1 (onboarding a REST API) shows real `bf` output in an editor-and-terminal page (`console.html`); part 2 (connecting
-an account) records the real dev environment and connect page. Host and org names are replaced with contoso
+Part 1 (adding a REST connection) records the BrokerForge app's connection screens, Generate, the host's administrator
+and key pages, and the new table; part 2 (connecting an account) records the real dev environment and connect page.
+Part 1 can run against another environment (`DV_ORG=<org url> ENVID=<environment id>`), and `node record.mjs --join` then
+makes the full video from the two part files. Host and org names are replaced with contoso
 placeholders, the signed-in user's photo is covered by a letter, and Microsoft's sign-in pages, which show the account,
 are hidden behind a plain screen.
 
 ```
 npm install
-node capture.mjs                # real bf draft / validate / generate --dry-run / undeclared filter -> out/capture.json
-node signin.mjs a               # once: sign in (MFA included) in the window that opens
+node signin.mjs a               # once: sign in (MFA included) in the window that opens; b for the second user
 node record.mjs --shots         # screenshots -> docs/guide/images/
 node record.mjs                 # video -> out/brokerforge-how-to.mp4 (+ .srt subtitles, .json chapter times),
                                 # and each part on its own: out/brokerforge-how-to-part1.mp4, -part2.mp4

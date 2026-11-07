@@ -44,7 +44,10 @@
     return sorted;
   }
 
-  function isRunning(row) {
+  // A job this page just started is running until the row shows that job: bf_Generate returns before the job's first
+  // report, so the row can still show the previous job, or none.
+  function isRunning(row, startedJob) {
+    if (startedJob && (!row || String(row.bf_generationjobid || "").toLowerCase() !== String(startedJob).toLowerCase())) return true;
     return !!row && (row.bf_generationstate === "Queued" || row.bf_generationstate === "Running");
   }
 
@@ -59,7 +62,7 @@
       return "Generating" + (started ? " (started " + started.toISOString().slice(11, 16) + " UTC)" : "") + "…";
     }
     if (state === "Succeeded")
-      return "Generated" + (r && r.designVersion ? " (design v" + r.designVersion + ")" : "") + (needsRole(row) ? ". The role still needs an administrator." : ".");
+      return "Generated" + (r && r.designVersion ? " (design v" + r.designVersion + ")" : "") + (needsRole(row) ? ". Left for an administrator: " + r.pending.join("; ") + "." : ".");
     if (r && r.needsConfirmation)
       return "Nothing was changed: the changes changed since you reviewed them. Read again and confirm the new list.";
     return "Generate failed: " + ((r && r.failure) || "no reason was reported");
@@ -69,6 +72,12 @@
   function needsRole(row) {
     var r = result(row);
     return !!row && row.bf_generationstate === "Succeeded" && !!r && (r.pending || []).length > 0;
+  }
+
+  // An admin Custom API's input as Xrm.WebApi wants it: Xrm sends an Edm.Guid only when given as { guid: id }
+  // (a bare string arrives as `undefined`); every other input here is text.
+  function actionParameter(name, value) {
+    return name === "ConnectionId" ? { typeName: "Edm.Guid", value: { guid: value } } : { typeName: "Edm.String", value: value };
   }
 
   // Screen 3's links.
@@ -81,5 +90,5 @@
   }
 
   return { canGenerate: canGenerate, missingKeys: missingKeys, answersFrom: answersFrom, isRunning: isRunning, statusLine: statusLine,
-    needsRole: needsRole, doneLinks: doneLinks, STALE_MINUTES: STALE_MINUTES };
+    needsRole: needsRole, doneLinks: doneLinks, actionParameter: actionParameter, STALE_MINUTES: STALE_MINUTES };
 });

@@ -38,6 +38,7 @@ public class DrafterTests
             ["op.listOrders.filter.customer"] = "eq",
             ["op.listOrders.sort"] = "none",
             ["op.listOrders.sortStable"] = "no",
+            ["op.updateOrder.error.422.message"] = "none",
             ["op.createOrder.value.accountId"] = "acc-1",
             ["op.createOrder.error.422.message"] = "$.error.detail",
         },
@@ -114,7 +115,7 @@ public class DrafterTests
         Assert.Equal(("ext_totalsgross", "decimal"), byPath["$.totals.gross"]);
         Assert.Equal("json", list.Response.Map["ext_lines"].Type);
         Assert.Equal(new Dictionary<string, int> { ["open"] = 100000000, ["shipped"] = 100000001, ["cancelled"] = 100000002 }, schema.Columns["ext_statecode"].Options);
-        Assert.Equal(20, schema.Columns["ext_reference"].MaxLength);
+        Assert.Equal(100, schema.Columns["ext_reference"].MaxLength);
         Assert.Equal("ext_reference", schema.PrimaryName);
 
         var create = Descriptor(r, "createOrder");

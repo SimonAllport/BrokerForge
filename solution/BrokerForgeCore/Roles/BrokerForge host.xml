@@ -49,6 +49,7 @@
     <RolePrivilege name="prvPublishCustomization" level="Global" />
     <RolePrivilege name="prvReadAsyncOperation" level="Global" />
     <RolePrivilege name="prvReadAttribute" level="Global" />
+    <RolePrivilege name="prvReadAttributeMap" level="Global" />
     <RolePrivilege name="prvReadbf_brokerdatasource" level="Global" />
     <RolePrivilege name="prvReadbf_connection" level="Global" />
     <RolePrivilege name="prvReadBusinessUnit" level="Global" />

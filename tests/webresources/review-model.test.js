@@ -86,3 +86,38 @@ test("doneLinks encodes the table name", () => {
 test("canGenerate false when the change list could not be worked out", () => {
   assert.equal(model.canGenerate({ ...ready(), preview: { error: "SecLib::CheckPrivilege failed" } }), false);
 });
+
+// Found while recording plan 5: Xrm.WebApi sends a bare string for an Edm.Guid parameter as `undefined`.
+test("action parameters: the connection ID goes as Xrm's Guid shape, text as text", () => {
+  const id = "00000000-0000-0000-0000-00000000c001";
+  assert.deepEqual(model.actionParameter("ConnectionId", id), { typeName: "Edm.Guid", value: { guid: id } });
+  assert.deepEqual(model.actionParameter("Fingerprint", "ab-cd"), { typeName: "Edm.String", value: "ab-cd" });
+});
+
+// Plan 5: actions are left to the administrator's step with the role, so the line says what is left.
+test("status line names what an administrator still has to do", () => {
+  const row = { bf_generationstate: "Succeeded", bf_generationresult: JSON.stringify({ designVersion: 1, pending: ["add action Adjust stock (ext_AdjustStock)", "create role X user"] }) };
+  assert.equal(model.statusLine(row, new Date()), "Generated (design v1). Left for an administrator: add action Adjust stock (ext_AdjustStock); create role X user.");
+});
+
+// Found while recording plan 5: right after bf_Generate the row may not show the new job yet, and the page stopped polling.
+test("a job just started counts as running until the row shows it", () => {
+  const job = "11111111-1111-1111-1111-111111111111";
+  assert.equal(model.isRunning({ bf_generationstate: null }, job), true);
+  assert.equal(model.isRunning({ bf_generationstate: "Succeeded", bf_generationjobid: "22222222-2222-2222-2222-222222222222" }, job), true);
+  assert.equal(model.isRunning({ bf_generationstate: "Succeeded", bf_generationjobid: job }, job), false);
+  assert.equal(model.isRunning({ bf_generationstate: "Running", bf_generationjobid: job }, job), true);
+  assert.equal(model.isRunning({ bf_generationstate: "Succeeded" }), false);
+});
+
+// Plan 5 deferred minor: if the row never shows the job the page started, the page stopped waiting only on a report.
+test("a job just started stops counting as running when the row has not shown it for two minutes", () => {
+  const job = "11111111-1111-1111-1111-111111111111";
+  const at = new Date("2026-11-07T10:00:00Z");
+  const row = { bf_generationstate: "Succeeded", bf_generationjobid: "22222222-2222-2222-2222-222222222222" };
+  assert.equal(model.isRunning(row, job, at, new Date("2026-11-07T10:01:59Z")), true);
+  assert.equal(model.isRunning(row, job, at, new Date("2026-11-07T10:02:01Z")), false);
+  assert.equal(model.neverShown(row, job, at, new Date("2026-11-07T10:02:01Z")), true);
+  assert.equal(model.neverShown({ bf_generationstate: "Running", bf_generationjobid: job }, job, at, new Date("2026-11-07T10:30:00Z")), false);
+  assert.equal(model.neverShown(row, undefined, at, new Date("2026-11-07T10:30:00Z")), false);
+});

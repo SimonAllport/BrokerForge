@@ -49,6 +49,42 @@ public class ChangeApplyTests
         Assert.Contains("{C3EFE0C3-0EC6-42be-8349-CBD9079DFD8E}", (string)fake.MainForm("ext_item")["formxml"]!);
     }
 
+    // Found while recording plan 5: a view sorted on a column the list declares no sort for fails loudly in the app
+    // (UnsupportedQueryException), so the generated view never sorts. Rows come in the source's order.
+    [Fact]
+    public async Task Run_NewSource_ViewDoesNotSort()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        Assert.DoesNotContain("<order", (string)fake.DefaultView("ext_item")["fetchxml"]!);
+    }
+
+    [Fact]
+    public async Task Run_GeneratedViewThatSorts_Rewritten()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        var view = fake.DefaultView("ext_item");
+        view["fetchxml"] = ((string)view["fetchxml"]!).Replace("</entity>", "<order attribute=\"ext_name\" descending=\"false\" /></entity>");
+        Assert.Contains((await Preview(fake, Schema())).Parts, p => p.StartsWith("show every column", StringComparison.Ordinal));
+        await Run(fake, Schema());
+        Assert.DoesNotContain("<order", (string)fake.DefaultView("ext_item")["fetchxml"]!);
+    }
+
+    // Found importing into a second environment (plan 5): without its data source record the source's solution is
+    // refused there as a missing dependency (component type 183).
+    [Fact]
+    public async Task Run_NewSource_DataSourceRecordInTheSolution()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        var id = (string)fake.DataSources.Single()["bf_brokerdatasourceid"]!;
+        Assert.Equal(new[] { id }, fake.Components("BrokerForgeInventory", 183));
+        var before = fake.Writes.Count();
+        await Run(fake, Schema());
+        Assert.DoesNotContain(fake.Writes.Skip(before), w => w.Path == "AddSolutionComponent");
+    }
+
     [Theory]
     [InlineData("RetrieveMultiple,Retrieve,Create,Update,Delete", "Create,Delete,Read,Write")]
     [InlineData("RetrieveMultiple", "Read")]
@@ -281,7 +317,7 @@ public class ChangeApplyTests
         var fake = new FakeDataverse();
         var asHost = Options with { ApplyRole = false };
         var preview = await Preview(fake, Schema(), asHost);
-        Assert.Equal(new[] { "create role InventoryAPI user with Read, Create, Write, Delete on ext_item" }, preview.Pending);
+        Assert.Equal(new[] { "add action Adjust stock (ext_AdjustStock)", "create role InventoryAPI user with Read, Create, Write, Delete on ext_item" }, preview.Pending);
         Assert.DoesNotContain(preview.Parts, p => p.Contains("role"));
         var result = await Run(fake, Schema(), asHost);
         Assert.Equal(preview.Pending, result.Pending);
@@ -290,6 +326,34 @@ public class ChangeApplyTests
         await Run(fake, Schema());
         Assert.Empty((await Preview(fake, Schema(), asHost)).Pending);
         Assert.Empty((await Run(fake, Schema(), asHost)).Pending);
+    }
+
+    // Live in plan 5: Dataverse leaves prvCreateSdkMessageProcessingStep out of the host's effective privileges, so the
+    // host cannot create a Custom API; actions are an administrator's step like the role (Simon, 6 November 2026).
+    [Fact]
+    public async Task Run_ActionsLeftToAdmin_PendingNamedNoActionWrites()
+    {
+        var fake = new FakeDataverse();
+        var asHost = Options with { ApplyRole = false };
+        var result = await Run(fake, Schema(), asHost);
+        Assert.Contains("add action Adjust stock (ext_AdjustStock)", result.Pending);
+        Assert.DoesNotContain(fake.Writes, w => w.Path.StartsWith("customapis", StringComparison.Ordinal));
+
+        var admin = await Run(fake, Schema());
+        Assert.Contains(fake.Writes, w => w.Path.StartsWith("customapis", StringComparison.Ordinal));
+        Assert.Empty((await Preview(fake, Schema(), asHost)).Pending);
+    }
+
+    [Fact]
+    public async Task Run_ActionRemovalLeftToAdmin_NoDelete()
+    {
+        var fake = new FakeDataverse();
+        await Run(fake, Schema());
+        var without = Schema(GeneratorTests.InventorySchema[..GeneratorTests.InventorySchema.IndexOf("customApis:", StringComparison.Ordinal)]);
+        var asHost = Options with { ApplyRole = false, ConfirmedFingerprint = (await Preview(fake, without, Options with { ApplyRole = false })).Changes.Fingerprint };
+        var result = await Run(fake, without, asHost);
+        Assert.Contains("remove action Adjust stock (ext_AdjustStock)", result.Pending);
+        Assert.DoesNotContain(fake.Writes, w => w.Method == "DELETE" && w.Path.StartsWith("customapis", StringComparison.Ordinal));
     }
 
     [Fact]

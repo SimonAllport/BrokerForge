@@ -65,9 +65,10 @@ public static partial class DescriptorValidator
         {
             if (!retry.Idempotent)
                 errors.Add(new(9, "retry", "retry needs `idempotent: true`"));
-            if (d.Binds == Messages.Create && !r.Headers.Any(h =>
+            // A POST is not safe to repeat, whatever it binds: the source tells a repeat from a new call only by the key.
+            if ((d.Binds == Messages.Create || string.Equals(r.Method, "POST", StringComparison.OrdinalIgnoreCase)) && !r.Headers.Any(h =>
                     string.Equals(h.Key, "Idempotency-Key", StringComparison.OrdinalIgnoreCase) && h.Value is ComputedBinding { Kind: "uuid" }))
-                errors.Add(new(9, "retry", "Create can only retry with an `Idempotency-Key: { computed: uuid }` header"));
+                errors.Add(new(9, "retry", "Create or a POST can only retry with an `Idempotency-Key: { computed: uuid }` header"));
         }
         if (schema != null)
             CheckSchema(d, schema, errors);

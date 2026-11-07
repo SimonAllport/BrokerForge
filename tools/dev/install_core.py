@@ -9,9 +9,10 @@ It runs as the az CLI user against DV_ORG (set by install-core.sh). It does not 
 install-core.sh prints: the plug-in app's federated credential for this environment, and the host's
 Trust:AllowedCallers entry (a host deploy).
 
-Usage: DV_ORG=<org url> python3 install_core.py <managed zip>
+Usage: DV_ORG=<org url> [PLUGIN_APP=<this environment's plug-in app>] python3 install_core.py <managed zip>
+Each environment needs its own plug-in app (tools/dev/setup-plugin-app.sh); PLUGIN_APP defaults to dev's.
 """
-import base64, sys, uuid
+import base64, os, sys, uuid
 
 from setup_dataverse import DEV, SPIKE, call, ensure_env_var, ensure_host_user, first, step
 
@@ -23,12 +24,13 @@ def main(package):
     call("POST", "ImportSolution", {"CustomizationFile": base64.b64encode(open(package, "rb").read()).decode(),
                                     "OverwriteUnmanagedCustomizations": False, "PublishWorkflows": True, "ImportJobId": str(uuid.uuid4())})
 
+    plugin_app = os.environ.get("PLUGIN_APP") or SPIKE["PLUGIN_APP"]
     step("managed identity for the plug-in app")
-    mi = first(f"managedidentities?$select=managedidentityid&$filter=applicationid eq {SPIKE['PLUGIN_APP']}")
+    mi = first(f"managedidentities?$select=managedidentityid&$filter=applicationid eq {plugin_app}")
     if mi:
         mi_id = mi["managedidentityid"]
     else:
-        _, body, _ = call("POST", "managedidentities", {"applicationid": SPIKE["PLUGIN_APP"], "tenantid": SPIKE["TENANT"], "credentialsource": 2,
+        _, body, _ = call("POST", "managedidentities", {"applicationid": plugin_app, "tenantid": SPIKE["TENANT"], "credentialsource": 2,
                                                         "subjectscope": 1, "version": 2, "name": "BrokerForge plug-in"})
         mi_id = body["managedidentityid"]
     asm = first("pluginassemblies?$select=pluginassemblyid&$filter=name eq 'BrokerForge.Plugin'")

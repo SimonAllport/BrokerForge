@@ -68,15 +68,15 @@ public static class FormsAndViews
         return root.ToString(SaveOptions.DisableFormatting);
     }
 
-    public static string FetchXml(string existing, string table, string? primaryName, IReadOnlyList<string> columns)
+    public static string FetchXml(string existing, string table, IReadOnlyList<string> columns)
     {
         var root = XElement.Parse(existing);
         var entity = root.Element("entity")!;
         entity.RemoveNodes();
         entity.Add(new XElement("attribute", new XAttribute("name", table + "id")));
         entity.Add(columns.Select(c => new XElement("attribute", new XAttribute("name", c))));
-        if (primaryName != null)
-            entity.Add(new XElement("order", new XAttribute("attribute", primaryName), new XAttribute("descending", "false")));
+        // No <order>: a sort the list descriptor doesn't declare fails loudly (UnsupportedQueryException), and the
+        // generator doesn't know which sorts are declared. Rows come in the source's own order (sortStable).
         return root.ToString(SaveOptions.DisableFormatting);
     }
 
@@ -99,7 +99,8 @@ public static class FormsAndViews
         static IEnumerable<string> Cells(string formXml) => XElement.Parse(formXml).Descendants("section").First().Descendants("cell")
             .Select(c => $"{(string?)c.Element("control")?.Attribute("datafieldname")}|{(string?)c.Element("labels")?.Element("label")?.Attribute("description")}|{(string?)c.Element("control")?.Attribute("classid")}");
         var wanted = FormXml(parts.FormXml, schema.Table!, columns.Select(c => (c, schema.Columns[c])).ToList());
-        return Cells(parts.FormXml).SequenceEqual(Cells(wanted), StringComparer.OrdinalIgnoreCase) && Shown(parts).View.SequenceEqual(columns);
+        return Cells(parts.FormXml).SequenceEqual(Cells(wanted), StringComparer.OrdinalIgnoreCase) && Shown(parts).View.SequenceEqual(columns)
+            && !XElement.Parse(parts.FetchXml).Descendants("order").Any();
     }
 
     /// <summary>Writes both parts to show <paramref name="columns"/> unless they already do, then publishes. Returns true when it wrote.</summary>
@@ -112,7 +113,7 @@ public static class FormsAndViews
             new JsonObject { ["formxml"] = FormXml(parts.FormXml, table, columns.Select(c => (c, schema.Columns[c])).ToList()) }, null, ct);
         await client.WriteAsync(HttpMethod.Patch, $"savedqueries({parts.ViewId})", new JsonObject
         {
-            ["fetchxml"] = FetchXml(parts.FetchXml, table, schema.PrimaryName, columns),
+            ["fetchxml"] = FetchXml(parts.FetchXml, table, columns),
             ["layoutxml"] = LayoutXml(parts.LayoutXml, table, columns),
         }, null, ct);
         await Generator.PublishAsync(client, table, ct);

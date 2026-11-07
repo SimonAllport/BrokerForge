@@ -11,9 +11,10 @@ internal sealed class Answers(IReadOnlyDictionary<string, string> given)
 {
     private readonly HashSet<string> _asked = new(StringComparer.Ordinal);
 
-    public Question Choice(string key, string text, IReadOnlyList<Choice> choices, bool required = true, string? proposed = null) =>
+    /// <summary>A fixed-choice question; <paramref name="check"/> can refuse a listed choice that doesn't fit the rest of the answers.</summary>
+    public Question Choice(string key, string text, IReadOnlyList<Choice> choices, bool required = true, string? proposed = null, Func<string, string?>? check = null) =>
         Ask(key, text, QuestionKind.Choice, choices, required, proposed,
-            a => choices.Any(c => c.Value == a) ? null : $"`{a}` is not one of the choices");
+            a => choices.Any(c => c.Value == a) ? check?.Invoke(a) : $"`{a}` is not one of the choices");
 
     public Question Number(string key, string text, int min, int max) =>
         Ask(key, text, QuestionKind.Number, Array.Empty<Choice>(), true, null,
