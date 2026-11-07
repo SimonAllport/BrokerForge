@@ -293,6 +293,26 @@ public sealed partial class AdminPagesTests(MockApiFixture mock) : IDisposable
         Assert.DoesNotContain(_dv.Fake.Writes, w => w.Path.StartsWith("customapis", StringComparison.Ordinal));
     }
 
+    // Plan 5 deferred minor: the list changes between the start and Entra's redirect back (here a second administrator
+    // finishes first), so the callback applies nothing.
+    [Fact]
+    public async Task Role_ListChangedBeforeCallback_RefusedNothingWritten()
+    {
+        var id = Row();
+        await Generated(id);
+        var browser = Browser();
+        var callback = await StartRole(browser);
+        var other = Browser();
+        var first = await other.GetAsync(await StartRole(other));
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var writes = _dv.Fake.Writes.Count();
+        var response = await browser.GetAsync(callback);
+        var html = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Conflict, html);
+        Assert.Contains("changed after the page was shown", html);
+        Assert.Equal(writes, _dv.Fake.Writes.Count());
+    }
+
     // Final review I4: once done, the row no longer says an administrator step is left.
     [Fact]
     public async Task Role_CallbackDone_RowHasNothingPending()
