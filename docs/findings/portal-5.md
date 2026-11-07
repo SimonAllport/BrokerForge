@@ -102,4 +102,9 @@ A fresh review of the branch found no Critical problems and five Important ones.
 - the administrator's run took no lease: it now takes Generate's;
 - the row went on saying a step was left: the administrator's run now reports on the row.
 
-The fifth, a publish that fails at 429 and is never retried, is recorded in HLD 15 for a live check first. The host role's two SDK privileges, no longer needed, were taken off. Deferred minors: the review page can poll forever if the row never shows the job it started; no test for the callback's confirmation refusal; the connect page shows configuration messages, which name hosts, to end users; retry is accepted on a POST action without an idempotency check.
+The fifth, a publish that fails at 429 and is never retried, is recorded in HLD 15 for a live check first. The host role's two SDK privileges, no longer needed, were taken off. The review's four minors were fixed afterwards, each with a test:
+
+- the review page stops waiting, and says so, when the row hasn't shown the job it started within two minutes;
+- the administrator's callback has a test for the list changing before Entra's redirect back (a second administrator finishing first);
+- the connect page tells end users there is a configuration problem and gives a reference, and the host's log line carries the message under that reference;
+- retry on any POST, not only a create, needs an `Idempotency-Key: { computed: uuid }` header (descriptor spec rule 9), and SwaggerForge asks for it on an action.
