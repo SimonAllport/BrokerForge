@@ -5,7 +5,7 @@
 (function () {
   "use strict";
   var model = window.BrokerForgeReview;
-  var form, xrm, read, edits = {}, poll, startedJob;
+  var form, xrm, read, edits = {}, poll, startedJob, startedAt;
 
   function $(id) { return document.getElementById(id); }
 
@@ -195,8 +195,11 @@
     return xrm.WebApi.retrieveRecord("bf_connection", rowId(), "?$select=bf_generationstate,bf_generationstarted,bf_generationresult,bf_generationjobid").then(function (row) {
       var status = $("status");
       status.textContent = "";
-      var waiting = model.isRunning(row, startedJob) && !model.isRunning(row);
-      status.appendChild(el("p", waiting ? "Generate is starting…" : model.statusLine(row, new Date())));
+      var now = new Date();
+      var waiting = model.isRunning(row, startedJob, startedAt, now) && !model.isRunning(row);
+      var lost = model.neverShown(row, startedJob, startedAt, now);
+      status.appendChild(el("p", lost ? "Generate started but has not reported in two minutes. Read the definition again to see where it got to."
+        : waiting ? "Generate is starting…" : model.statusLine(row, now)));
       if (model.needsRole(row) && read && read.roleUrl) {
         var a = el("a", "Finish as administrator");
         a.href = read.roleUrl;
@@ -218,7 +221,7 @@
         });
       }
       clearTimeout(poll);
-      if (model.isRunning(row, startedJob) && (waiting || model.statusLine(row, new Date()).indexOf("stopped") < 0))
+      if (model.isRunning(row, startedJob, startedAt, now) && (waiting || model.statusLine(row, now).indexOf("stopped") < 0))
         poll = setTimeout(refreshRow, 5000);
       else if (row.bf_generationstate === "Succeeded" && poll !== undefined) {
         poll = undefined;
@@ -248,6 +251,7 @@
     return call("bf_Generate", { ConnectionId: rowId(), Fingerprint: read.preview.fingerprint }).then(function (r) {
       message("Generate started. This page follows it.");
       startedJob = r.JobId;
+      startedAt = new Date();
       poll = 0;
       return refreshRow();
     }, failed);

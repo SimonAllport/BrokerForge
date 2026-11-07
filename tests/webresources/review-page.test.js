@@ -20,3 +20,10 @@ test("answers are read and saved on the row, not through a form field", () => {
   assert.ok(!/getAttribute\("bf_answers"\)/.test(js), "review.js does not use the form attribute bf_answers");
   assert.ok(/updateRecord\("bf_connection"/.test(js), "review.js saves bf_answers with Xrm.WebApi.updateRecord");
 });
+
+// Plan 5 deferred minor: the page passes when it started a job, so it stops waiting for a job the row never shows.
+test("the page stops waiting for a job the row never shows", () => {
+  const js = fs.readFileSync(path.join(__dirname, "../../src/BrokerForge.WebResources/review.js"), "utf8");
+  assert.ok(!/isRunning\(row, startedJob\)/.test(js), "every isRunning call with the started job also passes its start time");
+  assert.ok(/neverShown\(row, startedJob, startedAt, /.test(js), "review.js reports a job the row never showed");
+});

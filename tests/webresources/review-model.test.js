@@ -109,3 +109,15 @@ test("a job just started counts as running until the row shows it", () => {
   assert.equal(model.isRunning({ bf_generationstate: "Running", bf_generationjobid: job }, job), true);
   assert.equal(model.isRunning({ bf_generationstate: "Succeeded" }), false);
 });
+
+// Plan 5 deferred minor: if the row never shows the job the page started, the page stopped waiting only on a report.
+test("a job just started stops counting as running when the row has not shown it for two minutes", () => {
+  const job = "11111111-1111-1111-1111-111111111111";
+  const at = new Date("2026-11-07T10:00:00Z");
+  const row = { bf_generationstate: "Succeeded", bf_generationjobid: "22222222-2222-2222-2222-222222222222" };
+  assert.equal(model.isRunning(row, job, at, new Date("2026-11-07T10:01:59Z")), true);
+  assert.equal(model.isRunning(row, job, at, new Date("2026-11-07T10:02:01Z")), false);
+  assert.equal(model.neverShown(row, job, at, new Date("2026-11-07T10:02:01Z")), true);
+  assert.equal(model.neverShown({ bf_generationstate: "Running", bf_generationjobid: job }, job, at, new Date("2026-11-07T10:30:00Z")), false);
+  assert.equal(model.neverShown(row, undefined, at, new Date("2026-11-07T10:30:00Z")), false);
+});

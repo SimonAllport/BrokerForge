@@ -9,6 +9,7 @@
   // A job still Running this long after it started has stopped without a report: the host's limit is 15 minutes and the
   // lease lasts 20 (HLD D-36), so by then another Generate can start.
   var STALE_MINUTES = 20;
+  var START_MINUTES = 2;
 
   function result(row) {
     try {
@@ -45,10 +46,23 @@
   }
 
   // A job this page just started is running until the row shows that job: bf_Generate returns before the job's first
-  // report, so the row can still show the previous job, or none.
-  function isRunning(row, startedJob) {
-    if (startedJob && (!row || String(row.bf_generationjobid || "").toLowerCase() !== String(startedJob).toLowerCase())) return true;
+  // report, so the row can still show the previous job, or none. It stops counting START_MINUTES after it started.
+  function isRunning(row, startedJob, startedAt, now) {
+    if (startedJob && !shows(row, startedJob) && !late(startedAt, now)) return true;
     return !!row && (row.bf_generationstate === "Queued" || row.bf_generationstate === "Running");
+  }
+
+  // The row has not shown the job this page started within START_MINUTES: the job never reported.
+  function neverShown(row, startedJob, startedAt, now) {
+    return !!startedJob && !shows(row, startedJob) && late(startedAt, now);
+  }
+
+  function shows(row, job) {
+    return !!row && String(row.bf_generationjobid || "").toLowerCase() === String(job).toLowerCase();
+  }
+
+  function late(startedAt, now) {
+    return !!startedAt && !!now && (now - startedAt) / 60000 > START_MINUTES;
   }
 
   function statusLine(row, now) {
@@ -89,6 +103,6 @@
     };
   }
 
-  return { canGenerate: canGenerate, missingKeys: missingKeys, answersFrom: answersFrom, isRunning: isRunning, statusLine: statusLine,
+  return { canGenerate: canGenerate, missingKeys: missingKeys, answersFrom: answersFrom, isRunning: isRunning, neverShown: neverShown, statusLine: statusLine,
     needsRole: needsRole, doneLinks: doneLinks, actionParameter: actionParameter, STALE_MINUTES: STALE_MINUTES };
 });
